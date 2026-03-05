@@ -1,6 +1,7 @@
 # dependencies
 node_modules
 .pnpm-store
+.turbo
 
 # build outputs
 dist

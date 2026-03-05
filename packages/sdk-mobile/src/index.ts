@@ -1,4 +1,4 @@
-export type { Paths } from "./generated/types";
+export type { Paths } from "./generated/types.js";
 
 export type ApiClientOptions = {
   baseUrl: string;

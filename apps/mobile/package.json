@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "build": "echo 'Use EAS build for mobile artifacts'",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint . --max-warnings=0",
+    "lint": "eslint app src test --max-warnings=0",
     "test": "vitest run"
   },
   "dependencies": {

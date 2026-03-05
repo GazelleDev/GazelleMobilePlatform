@@ -1,6 +1,9 @@
 {
   "extends": "@gazelle/config-typescript/library",
   "compilerOptions": {
-    "baseUrl": "."
-  }
+    "baseUrl": ".",
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"]
 }
