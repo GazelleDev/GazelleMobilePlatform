@@ -30,7 +30,7 @@
   "devDependencies": {
     "@gazelle/config-eslint": "workspace:*",
     "@gazelle/config-typescript": "workspace:*",
-    "@types/node": "^22.13.8",
+    "@types/node": "^25.3.3",
     "eslint": "^9.21.0",
     "tsx": "^4.20.5",
     "typescript": "^5.8.2",
