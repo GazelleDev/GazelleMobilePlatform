@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { orderQuoteSchema, orderSchema } from "@gazelle/contracts-orders";
 import { buildApp } from "../src/app.js";
 
@@ -11,7 +11,98 @@ const sampleQuotePayload = {
   pointsToRedeem: 125
 };
 
+function paymentsResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" }
+  });
+}
+
 describe("orders service", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = init?.method ?? "GET";
+      const body =
+        typeof init?.body === "string" && init.body.length > 0
+          ? (JSON.parse(init.body) as Record<string, unknown>)
+          : {};
+
+      if (url.endsWith("/v1/payments/charges") && method === "POST") {
+        const applePayToken = String(body.applePayToken ?? "").toLowerCase();
+        if (applePayToken.includes("decline")) {
+          return paymentsResponse({
+            paymentId: "123e4567-e89b-12d3-a456-426614174101",
+            provider: "CLOVER",
+            orderId: body.orderId,
+            status: "DECLINED",
+            approved: false,
+            amountCents: body.amountCents,
+            currency: "USD",
+            occurredAt: "2026-03-10T00:00:00.000Z",
+            declineCode: "CARD_DECLINED",
+            message: "Clover declined the charge"
+          });
+        }
+
+        if (applePayToken.includes("timeout")) {
+          return paymentsResponse({
+            paymentId: "123e4567-e89b-12d3-a456-426614174102",
+            provider: "CLOVER",
+            orderId: body.orderId,
+            status: "TIMEOUT",
+            approved: false,
+            amountCents: body.amountCents,
+            currency: "USD",
+            occurredAt: "2026-03-10T00:01:00.000Z",
+            message: "Clover timed out while processing charge"
+          });
+        }
+
+        return paymentsResponse({
+          paymentId: "123e4567-e89b-12d3-a456-426614174100",
+          provider: "CLOVER",
+          orderId: body.orderId,
+          status: "SUCCEEDED",
+          approved: true,
+          amountCents: body.amountCents,
+          currency: "USD",
+          occurredAt: "2026-03-10T00:00:00.000Z",
+          message: "Clover accepted the charge"
+        });
+      }
+
+      if (url.endsWith("/v1/payments/refunds") && method === "POST") {
+        const reason = String(body.reason ?? "").toLowerCase();
+        const rejected = reason.includes("reject");
+
+        return paymentsResponse({
+          refundId: rejected
+            ? "123e4567-e89b-12d3-a456-426614174202"
+            : "123e4567-e89b-12d3-a456-426614174201",
+          provider: "CLOVER",
+          orderId: body.orderId,
+          paymentId: body.paymentId,
+          status: rejected ? "REJECTED" : "REFUNDED",
+          amountCents: body.amountCents,
+          currency: "USD",
+          occurredAt: "2026-03-10T00:02:00.000Z",
+          message: rejected ? "Clover rejected the refund" : "Clover accepted the refund"
+        });
+      }
+
+      throw new Error(`Unhandled payments request in test: ${method} ${url}`);
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("responds on /health", async () => {
     const app = await buildApp();
     const response = await app.inject({ method: "GET", url: "/health" });
@@ -120,6 +211,7 @@ describe("orders service", () => {
     expect(paidOrder.status).toBe("PAID");
     expect(paidOrderRepeat.timeline).toHaveLength(paidOrder.timeline.length);
     expect(paidOrder.timeline).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await app.close();
   });
@@ -180,6 +272,130 @@ describe("orders service", () => {
     });
     expect(payCanceledOrder.statusCode).toBe(409);
     expect(payCanceledOrder.json()).toMatchObject({ code: "ORDER_NOT_PAYABLE" });
+
+    await app.close();
+  });
+
+  it("maps Clover decline and timeout payment paths", async () => {
+    const app = await buildApp();
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const order = orderSchema.parse(createResponse.json());
+
+    const declined = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-decline-token",
+        idempotencyKey: "pay-decline"
+      }
+    });
+    expect(declined.statusCode).toBe(402);
+    expect(declined.json()).toMatchObject({ code: "PAYMENT_DECLINED" });
+
+    const timedOut = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-timeout-token",
+        idempotencyKey: "pay-timeout"
+      }
+    });
+    expect(timedOut.statusCode).toBe(504);
+    expect(timedOut.json()).toMatchObject({ code: "PAYMENT_TIMEOUT" });
+
+    const getOrder = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${order.id}`
+    });
+    expect(getOrder.statusCode).toBe(200);
+    expect(orderSchema.parse(getOrder.json()).status).toBe("PENDING_PAYMENT");
+
+    await app.close();
+  });
+
+  it("submits Clover refund during paid-order cancellation and handles rejection", async () => {
+    const app = await buildApp();
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const paidOrderCandidate = orderSchema.parse(createResponse.json());
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${paidOrderCandidate.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "pay-for-refund"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(payResponse.json()).status).toBe("PAID");
+
+    const successfulCancel = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${paidOrderCandidate.id}/cancel`,
+      payload: { reason: "changed mind" }
+    });
+    expect(successfulCancel.statusCode).toBe(200);
+    expect(orderSchema.parse(successfulCancel.json()).status).toBe("CANCELED");
+
+    const rejectedRefundQuote = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const rejectedQuote = orderQuoteSchema.parse(rejectedRefundQuote.json());
+    const rejectedCreate = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      payload: {
+        quoteId: rejectedQuote.quoteId,
+        quoteHash: rejectedQuote.quoteHash
+      }
+    });
+    const rejectedOrder = orderSchema.parse(rejectedCreate.json());
+    await app.inject({
+      method: "POST",
+      url: `/v1/orders/${rejectedOrder.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "pay-reject-refund"
+      }
+    });
+
+    const rejectedCancel = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${rejectedOrder.id}/cancel`,
+      payload: { reason: "please reject refund" }
+    });
+    expect(rejectedCancel.statusCode).toBe(409);
+    expect(rejectedCancel.json()).toMatchObject({ code: "REFUND_REJECTED" });
 
     await app.close();
   });
