@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { orderQuoteSchema, orderSchema } from "@gazelle/contracts-orders";
 import { buildApp as buildOrdersApp } from "../src/app.js";
 import { buildApp as buildPaymentsApp } from "../../payments/src/app.js";
+import { buildApp as buildLoyaltyApp } from "../../loyalty/src/app.js";
 
 const sampleQuotePayload = {
   locationId: "flagship-01",
@@ -17,17 +18,24 @@ const sampleQuotePayload = {
 describe.sequential("orders + payments e2e", () => {
   let ordersApp: FastifyInstance | undefined;
   let paymentsApp: FastifyInstance | undefined;
+  let loyaltyApp: FastifyInstance | undefined;
   let previousPaymentsBaseUrl: string | undefined;
+  let previousLoyaltyBaseUrl: string | undefined;
 
-  async function createOrder() {
+  async function createOrder(input?: { pointsToRedeem?: number; userId?: string }) {
     if (!ordersApp) {
       throw new Error("Orders app not initialized");
     }
 
+    const headers = input?.userId ? { "x-user-id": input.userId } : undefined;
     const quoteResponse = await ordersApp.inject({
       method: "POST",
       url: "/v1/orders/quote",
-      payload: sampleQuotePayload
+      headers,
+      payload: {
+        ...sampleQuotePayload,
+        pointsToRedeem: input?.pointsToRedeem ?? sampleQuotePayload.pointsToRedeem
+      }
     });
     expect(quoteResponse.statusCode).toBe(200);
     const quote = orderQuoteSchema.parse(quoteResponse.json());
@@ -35,6 +43,7 @@ describe.sequential("orders + payments e2e", () => {
     const createResponse = await ordersApp.inject({
       method: "POST",
       url: "/v1/orders",
+      headers,
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -46,6 +55,7 @@ describe.sequential("orders + payments e2e", () => {
 
   beforeEach(async () => {
     previousPaymentsBaseUrl = process.env.PAYMENTS_SERVICE_BASE_URL;
+    previousLoyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL;
 
     paymentsApp = await buildPaymentsApp();
     await paymentsApp.listen({ host: "127.0.0.1", port: 0 });
@@ -54,7 +64,15 @@ describe.sequential("orders + payments e2e", () => {
       throw new Error("Failed to resolve payments test port");
     }
 
+    loyaltyApp = await buildLoyaltyApp();
+    await loyaltyApp.listen({ host: "127.0.0.1", port: 0 });
+    const loyaltyAddress = loyaltyApp.server.address() as AddressInfo | null;
+    if (!loyaltyAddress || typeof loyaltyAddress.port !== "number") {
+      throw new Error("Failed to resolve loyalty test port");
+    }
+
     process.env.PAYMENTS_SERVICE_BASE_URL = `http://127.0.0.1:${paymentsAddress.port}`;
+    process.env.LOYALTY_SERVICE_BASE_URL = `http://127.0.0.1:${loyaltyAddress.port}`;
     ordersApp = await buildOrdersApp();
   });
 
@@ -69,10 +87,21 @@ describe.sequential("orders + payments e2e", () => {
       paymentsApp = undefined;
     }
 
+    if (loyaltyApp) {
+      await loyaltyApp.close();
+      loyaltyApp = undefined;
+    }
+
     if (previousPaymentsBaseUrl === undefined) {
       delete process.env.PAYMENTS_SERVICE_BASE_URL;
     } else {
       process.env.PAYMENTS_SERVICE_BASE_URL = previousPaymentsBaseUrl;
+    }
+
+    if (previousLoyaltyBaseUrl === undefined) {
+      delete process.env.LOYALTY_SERVICE_BASE_URL;
+    } else {
+      process.env.LOYALTY_SERVICE_BASE_URL = previousLoyaltyBaseUrl;
     }
   });
 
@@ -223,5 +252,87 @@ describe.sequential("orders + payments e2e", () => {
     });
     expect(repeatedCancel.statusCode).toBe(200);
     expect(orderSchema.parse(repeatedCancel.json()).timeline).toHaveLength(canceledOrder.timeline.length);
+  });
+
+  it("wires loyalty earn/redeem and reversal mutations across pay + cancel", async () => {
+    if (!loyaltyApp) {
+      throw new Error("Loyalty app not initialized");
+    }
+
+    const userId = "123e4567-e89b-12d3-a456-426614174980";
+    const seedOrderId = "123e4567-e89b-12d3-a456-426614174981";
+    const seedMutation = await loyaltyApp.inject({
+      method: "POST",
+      url: "/v1/loyalty/internal/ledger/apply",
+      payload: {
+        userId,
+        orderId: seedOrderId,
+        type: "EARN",
+        amountCents: 500,
+        idempotencyKey: "seed-loyalty-500"
+      }
+    });
+    expect(seedMutation.statusCode).toBe(200);
+
+    const order = await createOrder({ pointsToRedeem: 125, userId });
+    const payResponse = await ordersApp.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      headers: {
+        "x-user-id": userId
+      },
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "loyalty-pay-idem"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+    const paidOrder = orderSchema.parse(payResponse.json());
+    expect(paidOrder.status).toBe("PAID");
+
+    const cancelResponse = await ordersApp.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/cancel`,
+      headers: {
+        "x-user-id": userId
+      },
+      payload: {
+        reason: "customer canceled paid order"
+      }
+    });
+    expect(cancelResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(cancelResponse.json()).status).toBe("CANCELED");
+
+    const balanceResponse = await loyaltyApp.inject({
+      method: "GET",
+      url: "/v1/loyalty/balance",
+      headers: {
+        "x-user-id": userId
+      }
+    });
+    expect(balanceResponse.statusCode).toBe(200);
+    expect(balanceResponse.json()).toMatchObject({
+      availablePoints: 500,
+      lifetimeEarned: 500 + paidOrder.total.amountCents
+    });
+
+    const ledgerResponse = await loyaltyApp.inject({
+      method: "GET",
+      url: "/v1/loyalty/ledger",
+      headers: {
+        "x-user-id": userId
+      }
+    });
+    expect(ledgerResponse.statusCode).toBe(200);
+    const ledger = ledgerResponse.json() as Array<{ orderId?: string; type: string; points: number }>;
+    const orderLedger = ledger.filter((entry) => entry.orderId === order.id);
+    expect(orderLedger).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "REDEEM", points: -125 }),
+        expect.objectContaining({ type: "EARN", points: paidOrder.total.amountCents }),
+        expect.objectContaining({ type: "ADJUSTMENT", points: -paidOrder.total.amountCents }),
+        expect.objectContaining({ type: "REFUND", points: 125 })
+      ])
+    );
   });
 });

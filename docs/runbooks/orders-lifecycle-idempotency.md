@@ -22,6 +22,25 @@ Default in-memory flow:
 4. Cancel transitions order to `CANCELED` (unless already canceled/completed).
 5. `timeline` is appended on lifecycle transitions.
 
+## Loyalty Integration (M5.2)
+
+`services/orders` now orchestrates loyalty ledger mutations through:
+- `POST /v1/loyalty/internal/ledger/apply`
+
+Payment success (`PAID`) applies:
+- `REDEEM` for `quote.pointsToRedeem` (when > 0)
+- `EARN` for `order.total.amountCents`
+
+Paid cancellation with successful refund applies:
+- `ADJUSTMENT` to reverse earned points (`-order.total.amountCents`)
+- `REFUND` to restore redeemed points (`quote.pointsToRedeem`, when > 0)
+
+Loyalty mutation idempotency keys are deterministic per order:
+- `order:{orderId}:loyalty:redeem`
+- `order:{orderId}:loyalty:earn`
+- `order:{orderId}:loyalty:reverse-earn`
+- `order:{orderId}:loyalty:refund-redeem`
+
 ## Idempotency Controls
 
 - Create idempotency key:
@@ -37,6 +56,7 @@ Default in-memory flow:
 
 Default:
 - `ORDERS_SERVICE_BASE_URL=http://127.0.0.1:3001`
+- `LOYALTY_SERVICE_BASE_URL=http://127.0.0.1:3004` (used by orders internally)
 
 ## Verification
 

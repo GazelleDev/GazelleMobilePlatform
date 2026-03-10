@@ -132,6 +132,9 @@ If unreachable:
   - Retry recovery behavior:
     - retry with same payment key keeps idempotent response
     - retry with a new key can recover timeout/decline paths
+  - Loyalty coupling in orders:
+    - successful pay applies loyalty earn and redeem mutations
+    - paid-order cancel applies refund and loyalty reversal mutations
 - Loyalty APIs:
   - `GET /v1/loyalty/balance`
   - `GET /v1/loyalty/ledger`
