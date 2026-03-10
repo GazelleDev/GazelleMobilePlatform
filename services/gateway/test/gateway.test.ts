@@ -4,11 +4,14 @@ import { buildApp } from "../src/app.js";
 describe("gateway", () => {
   const fetchMock = vi.fn<typeof fetch>();
   let previousIdentityBaseUrl: string | undefined;
+  let previousOrdersBaseUrl: string | undefined;
 
   beforeEach(() => {
     fetchMock.mockReset();
     previousIdentityBaseUrl = process.env.IDENTITY_SERVICE_BASE_URL;
+    previousOrdersBaseUrl = process.env.ORDERS_SERVICE_BASE_URL;
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
+    process.env.ORDERS_SERVICE_BASE_URL = "http://orders.internal";
     vi.stubGlobal("fetch", fetchMock);
 
     fetchMock.mockImplementation(async (input, init) => {
@@ -58,6 +61,151 @@ describe("gateway", () => {
         );
       }
 
+      if (url.endsWith("/v1/orders/quote") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          locationId: string;
+          items: Array<{ itemId: string; quantity: number }>;
+          pointsToRedeem?: number;
+        };
+        const quotedItems = (body.items ?? []).map((item) => ({
+          itemId: item.itemId,
+          quantity: item.quantity,
+          unitPriceCents: 500
+        }));
+        const subtotalCents = quotedItems.reduce((sum, item) => sum + item.unitPriceCents * item.quantity, 0);
+        const pointsToRedeem = body.pointsToRedeem ?? 0;
+        const taxCents = Math.round((Math.max(subtotalCents - pointsToRedeem, 0) * 600) / 10000);
+        const totalCents = Math.max(subtotalCents - pointsToRedeem, 0) + taxCents;
+
+        return new Response(
+          JSON.stringify({
+            quoteId: "123e4567-e89b-12d3-a456-426614174111",
+            locationId: body.locationId ?? "flagship-01",
+            items: quotedItems,
+            subtotal: { currency: "USD", amountCents: subtotalCents },
+            discount: { currency: "USD", amountCents: pointsToRedeem },
+            tax: { currency: "USD", amountCents: taxCents },
+            total: { currency: "USD", amountCents: totalCents },
+            pointsToRedeem,
+            quoteHash: "gateway-quote-hash"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/orders") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { quoteHash: string };
+        return new Response(
+          JSON.stringify({
+            id: "123e4567-e89b-12d3-a456-426614174112",
+            locationId: "flagship-01",
+            status: "PENDING_PAYMENT",
+            items: [],
+            total: { currency: "USD", amountCents: 530 },
+            pickupCode: body.quoteHash.slice(0, 6).toUpperCase(),
+            timeline: [
+              {
+                status: "PENDING_PAYMENT",
+                occurredAt: new Date().toISOString()
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const payOrderMatch = url.match(/\/v1\/orders\/([0-9a-f-]{36})\/pay$/);
+      if (payOrderMatch && method === "POST") {
+        const orderId = payOrderMatch[1];
+        return new Response(
+          JSON.stringify({
+            id: orderId,
+            locationId: "flagship-01",
+            status: "PAID",
+            items: [],
+            total: { currency: "USD", amountCents: 530 },
+            pickupCode: "PAID01",
+            timeline: [
+              {
+                status: "PENDING_PAYMENT",
+                occurredAt: new Date(Date.now() - 60000).toISOString()
+              },
+              {
+                status: "PAID",
+                occurredAt: new Date().toISOString(),
+                note: "Payment accepted"
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/orders") && method === "GET") {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      const getOrderMatch = url.match(/\/v1\/orders\/([0-9a-f-]{36})$/);
+      if (getOrderMatch && method === "GET") {
+        const orderId = getOrderMatch[1];
+        return new Response(
+          JSON.stringify({
+            id: orderId,
+            locationId: "flagship-01",
+            status: "IN_PREP",
+            items: [],
+            total: { currency: "USD", amountCents: 530 },
+            pickupCode: "PREP01",
+            timeline: [
+              {
+                status: "PENDING_PAYMENT",
+                occurredAt: new Date(Date.now() - 120000).toISOString()
+              },
+              {
+                status: "PAID",
+                occurredAt: new Date(Date.now() - 60000).toISOString(),
+                note: "Payment accepted"
+              },
+              {
+                status: "IN_PREP",
+                occurredAt: new Date().toISOString()
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const cancelOrderMatch = url.match(/\/v1\/orders\/([0-9a-f-]{36})\/cancel$/);
+      if (cancelOrderMatch && method === "POST") {
+        const orderId = cancelOrderMatch[1];
+        return new Response(
+          JSON.stringify({
+            id: orderId,
+            locationId: "flagship-01",
+            status: "CANCELED",
+            items: [],
+            total: { currency: "USD", amountCents: 530 },
+            pickupCode: "CANCEL",
+            timeline: [
+              {
+                status: "PENDING_PAYMENT",
+                occurredAt: new Date(Date.now() - 120000).toISOString()
+              },
+              {
+                status: "CANCELED",
+                occurredAt: new Date().toISOString(),
+                note: "Canceled by customer"
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       return new Response(JSON.stringify({ code: "NOT_IMPLEMENTED" }), { status: 500 });
     });
   });
@@ -66,10 +214,15 @@ describe("gateway", () => {
     vi.unstubAllGlobals();
     if (previousIdentityBaseUrl === undefined) {
       delete process.env.IDENTITY_SERVICE_BASE_URL;
-      return;
+    } else {
+      process.env.IDENTITY_SERVICE_BASE_URL = previousIdentityBaseUrl;
     }
 
-    process.env.IDENTITY_SERVICE_BASE_URL = previousIdentityBaseUrl;
+    if (previousOrdersBaseUrl === undefined) {
+      delete process.env.ORDERS_SERVICE_BASE_URL;
+    } else {
+      process.env.ORDERS_SERVICE_BASE_URL = previousOrdersBaseUrl;
+    }
   });
 
   it("returns health", async () => {
@@ -141,6 +294,58 @@ describe("gateway", () => {
     expect(response.json()).toMatchObject({
       email: "owner@gazellecoffee.com"
     });
+    await app.close();
+  });
+
+  it("forwards orders quote to orders service", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: {
+        locationId: "flagship-01",
+        items: [{ itemId: "latte", quantity: 1 }],
+        pointsToRedeem: 0
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      quoteId: "123e4567-e89b-12d3-a456-426614174111"
+    });
+    await app.close();
+  });
+
+  it("forwards orders lifecycle routes", async () => {
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174113";
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${orderId}/pay`,
+      payload: {
+        applePayToken: "apple-pay-token",
+        idempotencyKey: "pay-1"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+    expect(payResponse.json()).toMatchObject({ id: orderId, status: "PAID" });
+
+    const getResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${orderId}`
+    });
+    expect(getResponse.statusCode).toBe(200);
+    expect(getResponse.json()).toMatchObject({ id: orderId, status: "IN_PREP" });
+
+    const cancelResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${orderId}/cancel`,
+      payload: { reason: "changed mind" }
+    });
+    expect(cancelResponse.statusCode).toBe(200);
+    expect(cancelResponse.json()).toMatchObject({ id: orderId, status: "CANCELED" });
+
     await app.close();
   });
 });

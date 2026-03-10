@@ -14,13 +14,22 @@ import {
   refreshRequestSchema
 } from "@gazelle/contracts-auth";
 import { catalogContract, menuResponseSchema, storeConfigResponseSchema } from "@gazelle/contracts-catalog";
-import { ordersContract, createOrderRequestSchema, orderQuoteSchema, orderSchema, payOrderRequestSchema, quoteRequestSchema } from "@gazelle/contracts-orders";
+import {
+  ordersContract,
+  createOrderRequestSchema,
+  orderQuoteSchema,
+  orderSchema,
+  payOrderRequestSchema,
+  quoteRequestSchema
+} from "@gazelle/contracts-orders";
 import { loyaltyBalanceSchema, loyaltyContract, loyaltyLedgerEntrySchema } from "@gazelle/contracts-loyalty";
 import { notificationsContract, pushTokenUpsertSchema } from "@gazelle/contracts-notifications";
 
 const authHeaderSchema = z.object({
   authorization: z.string().startsWith("Bearer ").optional()
 });
+const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
+const cancelOrderRequestSchema = z.object({ reason: z.string().min(1) });
 
 function unauthorized(requestId: string) {
   return apiErrorSchema.parse({
@@ -55,16 +64,17 @@ function toErrorDetails(input: unknown): Record<string, unknown> | undefined {
   return { upstreamBody: input };
 }
 
-async function proxyIdentity<TResponse>(params: {
+async function proxyUpstream<TResponse>(params: {
   request: FastifyRequest;
   reply: FastifyReply;
   baseUrl: string;
+  serviceLabel: string;
   method: "GET" | "POST";
   path: string;
   body?: unknown;
   responseSchema: z.ZodType<TResponse>;
 }) {
-  const { request, reply, baseUrl, method, path, body, responseSchema } = params;
+  const { request, reply, baseUrl, serviceLabel, method, path, body, responseSchema } = params;
 
   const headers: Record<string, string> = {
     "x-request-id": request.id
@@ -91,7 +101,7 @@ async function proxyIdentity<TResponse>(params: {
     return reply.status(502).send(
       apiErrorSchema.parse({
         code: "UPSTREAM_UNAVAILABLE",
-        message: "Identity service is unavailable",
+        message: `${serviceLabel} service is unavailable`,
         requestId: request.id
       })
     );
@@ -110,7 +120,7 @@ async function proxyIdentity<TResponse>(params: {
     return reply.status(upstreamResponse.status).send(
       apiErrorSchema.parse({
         code: "UPSTREAM_ERROR",
-        message: `Identity request failed with status ${upstreamResponse.status}`,
+        message: `${serviceLabel} request failed with status ${upstreamResponse.status}`,
         requestId: request.id,
         details: toErrorDetails(parsedBody)
       })
@@ -123,7 +133,7 @@ async function proxyIdentity<TResponse>(params: {
     return reply.status(502).send(
       apiErrorSchema.parse({
         code: "UPSTREAM_INVALID_RESPONSE",
-        message: "Identity response did not match contract",
+        message: `${serviceLabel} response did not match contract`,
         requestId: request.id,
         details: parsedResponse.error.flatten()
       })
@@ -135,6 +145,7 @@ async function proxyIdentity<TResponse>(params: {
 
 export async function registerRoutes(app: FastifyInstance) {
   const identityBaseUrl = process.env.IDENTITY_SERVICE_BASE_URL ?? "http://127.0.0.1:3000";
+  const ordersBaseUrl = process.env.ORDERS_SERVICE_BASE_URL ?? "http://127.0.0.1:3001";
 
   app.get("/health", async () => ({ status: "ok", service: "gateway" }));
   app.get("/ready", async () => ({ status: "ready", service: "gateway" }));
@@ -150,10 +161,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/apple/exchange", async (request, reply) => {
     const input = appleExchangeRequestSchema.parse(request.body);
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/apple/exchange",
       body: input,
@@ -164,10 +176,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/passkey/register/challenge", async (request, reply) => {
     const input = passkeyChallengeRequestSchema.parse(request.body ?? {});
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/passkey/register/challenge",
       body: input,
@@ -178,10 +191,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/passkey/register/verify", async (request, reply) => {
     const input = passkeyVerifyRequestSchema.parse(request.body);
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/passkey/register/verify",
       body: input,
@@ -192,10 +206,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/passkey/auth/challenge", async (request, reply) => {
     const input = passkeyChallengeRequestSchema.parse(request.body ?? {});
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/passkey/auth/challenge",
       body: input,
@@ -206,10 +221,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/passkey/auth/verify", async (request, reply) => {
     const input = passkeyVerifyRequestSchema.parse(request.body);
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/passkey/auth/verify",
       body: input,
@@ -220,10 +236,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/magic-link/request", async (request, reply) => {
     const input = magicLinkRequestSchema.parse(request.body);
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/magic-link/request",
       body: input,
@@ -234,10 +251,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/magic-link/verify", async (request, reply) => {
     const input = magicLinkVerifySchema.parse(request.body);
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/magic-link/verify",
       body: input,
@@ -248,10 +266,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/refresh", async (request, reply) => {
     const input = refreshRequestSchema.parse(request.body);
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/refresh",
       body: input,
@@ -262,10 +281,11 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/auth/logout", async (request, reply) => {
     const input = logoutRequestSchema.parse(request.body);
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "POST",
       path: "/v1/auth/logout",
       body: input,
@@ -279,10 +299,11 @@ export async function registerRoutes(app: FastifyInstance) {
       return reply.status(401).send(unauthorized(request.id));
     }
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "GET",
       path: "/v1/auth/me",
       responseSchema: meResponseSchema
@@ -295,10 +316,11 @@ export async function registerRoutes(app: FastifyInstance) {
       return reply.status(401).send(unauthorized(request.id));
     }
 
-    return proxyIdentity({
+    return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
       method: "GET",
       path: "/v1/auth/me",
       responseSchema: meResponseSchema
@@ -322,104 +344,91 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post("/v1/orders/quote", async (request) => {
+  app.post("/v1/orders/quote", async (request, reply) => {
     const input = quoteRequestSchema.parse(request.body);
 
-    return orderQuoteSchema.parse({
-      quoteId: "123e4567-e89b-12d3-a456-426614174001",
-      locationId: input.locationId,
-      items: input.items.map((item) => ({
-        itemId: item.itemId,
-        quantity: item.quantity,
-        unitPriceCents: 500
-      })),
-      subtotal: { currency: "USD", amountCents: 500 },
-      discount: { currency: "USD", amountCents: 0 },
-      tax: { currency: "USD", amountCents: 30 },
-      total: { currency: "USD", amountCents: 530 },
-      pointsToRedeem: input.pointsToRedeem,
-      quoteHash: "quote-hash"
+    return proxyUpstream({
+      request,
+      reply,
+      baseUrl: ordersBaseUrl,
+      serviceLabel: "Orders",
+      method: "POST",
+      path: "/v1/orders/quote",
+      body: input,
+      responseSchema: orderQuoteSchema
     });
   });
 
-  app.post("/v1/orders", async (request) => {
+  app.post("/v1/orders", async (request, reply) => {
     const input = createOrderRequestSchema.parse(request.body);
 
-    return orderSchema.parse({
-      id: "123e4567-e89b-12d3-a456-426614174002",
-      locationId: "flagship-01",
-      status: "PENDING_PAYMENT",
-      items: [],
-      total: { currency: "USD", amountCents: 530 },
-      pickupCode: input.quoteHash.slice(0, 6),
-      timeline: [
-        {
-          status: "PENDING_PAYMENT",
-          occurredAt: new Date().toISOString()
-        }
-      ]
+    return proxyUpstream({
+      request,
+      reply,
+      baseUrl: ordersBaseUrl,
+      serviceLabel: "Orders",
+      method: "POST",
+      path: "/v1/orders",
+      body: input,
+      responseSchema: orderSchema
     });
   });
 
-  app.post("/v1/orders/:orderId/pay", async (request) => {
-    const { orderId } = request.params as { orderId: string };
+  app.post("/v1/orders/:orderId/pay", async (request, reply) => {
+    const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = payOrderRequestSchema.parse(request.body);
 
-    return orderSchema.parse({
-      id: orderId,
-      locationId: "flagship-01",
-      status: "PAID",
-      items: [],
-      total: { currency: "USD", amountCents: 530 },
-      pickupCode: input.idempotencyKey.slice(0, 6),
-      timeline: [
-        {
-          status: "PAID",
-          occurredAt: new Date().toISOString(),
-          note: "Payment accepted"
-        }
-      ]
+    return proxyUpstream({
+      request,
+      reply,
+      baseUrl: ordersBaseUrl,
+      serviceLabel: "Orders",
+      method: "POST",
+      path: `/v1/orders/${orderId}/pay`,
+      body: input,
+      responseSchema: orderSchema
     });
   });
 
-  app.get("/v1/orders", async () => z.array(orderSchema).parse([]));
+  app.get("/v1/orders", async (request, reply) =>
+    proxyUpstream({
+      request,
+      reply,
+      baseUrl: ordersBaseUrl,
+      serviceLabel: "Orders",
+      method: "GET",
+      path: "/v1/orders",
+      responseSchema: z.array(orderSchema)
+    })
+  );
 
-  app.get("/v1/orders/:orderId", async (request) => {
-    const { orderId } = request.params as { orderId: string };
+  app.get("/v1/orders/:orderId", async (request, reply) => {
+    const { orderId } = orderIdParamsSchema.parse(request.params);
 
-    return orderSchema.parse({
-      id: orderId,
-      locationId: "flagship-01",
-      status: "IN_PREP",
-      items: [],
-      total: { currency: "USD", amountCents: 530 },
-      pickupCode: "ABC123",
-      timeline: [
-        {
-          status: "IN_PREP",
-          occurredAt: new Date().toISOString()
-        }
-      ]
+    return proxyUpstream({
+      request,
+      reply,
+      baseUrl: ordersBaseUrl,
+      serviceLabel: "Orders",
+      method: "GET",
+      path: `/v1/orders/${orderId}`,
+      responseSchema: orderSchema
     });
   });
 
-  app.post("/v1/orders/:orderId/cancel", async (request) => {
-    const { orderId } = request.params as { orderId: string };
+  app.post("/v1/orders/:orderId/cancel", async (request, reply) => {
+    const { orderId } = orderIdParamsSchema.parse(request.params);
+    const input = cancelOrderRequestSchema.parse(request.body);
 
-    return orderSchema.parse({
-      id: orderId,
-      locationId: "flagship-01",
-      status: "CANCELED",
-      items: [],
-      total: { currency: "USD", amountCents: 0 },
-      pickupCode: "CANCEL",
-      timeline: [
-        {
-          status: "CANCELED",
-          occurredAt: new Date().toISOString(),
-          note: "Canceled by customer"
-        }
-      ]
+    return proxyUpstream({
+      request,
+      reply,
+      baseUrl: ordersBaseUrl,
+      serviceLabel: "Orders",
+      method: "POST",
+      path: `/v1/orders/${orderId}/cancel`,
+      body: input,
+      responseSchema: orderSchema
     });
   });
 
