@@ -8,6 +8,15 @@
     "schemas": {}
   },
   "paths": {
+    "/metrics": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "responses": {
