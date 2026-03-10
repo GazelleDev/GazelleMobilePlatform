@@ -124,9 +124,13 @@ If unreachable:
   - Live menu fetch path with in-app fallback behavior
   - Item customization and cart pricing summary
   - Signed-in checkout path: quote -> create -> pay (Apple Pay token input + demo token helper)
+  - Clover path simulation via token markers:
+    - token contains `decline` -> declined charge
+    - token contains `timeout` -> timeout charge
 
 ## Current Limits (Expected)
 
 - Gateway menu route currently returns an empty category payload, so the app may use fallback catalog UI.
-- Payments, loyalty, and notifications services run locally but are still scaffold-level endpoints.
+- Loyalty and notifications services remain scaffold-level endpoints.
+- Payments currently uses simulated Clover outcomes (not a live Clover merchant integration).
 - Apple Pay token collection in mobile is currently dev-mode input (not native Apple Pay sheet yet).

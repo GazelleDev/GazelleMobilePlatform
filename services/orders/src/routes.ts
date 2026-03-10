@@ -28,6 +28,50 @@ const serviceErrorSchema = z.object({
   details: z.record(z.unknown()).optional()
 });
 
+const paymentsChargeRequestSchema = z.object({
+  orderId: z.string().uuid(),
+  amountCents: z.number().int().positive(),
+  currency: z.literal("USD"),
+  applePayToken: z.string().min(1),
+  idempotencyKey: z.string().min(1)
+});
+
+const paymentsChargeStatusSchema = z.enum(["SUCCEEDED", "DECLINED", "TIMEOUT"]);
+
+const paymentsChargeResponseSchema = z.object({
+  paymentId: z.string().uuid(),
+  provider: z.literal("CLOVER"),
+  orderId: z.string().uuid(),
+  status: paymentsChargeStatusSchema,
+  approved: z.boolean(),
+  amountCents: z.number().int().positive(),
+  currency: z.literal("USD"),
+  occurredAt: z.string().datetime(),
+  declineCode: z.string().optional(),
+  message: z.string().optional()
+});
+
+const paymentsRefundRequestSchema = z.object({
+  orderId: z.string().uuid(),
+  paymentId: z.string().uuid(),
+  amountCents: z.number().int().positive(),
+  currency: z.literal("USD"),
+  reason: z.string().min(1),
+  idempotencyKey: z.string().min(1)
+});
+
+const paymentsRefundResponseSchema = z.object({
+  refundId: z.string().uuid(),
+  provider: z.literal("CLOVER"),
+  orderId: z.string().uuid(),
+  paymentId: z.string().uuid(),
+  status: z.enum(["REFUNDED", "REJECTED"]),
+  amountCents: z.number().int().positive(),
+  currency: z.literal("USD"),
+  occurredAt: z.string().datetime(),
+  message: z.string().optional()
+});
+
 const unitPriceByItemId: Record<string, number> = {
   latte: 675,
   "cold-brew": 550,
@@ -45,6 +89,7 @@ const quotesById = new Map<string, OrderQuote>();
 const ordersById = new Map<string, Order>();
 const createOrderIdempotencyMap = new Map<string, string>();
 const paymentIdempotencyMap = new Map<string, Order>();
+const paymentIdByOrderId = new Map<string, string>();
 
 function sendError(
   reply: FastifyReply,
@@ -64,6 +109,18 @@ function sendError(
       details: input.details
     })
   );
+}
+
+function parseJsonSafely(rawBody: string): unknown {
+  if (!rawBody) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(rawBody) as unknown;
+  } catch {
+    return rawBody;
+  }
 }
 
 function buildQuoteHash(input: {
@@ -178,6 +235,8 @@ function getOrderList() {
 }
 
 export async function registerRoutes(app: FastifyInstance) {
+  const paymentsBaseUrl = process.env.PAYMENTS_SERVICE_BASE_URL ?? "http://127.0.0.1:3003";
+
   app.get("/health", async () => ({ status: "ok", service: "orders" }));
   app.get("/ready", async () => ({ status: "ready", service: "orders" }));
 
@@ -262,11 +321,90 @@ export async function registerRoutes(app: FastifyInstance) {
       return existingPaymentResult;
     }
 
-    const paidOrder =
-      existingOrder.status === "PENDING_PAYMENT"
-        ? appendOrderStatus(existingOrder, "PAID", "Payment accepted")
-        : existingOrder;
+    if (existingOrder.status !== "PENDING_PAYMENT") {
+      return existingOrder;
+    }
+
+    const chargeRequestPayload = paymentsChargeRequestSchema.parse({
+      orderId,
+      amountCents: existingOrder.total.amountCents,
+      currency: existingOrder.total.currency,
+      applePayToken: input.applePayToken,
+      idempotencyKey: input.idempotencyKey
+    });
+
+    let chargeResponse: Response;
+    try {
+      chargeResponse = await fetch(`${paymentsBaseUrl}/v1/payments/charges`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": request.id
+        },
+        body: JSON.stringify(chargeRequestPayload)
+      });
+    } catch {
+      return sendError(reply, {
+        statusCode: 502,
+        code: "PAYMENTS_UNAVAILABLE",
+        message: "Payments service is unavailable",
+        requestId: request.id
+      });
+    }
+
+    const parsedChargeBody = parseJsonSafely(await chargeResponse.text());
+
+    if (!chargeResponse.ok) {
+      return sendError(reply, {
+        statusCode: 502,
+        code: "PAYMENTS_ERROR",
+        message: `Payments charge request failed with status ${chargeResponse.status}`,
+        requestId: request.id,
+        details: { upstreamBody: parsedChargeBody }
+      });
+    }
+
+    const parsedCharge = paymentsChargeResponseSchema.safeParse(parsedChargeBody);
+    if (!parsedCharge.success) {
+      return sendError(reply, {
+        statusCode: 502,
+        code: "PAYMENTS_INVALID_RESPONSE",
+        message: "Payments service returned an invalid charge response",
+        requestId: request.id,
+        details: parsedCharge.error.flatten()
+      });
+    }
+
+    if (parsedCharge.data.status === "DECLINED") {
+      return sendError(reply, {
+        statusCode: 402,
+        code: "PAYMENT_DECLINED",
+        message: parsedCharge.data.message ?? "Payment was declined",
+        requestId: request.id,
+        details: {
+          paymentId: parsedCharge.data.paymentId,
+          provider: parsedCharge.data.provider,
+          declineCode: parsedCharge.data.declineCode
+        }
+      });
+    }
+
+    if (parsedCharge.data.status === "TIMEOUT") {
+      return sendError(reply, {
+        statusCode: 504,
+        code: "PAYMENT_TIMEOUT",
+        message: parsedCharge.data.message ?? "Payment timed out",
+        requestId: request.id,
+        details: {
+          paymentId: parsedCharge.data.paymentId,
+          provider: parsedCharge.data.provider
+        }
+      });
+    }
+
+    const paidOrder = appendOrderStatus(existingOrder, "PAID", "Clover payment accepted");
     ordersById.set(orderId, paidOrder);
+    paymentIdByOrderId.set(orderId, parsedCharge.data.paymentId);
     paymentIdempotencyMap.set(idempotencyKey, paidOrder);
 
     return paidOrder;
@@ -320,7 +458,91 @@ export async function registerRoutes(app: FastifyInstance) {
       return existingOrder;
     }
 
-    const canceledOrder = appendOrderStatus(existingOrder, "CANCELED", `Canceled by customer: ${input.reason}`);
+    let refundNote = "";
+    if (existingOrder.status === "PAID") {
+      const paymentId = paymentIdByOrderId.get(orderId);
+      if (!paymentId) {
+        return sendError(reply, {
+          statusCode: 409,
+          code: "REFUND_REFERENCE_MISSING",
+          message: "Unable to locate payment reference for refund",
+          requestId: request.id,
+          details: { orderId }
+        });
+      }
+
+      const refundPayload = paymentsRefundRequestSchema.parse({
+        orderId,
+        paymentId,
+        amountCents: existingOrder.total.amountCents,
+        currency: existingOrder.total.currency,
+        reason: input.reason,
+        idempotencyKey: `cancel:${orderId}`
+      });
+
+      let refundResponse: Response;
+      try {
+        refundResponse = await fetch(`${paymentsBaseUrl}/v1/payments/refunds`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-request-id": request.id
+          },
+          body: JSON.stringify(refundPayload)
+        });
+      } catch {
+        return sendError(reply, {
+          statusCode: 502,
+          code: "PAYMENTS_UNAVAILABLE",
+          message: "Payments service is unavailable",
+          requestId: request.id
+        });
+      }
+
+      const parsedRefundBody = parseJsonSafely(await refundResponse.text());
+      if (!refundResponse.ok) {
+        return sendError(reply, {
+          statusCode: 502,
+          code: "REFUND_REQUEST_FAILED",
+          message: `Payments refund request failed with status ${refundResponse.status}`,
+          requestId: request.id,
+          details: { upstreamBody: parsedRefundBody }
+        });
+      }
+
+      const parsedRefund = paymentsRefundResponseSchema.safeParse(parsedRefundBody);
+      if (!parsedRefund.success) {
+        return sendError(reply, {
+          statusCode: 502,
+          code: "PAYMENTS_INVALID_RESPONSE",
+          message: "Payments service returned an invalid refund response",
+          requestId: request.id,
+          details: parsedRefund.error.flatten()
+        });
+      }
+
+      if (parsedRefund.data.status === "REJECTED") {
+        return sendError(reply, {
+          statusCode: 409,
+          code: "REFUND_REJECTED",
+          message: parsedRefund.data.message ?? "Clover rejected the refund",
+          requestId: request.id,
+          details: {
+            paymentId: parsedRefund.data.paymentId,
+            refundId: parsedRefund.data.refundId,
+            provider: parsedRefund.data.provider
+          }
+        });
+      }
+
+      refundNote = ` Refund submitted: ${parsedRefund.data.refundId}.`;
+    }
+
+    const canceledOrder = appendOrderStatus(
+      existingOrder,
+      "CANCELED",
+      `Canceled by customer: ${input.reason}.${refundNote}`
+    );
     ordersById.set(orderId, canceledOrder);
 
     return canceledOrder;
