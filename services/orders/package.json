@@ -14,7 +14,6 @@
     "openapi": "tsx src/openapi.ts"
   },
   "dependencies": {
-    "@gazelle/contracts-notifications": "workspace:*",
     "@gazelle/contracts-orders": "workspace:*",
     "@fastify/swagger": "^8.15.0",
     "@fastify/swagger-ui": "^3.1.0",

@@ -14,13 +14,15 @@ Last reviewed: `2026-03-10`
 - [x] M2 tracker `#22` was closed on `2026-03-10` after all M2 child issues (`#31`, `#32`, `#33`, `#34`) completed.
 - [x] Mobile M2 closeout work has landed in `main` via merged PRs `#56` and `#59`.
 - [x] Mobile local API fallback (`#60`) is merged to keep app defaults aligned with local gateway testing.
+- [x] M5.2 (`#44`) loyalty earn/redeem/reversal integration is complete in `main`.
+- [x] M5.3 (`#45`) push-token registration and order-state notifications are implemented in code.
 - [x] GitHub Project items `M1.1`, `M1.2`, and `M1.3` are marked `Done`.
 - [ ] `M1` tracker remains open (`#21`).
 - [ ] `M1.4` remains open (`#30`).
 - [ ] `M3` tracker and sub-issues remain open (`#23`, `#35`, `#36`, `#37`, `#38`).
 - [ ] `M4` tracker and sub-issues remain open (`#24`, `#39`, `#40`, `#41`, `#42`).
-- [ ] `M5` tracker and sub-issues remain open (`#25`, `#43`, `#44`, `#45`, `#46`).
+- [ ] `M5` tracker remains open (`#25`) with hardening follow-up `#46` still open.
 - [ ] `M6` tracker and sub-issues remain open (`#26`, `#47`, `#48`, `#49`, `#50`, `#51`, `#53`).
 
 ## Notes
-- Next active milestone focus is `M3`, starting with `M3.1` (`#35`).
+- Next active milestone focus is `M5.4` (`#46`) before promotion hardening in `M6`.

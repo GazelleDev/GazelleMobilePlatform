@@ -7,14 +7,35 @@ import {
   payOrderRequestSchema,
   quoteRequestSchema
 } from "@gazelle/contracts-orders";
-import {
-  orderStateDispatchResponseSchema,
-  orderStateNotificationSchema
-} from "@gazelle/contracts-notifications";
 import { z } from "zod";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
+});
+
+const notificationOrderStatusSchema = z.enum([
+  "PENDING_PAYMENT",
+  "PAID",
+  "IN_PREP",
+  "READY",
+  "COMPLETED",
+  "CANCELED"
+]);
+
+const orderStateNotificationSchema = z.object({
+  userId: z.string().uuid(),
+  orderId: z.string().uuid(),
+  status: notificationOrderStatusSchema,
+  pickupCode: z.string().min(1),
+  locationId: z.string().min(1),
+  occurredAt: z.string().datetime(),
+  note: z.string().optional()
+});
+
+const orderStateDispatchResponseSchema = z.object({
+  accepted: z.literal(true),
+  enqueued: z.number().int().nonnegative(),
+  deduplicated: z.boolean()
 });
 
 const orderIdParamsSchema = z.object({

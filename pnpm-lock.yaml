@@ -412,9 +412,6 @@ importers:
       '@gazelle/contracts-loyalty':
         specifier: workspace:*
         version: link:../../packages/contracts/loyalty
-      '@gazelle/contracts-notifications':
-        specifier: workspace:*
-        version: link:../../packages/contracts/notifications
       '@gazelle/contracts-orders':
         specifier: workspace:*
         version: link:../../packages/contracts/orders
@@ -590,9 +587,6 @@ importers:
       '@fastify/swagger-ui':
         specifier: ^3.1.0
         version: 3.1.0
-      '@gazelle/contracts-notifications':
-        specifier: workspace:*
-        version: link:../../packages/contracts/notifications
       '@gazelle/contracts-orders':
         specifier: workspace:*
         version: link:../../packages/contracts/orders
