@@ -3,9 +3,11 @@ import { useState } from "react";
 import { Link } from "expo-router";
 import { colorTokens } from "@gazelle/design-tokens";
 import { API_BASE_URL, apiClient } from "../src/api/client";
+import { useAuthSession } from "../src/auth/session";
 
 export default function HomeScreen() {
   const [gatewayStatus, setGatewayStatus] = useState<string>("");
+  const { isAuthenticated, isHydrating, session, signOut } = useAuthSession();
 
   return (
     <View className="flex-1 bg-background px-6 pt-24">
@@ -34,6 +36,17 @@ export default function HomeScreen() {
 
       {gatewayStatus ? <Text className="mt-2 text-xs text-foreground/70">{gatewayStatus}</Text> : null}
 
+      <View className="mt-3 rounded-2xl border border-foreground/15 bg-white px-4 py-4">
+        <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Session</Text>
+        {isHydrating ? (
+          <Text className="mt-1 text-sm text-foreground/70">Restoring secure session...</Text>
+        ) : isAuthenticated ? (
+          <Text className="mt-1 text-sm text-foreground/70">Signed in as {session?.userId}</Text>
+        ) : (
+          <Text className="mt-1 text-sm text-foreground/70">Signed out</Text>
+        )}
+      </View>
+
       <Link href="/auth" asChild>
         <Pressable className="mt-3 rounded-full border border-foreground px-6 py-4">
           <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-foreground">
@@ -41,6 +54,17 @@ export default function HomeScreen() {
           </Text>
         </Pressable>
       </Link>
+
+      {isAuthenticated ? (
+        <Pressable
+          className="mt-3 rounded-full border border-foreground px-6 py-4"
+          onPress={() => {
+            void signOut();
+          }}
+        >
+          <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-foreground">Sign Out</Text>
+        </Pressable>
+      ) : null}
 
       <Text className="mt-8 text-sm text-foreground/60">Palette anchor: {colorTokens.beigeLight}</Text>
     </View>
