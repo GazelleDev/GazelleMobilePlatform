@@ -12,6 +12,13 @@ import {
 } from "@gazelle/contracts-auth";
 import { menuResponseSchema, storeConfigResponseSchema } from "@gazelle/contracts-catalog";
 import { authSessionSchema } from "@gazelle/contracts-core";
+import {
+  createOrderRequestSchema,
+  orderQuoteSchema,
+  orderSchema,
+  payOrderRequestSchema,
+  quoteRequestSchema
+} from "@gazelle/contracts-orders";
 import { z } from "zod";
 
 export type ApiClientOptions = {
@@ -115,6 +122,45 @@ export class GazelleApiClient {
   async storeConfig(): Promise<z.output<typeof storeConfigResponseSchema>> {
     const data = await this.get<unknown>("/store/config");
     return storeConfigResponseSchema.parse(data);
+  }
+
+  async quoteOrder(input: z.input<typeof quoteRequestSchema>): Promise<z.output<typeof orderQuoteSchema>> {
+    quoteRequestSchema.parse(input);
+    const data = await this.post<unknown>("/orders/quote", input);
+    return orderQuoteSchema.parse(data);
+  }
+
+  async createOrder(input: z.input<typeof createOrderRequestSchema>): Promise<z.output<typeof orderSchema>> {
+    createOrderRequestSchema.parse(input);
+    const data = await this.post<unknown>("/orders", input);
+    return orderSchema.parse(data);
+  }
+
+  async payOrder(
+    orderId: string,
+    input: z.input<typeof payOrderRequestSchema>
+  ): Promise<z.output<typeof orderSchema>> {
+    z.string().uuid().parse(orderId);
+    payOrderRequestSchema.parse(input);
+    const data = await this.post<unknown>(`/orders/${orderId}/pay`, input);
+    return orderSchema.parse(data);
+  }
+
+  async listOrders(): Promise<Array<z.output<typeof orderSchema>>> {
+    const data = await this.get<unknown>("/orders");
+    return z.array(orderSchema).parse(data);
+  }
+
+  async getOrder(orderId: string): Promise<z.output<typeof orderSchema>> {
+    z.string().uuid().parse(orderId);
+    const data = await this.get<unknown>(`/orders/${orderId}`);
+    return orderSchema.parse(data);
+  }
+
+  async cancelOrder(orderId: string, input: { reason: string }): Promise<z.output<typeof orderSchema>> {
+    z.string().uuid().parse(orderId);
+    const data = await this.post<unknown>(`/orders/${orderId}/cancel`, input);
+    return orderSchema.parse(data);
   }
 
   private async request<T>(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<T> {

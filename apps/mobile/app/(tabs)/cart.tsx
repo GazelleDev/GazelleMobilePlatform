@@ -1,10 +1,12 @@
 import { Link } from "expo-router";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthSession } from "../../src/auth/session";
 import { buildPricingSummary, describeCustomization } from "../../src/cart/model";
 import { useCart } from "../../src/cart/store";
 import { formatUsd, resolveStoreConfigData, useStoreConfigQuery } from "../../src/menu/catalog";
+import { createDemoApplePayToken, useApplePayCheckoutMutation } from "../../src/orders/checkout";
 
 function SummaryRow({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }) {
   return (
@@ -22,6 +24,38 @@ export default function CartScreen() {
   const storeConfigQuery = useStoreConfigQuery();
   const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
   const pricingSummary = buildPricingSummary(subtotalCents, storeConfig.taxRateBasisPoints);
+  const checkoutMutation = useApplePayCheckoutMutation();
+  const [applePayToken, setApplePayToken] = useState("demo-apple-pay-token");
+  const [checkoutStatus, setCheckoutStatus] = useState("");
+
+  function handleApplePayCheckout() {
+    const token = applePayToken.trim();
+    if (!token) {
+      setCheckoutStatus("Enter an Apple Pay token before checkout.");
+      return;
+    }
+
+    setCheckoutStatus("Submitting Apple Pay payment...");
+    setApplePayToken("");
+
+    checkoutMutation.mutate(
+      {
+        locationId: storeConfig.locationId,
+        items,
+        applePayToken: token
+      },
+      {
+        onSuccess: (paidOrder) => {
+          clear();
+          setCheckoutStatus(`Payment accepted. Pickup code ${paidOrder.pickupCode}.`);
+        },
+        onError: (error) => {
+          const message = error instanceof Error ? error.message : "Checkout failed.";
+          setCheckoutStatus(message);
+        }
+      }
+    );
+  }
 
   return (
     <View className="flex-1 bg-background">
@@ -105,11 +139,39 @@ export default function CartScreen() {
             </View>
 
             {isAuthenticated ? (
-              <Pressable className="mt-1 rounded-full bg-foreground/50 px-5 py-4" disabled>
-                <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-background">
-                  Checkout (Coming Soon)
+              <View className="rounded-2xl border border-foreground/15 bg-white px-4 py-4">
+                <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Apple Pay token</Text>
+                <TextInput
+                  value={applePayToken}
+                  onChangeText={setApplePayToken}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  placeholder="Apple Pay token"
+                  className="mt-2 rounded-xl border border-foreground/20 bg-white px-4 py-3 text-foreground"
+                />
+
+                <Pressable
+                  className="mt-3 self-start rounded-full border border-foreground px-4 py-2"
+                  onPress={() => setApplePayToken(createDemoApplePayToken())}
+                >
+                  <Text className="text-xs font-semibold uppercase tracking-[1.5px] text-foreground">Use Demo Token</Text>
+                </Pressable>
+
+                <Pressable
+                  className={`mt-3 rounded-full px-5 py-4 ${checkoutMutation.isPending ? "bg-foreground/50" : "bg-foreground"}`}
+                  disabled={checkoutMutation.isPending}
+                  onPress={handleApplePayCheckout}
+                >
+                  <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-background">
+                    {checkoutMutation.isPending ? "Processing..." : "Pay and Place Order"}
+                  </Text>
+                </Pressable>
+
+                <Text className="mt-2 text-xs text-foreground/60">
+                  Tokens are used for this request and cleared from the form.
                 </Text>
-              </Pressable>
+              </View>
             ) : (
               <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/cart" } }} asChild>
                 <Pressable className="mt-1 rounded-full bg-foreground px-5 py-4">
@@ -120,11 +182,19 @@ export default function CartScreen() {
               </Link>
             )}
 
-            <Pressable className="rounded-full border border-foreground px-5 py-3" onPress={clear}>
+            <Pressable
+              className="rounded-full border border-foreground px-5 py-3"
+              onPress={() => {
+                clear();
+                setCheckoutStatus("");
+              }}
+            >
               <Text className="text-center text-xs font-semibold uppercase tracking-[1.5px] text-foreground">
                 Clear Cart
               </Text>
             </Pressable>
+
+            {checkoutStatus ? <Text className="text-xs text-foreground/70">{checkoutStatus}</Text> : null}
 
             {storeConfigQuery.error ? (
               <Text className="text-xs text-foreground/60">

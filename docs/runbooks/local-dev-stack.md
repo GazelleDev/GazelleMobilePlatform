@@ -123,9 +123,10 @@ If unreachable:
 - Menu + Cart:
   - Live menu fetch path with in-app fallback behavior
   - Item customization and cart pricing summary
+  - Signed-in checkout path: quote -> create -> pay (Apple Pay token input + demo token helper)
 
 ## Current Limits (Expected)
 
-- Checkout button is still `Coming Soon` after sign-in (no mobile checkout flow yet).
 - Gateway menu route currently returns an empty category payload, so the app may use fallback catalog UI.
 - Payments, loyalty, and notifications services run locally but are still scaffold-level endpoints.
+- Apple Pay token collection in mobile is currently dev-mode input (not native Apple Pay sheet yet).
