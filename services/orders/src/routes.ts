@@ -91,6 +91,12 @@ const createOrderIdempotencyMap = new Map<string, string>();
 const paymentIdempotencyMap = new Map<string, Order>();
 const paymentIdByOrderId = new Map<string, string>();
 
+function toRefundIdempotencyKey(orderId: string, reason: string) {
+  const normalizedReason = reason.trim().toLowerCase();
+  const reasonFingerprint = createHash("sha256").update(normalizedReason).digest("hex").slice(0, 16);
+  return `cancel:${orderId}:${reasonFingerprint}`;
+}
+
 function sendError(
   reply: FastifyReply,
   input: {
@@ -477,7 +483,7 @@ export async function registerRoutes(app: FastifyInstance) {
         amountCents: existingOrder.total.amountCents,
         currency: existingOrder.total.currency,
         reason: input.reason,
-        idempotencyKey: `cancel:${orderId}`
+        idempotencyKey: toRefundIdempotencyKey(orderId, input.reason)
       });
 
       let refundResponse: Response;

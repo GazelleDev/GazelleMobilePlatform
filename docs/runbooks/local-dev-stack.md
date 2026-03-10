@@ -127,6 +127,9 @@ If unreachable:
   - Clover path simulation via token markers:
     - token contains `decline` -> declined charge
     - token contains `timeout` -> timeout charge
+  - Retry recovery behavior:
+    - retry with same payment key keeps idempotent response
+    - retry with a new key can recover timeout/decline paths
 
 ## Current Limits (Expected)
 

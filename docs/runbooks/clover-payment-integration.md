@@ -42,6 +42,7 @@ For dev simulation, a cancel reason containing `reject` returns a rejected refun
 - Charges are idempotent in payments by `orderId:idempotencyKey`.
 - Refunds are idempotent in payments by `orderId:idempotencyKey`.
 - Orders keeps pay idempotency per `orderId:idempotencyKey` for paid responses.
+- Orders refund requests use `cancel:<orderId>:<reasonHashPrefix>` so identical cancel retries are idempotent while failed refund attempts can be retried with changed cancellation context.
 
 ## Verification
 
