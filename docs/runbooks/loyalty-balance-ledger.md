@@ -16,6 +16,14 @@ Validate loyalty balance and ledger behavior locally with deterministic points a
   - `GET /v1/loyalty/balance`
   - `GET /v1/loyalty/ledger`
 
+## Orders Integration Keys
+
+`services/orders` uses deterministic loyalty mutation keys per order:
+- `order:{orderId}:loyalty:redeem`
+- `order:{orderId}:loyalty:earn`
+- `order:{orderId}:loyalty:reverse-earn`
+- `order:{orderId}:loyalty:refund-redeem`
+
 ## Accounting Rules
 
 - `EARN`, `REDEEM`, and `REFUND` mutations use `amountCents` as the source of truth.

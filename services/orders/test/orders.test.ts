@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { orderQuoteSchema, orderSchema } from "@gazelle/contracts-orders";
 import { buildApp } from "../src/app.js";
@@ -24,6 +25,22 @@ describe("orders service", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
+    const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
+    const loyaltyIdempotency = new Map<
+      string,
+      {
+        fingerprint: string;
+        response: Record<string, unknown>;
+      }
+    >();
+    const loyaltyBalances = new Map<
+      string,
+      {
+        availablePoints: number;
+        pendingPoints: number;
+        lifetimeEarned: number;
+      }
+    >();
     fetchMock.mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
       const method = init?.method ?? "GET";
@@ -93,6 +110,90 @@ describe("orders service", () => {
           occurredAt: "2026-03-10T00:02:00.000Z",
           message: rejected ? "Clover rejected the refund" : "Clover accepted the refund"
         });
+      }
+
+      if (url.endsWith("/v1/loyalty/internal/ledger/apply") && method === "POST") {
+        const userId = String(body.userId ?? defaultUserId);
+        const idempotencyKey = String(body.idempotencyKey ?? "");
+        const mutationType = String(body.type ?? "");
+        const idempotencyScope = `${userId}:${idempotencyKey}`;
+        const fingerprint = JSON.stringify({
+          type: mutationType,
+          orderId: body.orderId ?? null,
+          amountCents: body.amountCents ?? null,
+          points: body.points ?? null
+        });
+        const existingMutation = loyaltyIdempotency.get(idempotencyScope);
+        if (existingMutation) {
+          if (existingMutation.fingerprint !== fingerprint) {
+            return paymentsResponse(
+              {
+                code: "IDEMPOTENCY_KEY_REUSE",
+                message: "idempotencyKey was already used with a different mutation payload"
+              },
+              409
+            );
+          }
+
+          return paymentsResponse(existingMutation.response);
+        }
+
+        const balance = loyaltyBalances.get(userId) ?? {
+          availablePoints: 2_000,
+          pendingPoints: 0,
+          lifetimeEarned: 2_000
+        };
+        let deltaPoints = 0;
+        let lifetimeDelta = 0;
+        if (mutationType === "EARN") {
+          const amountCents = Number(body.amountCents ?? 0);
+          deltaPoints = amountCents;
+          lifetimeDelta = amountCents;
+        } else if (mutationType === "REDEEM") {
+          deltaPoints = -Number(body.amountCents ?? 0);
+        } else if (mutationType === "REFUND") {
+          deltaPoints = Number(body.amountCents ?? 0);
+        } else if (mutationType === "ADJUSTMENT") {
+          deltaPoints = Number(body.points ?? 0);
+        } else {
+          return paymentsResponse({ code: "INVALID_LOYALTY_MUTATION" }, 400);
+        }
+
+        if (balance.availablePoints + deltaPoints < 0) {
+          return paymentsResponse(
+            {
+              code: "INSUFFICIENT_POINTS",
+              message: "Mutation would result in a negative availablePoints balance"
+            },
+            409
+          );
+        }
+
+        const nextBalance = {
+          availablePoints: balance.availablePoints + deltaPoints,
+          pendingPoints: balance.pendingPoints,
+          lifetimeEarned: balance.lifetimeEarned + lifetimeDelta
+        };
+        loyaltyBalances.set(userId, nextBalance);
+
+        const response = {
+          entry: {
+            id: randomUUID(),
+            type: mutationType,
+            points: deltaPoints,
+            orderId: body.orderId,
+            createdAt: "2026-03-10T00:03:00.000Z"
+          },
+          balance: {
+            userId,
+            ...nextBalance
+          }
+        };
+        loyaltyIdempotency.set(idempotencyScope, {
+          fingerprint,
+          response
+        });
+        return paymentsResponse(response);
       }
 
       throw new Error(`Unhandled payments request in test: ${method} ${url}`);
@@ -211,7 +312,14 @@ describe("orders service", () => {
     expect(paidOrder.status).toBe("PAID");
     expect(paidOrderRepeat.timeline).toHaveLength(paidOrder.timeline.length);
     expect(paidOrder.timeline).toHaveLength(2);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const paymentChargeCalls = fetchMock.mock.calls.filter(([input]) =>
+      (typeof input === "string" ? input : input.toString()).endsWith("/v1/payments/charges")
+    );
+    expect(paymentChargeCalls).toHaveLength(1);
+    const loyaltyMutationCalls = fetchMock.mock.calls.filter(([input]) =>
+      (typeof input === "string" ? input : input.toString()).endsWith("/v1/loyalty/internal/ledger/apply")
+    );
+    expect(loyaltyMutationCalls).toHaveLength(2);
 
     await app.close();
   });
@@ -364,6 +472,33 @@ describe("orders service", () => {
     });
     expect(successfulCancel.statusCode).toBe(200);
     expect(orderSchema.parse(successfulCancel.json()).status).toBe("CANCELED");
+    const loyaltyMutations = fetchMock.mock.calls
+      .filter(
+        ([input, init]) =>
+          (typeof input === "string" ? input : input.toString()).endsWith("/v1/loyalty/internal/ledger/apply") &&
+          (init?.method ?? "GET") === "POST"
+      )
+      .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    expect(loyaltyMutations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "REDEEM",
+          idempotencyKey: `order:${paidOrderCandidate.id}:loyalty:redeem`
+        }),
+        expect.objectContaining({
+          type: "EARN",
+          idempotencyKey: `order:${paidOrderCandidate.id}:loyalty:earn`
+        }),
+        expect.objectContaining({
+          type: "ADJUSTMENT",
+          idempotencyKey: `order:${paidOrderCandidate.id}:loyalty:reverse-earn`
+        }),
+        expect.objectContaining({
+          type: "REFUND",
+          idempotencyKey: `order:${paidOrderCandidate.id}:loyalty:refund-redeem`
+        })
+      ])
+    );
 
     const rejectedRefundQuote = await app.inject({
       method: "POST",
