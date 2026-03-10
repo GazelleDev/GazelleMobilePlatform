@@ -1,41 +1,20 @@
-import { menuResponseSchema } from "@gazelle/contracts-catalog";
+import { buildMenuSyncConfig, createMenuSyncRuntime, startMenuSyncWorker } from "./worker.js";
 
-const intervalMs = Number(process.env.MENU_SYNC_INTERVAL_MS ?? 300000);
-const sourceUrl = process.env.WEBAPP_MENU_SOURCE_URL ?? "https://webapp.gazellecoffee.com/api/content/public";
+let workerHandle: { stop: () => void } | undefined;
 
-async function syncOnce() {
-  const response = await fetch(sourceUrl);
-
-  if (!response.ok) {
-    throw new Error(`Menu source responded with ${response.status}`);
-  }
-
-  const payload = await response.json();
-
-  const parsed = menuResponseSchema.safeParse({
-    locationId: "flagship-01",
-    currency: "USD",
-    categories: payload?.menu?.categories ?? []
-  });
-
-  if (!parsed.success) {
-    throw new Error(parsed.error.message);
-  }
-
-  // TODO: persist parsed menu into catalog schema tables.
-  console.log(`[menu-sync] synced ${parsed.data.categories.length} categories`);
+function shutdown(signal: NodeJS.Signals) {
+  console.info(`[menu-sync] received ${signal}; stopping worker loop`);
+  workerHandle?.stop();
 }
 
-async function run() {
-  await syncOnce();
-  setInterval(() => {
-    void syncOnce().catch((error) => {
-      console.error("[menu-sync] sync failed", error);
-    });
-  }, intervalMs);
-}
+try {
+  const config = buildMenuSyncConfig();
+  const runtime = createMenuSyncRuntime(config);
+  workerHandle = startMenuSyncWorker(config, runtime);
 
-run().catch((error) => {
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+} catch (error) {
   console.error("[menu-sync] fatal", error);
   process.exit(1);
-});
+}
