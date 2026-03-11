@@ -24,7 +24,7 @@ Last updated: `2026-03-11`
 
 - [x] Tighten passkey verify contract from `record(unknown)` to explicit credential payload.
 - [x] Implement WebAuthn challenge/verify with real credential persistence.
-- [ ] Integrate mobile passkeys on device (custom dev client path).
+- [x] Integrate mobile passkeys on device (custom dev client path).
 - [x] Replace Apple identity-token manual input with native Apple auth.
 
 ## Phase 3: Real Apple Pay + Clover
