@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import Constants from "expo-constants";
 import { Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import * as AppleAuthentication from "expo-apple-authentication";
 import {
@@ -77,6 +78,10 @@ type PasskeysModule = {
 };
 
 function resolvePasskeysModule(): PasskeysModule | null {
+  if (Constants.appOwnership === "expo") {
+    return null;
+  }
+
   if (Platform.OS !== "ios" && Platform.OS !== "android") {
     return null;
   }
