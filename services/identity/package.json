@@ -14,6 +14,7 @@
     "openapi": "tsx src/openapi.ts"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^9.1.0",
     "@gazelle/contracts-auth": "workspace:*",
     "@gazelle/contracts-core": "workspace:*",
     "@gazelle/persistence": "workspace:*",

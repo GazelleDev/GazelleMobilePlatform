@@ -38,6 +38,8 @@ const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
 const defaultPasskeyRpId = "localhost";
 const defaultPasskeyRpName = "Gazelle";
 const defaultPasskeyTimeoutMs = 60_000;
+const passkeyVerifyRateLimit = { max: 12, timeWindow: 60_000 };
+const passkeyChallengeRateLimit = { max: 24, timeWindow: 60_000 };
 
 function parseCommaSeparatedEnv(value: string | undefined) {
   return (value ?? "")
@@ -176,208 +178,232 @@ export async function registerRoutes(app: FastifyInstance) {
     return challenge;
   });
 
-  app.post("/v1/auth/passkey/register/verify", async (request, reply) => {
-    const input = passkeyVerifyRequestSchema.parse(request.body);
-    if (!input.response.attestationObject) {
-      return reply.status(400).send(
-        buildApiError(
-          request.id,
-          "INVALID_PASSKEY_PAYLOAD",
-          "Register verification requires attestationObject in passkey response"
-        )
-      );
-    }
+  app.post(
+    "/v1/auth/passkey/register/verify",
+    {
+      config: {
+        rateLimit: passkeyVerifyRateLimit
+      }
+    },
+    async (request, reply) => {
+      const input = passkeyVerifyRequestSchema.parse(request.body);
+      if (!input.response.attestationObject) {
+        return reply.status(400).send(
+          buildApiError(
+            request.id,
+            "INVALID_PASSKEY_PAYLOAD",
+            "Register verification requires attestationObject in passkey response"
+          )
+        );
+      }
 
-    const challengeValue = extractChallengeFromClientData(input.response.clientDataJSON);
-    if (!challengeValue) {
-      return reply
-        .status(400)
-        .send(buildApiError(request.id, "INVALID_PASSKEY_PAYLOAD", "Unable to parse challenge from clientDataJSON"));
-    }
+      const challengeValue = extractChallengeFromClientData(input.response.clientDataJSON);
+      if (!challengeValue) {
+        return reply
+          .status(400)
+          .send(buildApiError(request.id, "INVALID_PASSKEY_PAYLOAD", "Unable to parse challenge from clientDataJSON"));
+      }
 
-    const challenge = await repository.getPasskeyChallenge("register", challengeValue);
-    if (!challenge) {
-      return reply
-        .status(401)
-        .send(buildApiError(request.id, "INVALID_PASSKEY_CHALLENGE", "Passkey challenge is invalid or expired"));
-    }
+      const challenge = await repository.getPasskeyChallenge("register", challengeValue);
+      if (!challenge) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_PASSKEY_CHALLENGE", "Passkey challenge is invalid or expired"));
+      }
 
-    try {
-      const verifiedRegistration = await verifyRegistrationResponse({
-        response: {
-          id: input.id,
-          rawId: input.rawId,
-          type: input.type,
+      try {
+        const verifiedRegistration = await verifyRegistrationResponse({
           response: {
-            clientDataJSON: input.response.clientDataJSON,
-            attestationObject: input.response.attestationObject,
-            transports: toPasskeyTransports(input.response.transports)
+            id: input.id,
+            rawId: input.rawId,
+            type: input.type,
+            response: {
+              clientDataJSON: input.response.clientDataJSON,
+              attestationObject: input.response.attestationObject,
+              transports: toPasskeyTransports(input.response.transports)
+            },
+            clientExtensionResults: input.clientExtensionResults ?? {}
           },
-          clientExtensionResults: input.clientExtensionResults ?? {}
-        },
-        expectedChallenge: challenge.challenge,
-        expectedOrigin:
-          passkeyConfig.expectedOrigins.length === 1 ? passkeyConfig.expectedOrigins[0] : passkeyConfig.expectedOrigins,
-        expectedRPID: challenge.rpId,
-        requireUserVerification: false
-      });
+          expectedChallenge: challenge.challenge,
+          expectedOrigin:
+            passkeyConfig.expectedOrigins.length === 1 ? passkeyConfig.expectedOrigins[0] : passkeyConfig.expectedOrigins,
+          expectedRPID: challenge.rpId,
+          requireUserVerification: false
+        });
 
-      if (!verifiedRegistration.verified || !verifiedRegistration.registrationInfo) {
+        if (!verifiedRegistration.verified || !verifiedRegistration.registrationInfo) {
+          return reply
+            .status(401)
+            .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey registration verification failed"));
+        }
+
+        const userId = challenge.userId ?? defaultUserId;
+        await repository.savePasskeyCredential({
+          credentialId: verifiedRegistration.registrationInfo.credential.id,
+          userId,
+          webauthnUserId: userId,
+          publicKey: Buffer.from(verifiedRegistration.registrationInfo.credential.publicKey).toString("base64url"),
+          counter: verifiedRegistration.registrationInfo.credential.counter,
+          transports: toPasskeyTransports(input.response.transports) ?? [],
+          deviceType: verifiedRegistration.registrationInfo.credentialDeviceType,
+          backedUp: verifiedRegistration.registrationInfo.credentialBackedUp
+        });
+        await repository.markPasskeyChallengeConsumed(challenge.challenge);
+
+        return issueSession({
+          repository,
+          seed: `passkey-register-${verifiedRegistration.registrationInfo.credential.id}`,
+          userId,
+          authMethod: "passkey-register"
+        });
+      } catch (error) {
+        app.log.warn({ error }, "passkey register verify failed");
         return reply
           .status(401)
           .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey registration verification failed"));
       }
+    }
+  );
 
-      const userId = challenge.userId ?? defaultUserId;
-      await repository.savePasskeyCredential({
-        credentialId: verifiedRegistration.registrationInfo.credential.id,
-        userId,
-        webauthnUserId: userId,
-        publicKey: Buffer.from(verifiedRegistration.registrationInfo.credential.publicKey).toString("base64url"),
-        counter: verifiedRegistration.registrationInfo.credential.counter,
-        transports: toPasskeyTransports(input.response.transports) ?? [],
-        deviceType: verifiedRegistration.registrationInfo.credentialDeviceType,
-        backedUp: verifiedRegistration.registrationInfo.credentialBackedUp
+  app.post(
+    "/v1/auth/passkey/auth/challenge",
+    {
+      config: {
+        rateLimit: passkeyChallengeRateLimit
+      }
+    },
+    async (request) => {
+      const input = passkeyChallengeRequestSchema.parse(request.body ?? {});
+      const credentials = input.userId ? await repository.listPasskeyCredentialsForUser(input.userId) : [];
+      const options = await generateAuthenticationOptions({
+        rpID: passkeyConfig.rpId,
+        timeout: passkeyConfig.timeoutMs,
+        userVerification: "preferred",
+        allowCredentials:
+          credentials.length > 0
+            ? credentials.map((credential) => ({
+                id: credential.credentialId,
+                transports: toPasskeyTransports(credential.transports)
+              }))
+            : undefined
       });
-      await repository.markPasskeyChallengeConsumed(challenge.challenge);
-
-      return issueSession({
-        repository,
-        seed: `passkey-register-${verifiedRegistration.registrationInfo.credential.id}`,
-        userId,
-        authMethod: "passkey-register"
+      const challenge = passkeyChallengeResponseSchema.parse({
+        challenge: options.challenge,
+        rpId: passkeyConfig.rpId,
+        timeoutMs: passkeyConfig.timeoutMs
       });
-    } catch (error) {
-      app.log.warn({ error }, "passkey register verify failed");
-      return reply
-        .status(401)
-        .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey registration verification failed"));
+
+      await repository.savePasskeyChallenge({
+        challenge: challenge.challenge,
+        flow: "auth",
+        userId: input.userId,
+        rpId: challenge.rpId,
+        timeoutMs: challenge.timeoutMs,
+        expiresAt: new Date(Date.now() + challenge.timeoutMs).toISOString()
+      });
+      return challenge;
     }
-  });
+  );
 
-  app.post("/v1/auth/passkey/auth/challenge", async (request) => {
-    const input = passkeyChallengeRequestSchema.parse(request.body ?? {});
-    const credentials = input.userId ? await repository.listPasskeyCredentialsForUser(input.userId) : [];
-    const options = await generateAuthenticationOptions({
-      rpID: passkeyConfig.rpId,
-      timeout: passkeyConfig.timeoutMs,
-      userVerification: "preferred",
-      allowCredentials:
-        credentials.length > 0
-          ? credentials.map((credential) => ({
-              id: credential.credentialId,
-              transports: toPasskeyTransports(credential.transports)
-            }))
-          : undefined
-    });
-    const challenge = passkeyChallengeResponseSchema.parse({
-      challenge: options.challenge,
-      rpId: passkeyConfig.rpId,
-      timeoutMs: passkeyConfig.timeoutMs
-    });
+  app.post(
+    "/v1/auth/passkey/auth/verify",
+    {
+      config: {
+        rateLimit: passkeyVerifyRateLimit
+      }
+    },
+    async (request, reply) => {
+      const input = passkeyVerifyRequestSchema.parse(request.body);
+      if (!input.response.authenticatorData || !input.response.signature) {
+        return reply.status(400).send(
+          buildApiError(
+            request.id,
+            "INVALID_PASSKEY_PAYLOAD",
+            "Authentication verification requires authenticatorData and signature"
+          )
+        );
+      }
 
-    await repository.savePasskeyChallenge({
-      challenge: challenge.challenge,
-      flow: "auth",
-      userId: input.userId,
-      rpId: challenge.rpId,
-      timeoutMs: challenge.timeoutMs,
-      expiresAt: new Date(Date.now() + challenge.timeoutMs).toISOString()
-    });
-    return challenge;
-  });
+      const challengeValue = extractChallengeFromClientData(input.response.clientDataJSON);
+      if (!challengeValue) {
+        return reply
+          .status(400)
+          .send(buildApiError(request.id, "INVALID_PASSKEY_PAYLOAD", "Unable to parse challenge from clientDataJSON"));
+      }
 
-  app.post("/v1/auth/passkey/auth/verify", async (request, reply) => {
-    const input = passkeyVerifyRequestSchema.parse(request.body);
-    if (!input.response.authenticatorData || !input.response.signature) {
-      return reply.status(400).send(
-        buildApiError(
-          request.id,
-          "INVALID_PASSKEY_PAYLOAD",
-          "Authentication verification requires authenticatorData and signature"
-        )
-      );
-    }
+      const challenge = await repository.getPasskeyChallenge("auth", challengeValue);
+      if (!challenge) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_PASSKEY_CHALLENGE", "Passkey challenge is invalid or expired"));
+      }
 
-    const challengeValue = extractChallengeFromClientData(input.response.clientDataJSON);
-    if (!challengeValue) {
-      return reply
-        .status(400)
-        .send(buildApiError(request.id, "INVALID_PASSKEY_PAYLOAD", "Unable to parse challenge from clientDataJSON"));
-    }
+      const credential = await repository.getPasskeyCredential(input.id);
+      if (!credential) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "UNKNOWN_PASSKEY_CREDENTIAL", "Passkey credential is not registered"));
+      }
 
-    const challenge = await repository.getPasskeyChallenge("auth", challengeValue);
-    if (!challenge) {
-      return reply
-        .status(401)
-        .send(buildApiError(request.id, "INVALID_PASSKEY_CHALLENGE", "Passkey challenge is invalid or expired"));
-    }
+      if (challenge.userId && challenge.userId !== credential.userId) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_PASSKEY_CREDENTIAL", "Passkey credential does not match user"));
+      }
 
-    const credential = await repository.getPasskeyCredential(input.id);
-    if (!credential) {
-      return reply
-        .status(401)
-        .send(buildApiError(request.id, "UNKNOWN_PASSKEY_CREDENTIAL", "Passkey credential is not registered"));
-    }
-
-    if (challenge.userId && challenge.userId !== credential.userId) {
-      return reply
-        .status(401)
-        .send(buildApiError(request.id, "INVALID_PASSKEY_CREDENTIAL", "Passkey credential does not match user"));
-    }
-
-    try {
-      const verifiedAuthentication = await verifyAuthenticationResponse({
-        response: {
-          id: input.id,
-          rawId: input.rawId,
-          type: input.type,
+      try {
+        const verifiedAuthentication = await verifyAuthenticationResponse({
           response: {
-            clientDataJSON: input.response.clientDataJSON,
-            authenticatorData: input.response.authenticatorData,
-            signature: input.response.signature,
-            userHandle: input.response.userHandle ?? undefined
+            id: input.id,
+            rawId: input.rawId,
+            type: input.type,
+            response: {
+              clientDataJSON: input.response.clientDataJSON,
+              authenticatorData: input.response.authenticatorData,
+              signature: input.response.signature,
+              userHandle: input.response.userHandle ?? undefined
+            },
+            clientExtensionResults: input.clientExtensionResults ?? {}
           },
-          clientExtensionResults: input.clientExtensionResults ?? {}
-        },
-        expectedChallenge: challenge.challenge,
-        expectedOrigin:
-          passkeyConfig.expectedOrigins.length === 1 ? passkeyConfig.expectedOrigins[0] : passkeyConfig.expectedOrigins,
-        expectedRPID: challenge.rpId,
-        credential: {
-          id: credential.credentialId,
-          publicKey: Buffer.from(credential.publicKey, "base64url"),
-          counter: credential.counter,
-          transports: toPasskeyTransports(credential.transports)
-        },
-        requireUserVerification: false
-      });
+          expectedChallenge: challenge.challenge,
+          expectedOrigin:
+            passkeyConfig.expectedOrigins.length === 1 ? passkeyConfig.expectedOrigins[0] : passkeyConfig.expectedOrigins,
+          expectedRPID: challenge.rpId,
+          credential: {
+            id: credential.credentialId,
+            publicKey: Buffer.from(credential.publicKey, "base64url"),
+            counter: credential.counter,
+            transports: toPasskeyTransports(credential.transports)
+          },
+          requireUserVerification: false
+        });
 
-      if (!verifiedAuthentication.verified || !verifiedAuthentication.authenticationInfo) {
+        if (!verifiedAuthentication.verified || !verifiedAuthentication.authenticationInfo) {
+          return reply
+            .status(401)
+            .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey authentication verification failed"));
+        }
+
+        await repository.updatePasskeyCredentialCounter(
+          credential.credentialId,
+          verifiedAuthentication.authenticationInfo.newCounter
+        );
+        await repository.markPasskeyChallengeConsumed(challenge.challenge);
+
+        return issueSession({
+          repository,
+          seed: `passkey-auth-${credential.credentialId}`,
+          userId: credential.userId,
+          authMethod: "passkey-auth"
+        });
+      } catch (error) {
+        app.log.warn({ error }, "passkey auth verify failed");
         return reply
           .status(401)
           .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey authentication verification failed"));
       }
-
-      await repository.updatePasskeyCredentialCounter(
-        credential.credentialId,
-        verifiedAuthentication.authenticationInfo.newCounter
-      );
-      await repository.markPasskeyChallengeConsumed(challenge.challenge);
-
-      return issueSession({
-        repository,
-        seed: `passkey-auth-${credential.credentialId}`,
-        userId: credential.userId,
-        authMethod: "passkey-auth"
-      });
-    } catch (error) {
-      app.log.warn({ error }, "passkey auth verify failed");
-      return reply
-        .status(401)
-        .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey authentication verification failed"));
     }
-  });
+  );
 
   app.post("/v1/auth/magic-link/request", async (request) => {
     const input = magicLinkRequestSchema.parse(request.body);
