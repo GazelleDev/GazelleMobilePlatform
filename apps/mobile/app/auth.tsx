@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import * as AppleAuthentication from "expo-apple-authentication";
-import * as Passkeys from "react-native-passkeys";
 import {
   useAppleExchangeMutation,
   usePasskeyAuthVerifyMutation,
@@ -46,6 +45,50 @@ function formatExpiresAt(expiresAt: string): string {
 const defaultPasskeyUserId = "123e4567-e89b-12d3-a456-426614174000";
 const defaultPasskeyRpName = "Gazelle";
 
+type PasskeyRegistrationResult = {
+  id: string;
+  rawId: string;
+  authenticatorAttachment?: "platform" | "cross-platform" | null;
+  response: {
+    clientDataJSON: string;
+    attestationObject: string;
+    transports?: string[];
+  };
+  clientExtensionResults?: Record<string, unknown>;
+};
+
+type PasskeyAssertionResult = {
+  id: string;
+  rawId: string;
+  authenticatorAttachment?: "platform" | "cross-platform" | null;
+  response: {
+    clientDataJSON: string;
+    authenticatorData: string;
+    signature: string;
+    userHandle?: string | null;
+  };
+  clientExtensionResults?: Record<string, unknown>;
+};
+
+type PasskeysModule = {
+  isSupported(): boolean;
+  create(options: Record<string, unknown>): Promise<PasskeyRegistrationResult | null>;
+  get(options: Record<string, unknown>): Promise<PasskeyAssertionResult | null>;
+};
+
+function resolvePasskeysModule(): PasskeysModule | null {
+  if (Platform.OS !== "ios" && Platform.OS !== "android") {
+    return null;
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    return require("react-native-passkeys") as PasskeysModule;
+  } catch {
+    return null;
+  }
+}
+
 export default function AuthScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
@@ -69,6 +112,7 @@ export default function AuthScreen() {
   const magicLinkVerify = useMagicLinkVerifyMutation();
   const meQuery = useMeQueryMutation();
   const returnTo = useMemo(() => resolveReturnToPath(params.returnTo), [params.returnTo]);
+  const passkeys = useMemo(() => resolvePasskeysModule(), []);
 
   useEffect(() => {
     if (isAuthenticated && returnTo) {
@@ -95,14 +139,20 @@ export default function AuthScreen() {
   }, []);
 
   useEffect(() => {
+    if (!passkeys) {
+      setPasskeyAvailable(false);
+      setPasskeyAvailabilityResolved(true);
+      return;
+    }
+
     try {
-      setPasskeyAvailable(Passkeys.isSupported());
+      setPasskeyAvailable(passkeys.isSupported());
     } catch {
       setPasskeyAvailable(false);
     } finally {
       setPasskeyAvailabilityResolved(true);
     }
-  }, []);
+  }, [passkeys]);
 
   const requestStatus = magicLinkRequest.isSuccess
     ? "Magic link requested successfully. Enter the token to verify session."
@@ -236,13 +286,17 @@ export default function AuthScreen() {
       setPasskeyActionStatus("Passkeys are unavailable on this device/build.");
       return;
     }
+    if (!passkeys) {
+      setPasskeyActionStatus("Passkeys native module is unavailable in this build.");
+      return;
+    }
 
     const userId = passkeyUserId.trim().length > 0 ? passkeyUserId.trim() : defaultPasskeyUserId;
     setPasskeyActionStatus("Requesting passkey registration challenge...");
 
     try {
       const challenge = await apiClient.passkeyRegisterChallenge({ userId });
-      const registration = await Passkeys.create({
+      const registration = await passkeys.create({
         challenge: challenge.challenge,
         rp: {
           id: challenge.rpId,
@@ -281,7 +335,7 @@ export default function AuthScreen() {
           attestationObject: registration.response.attestationObject,
           transports: registration.response.transports
         },
-        clientExtensionResults: registration.clientExtensionResults as Record<string, unknown>
+        clientExtensionResults: registration.clientExtensionResults ?? {}
       });
     } catch (error) {
       setPasskeyActionStatus(toPasskeyErrorMessage(error));
@@ -302,13 +356,17 @@ export default function AuthScreen() {
       setPasskeyActionStatus("Passkeys are unavailable on this device/build.");
       return;
     }
+    if (!passkeys) {
+      setPasskeyActionStatus("Passkeys native module is unavailable in this build.");
+      return;
+    }
 
     const userId = passkeyUserId.trim().length > 0 ? passkeyUserId.trim() : defaultPasskeyUserId;
     setPasskeyActionStatus("Requesting passkey sign-in challenge...");
 
     try {
       const challenge = await apiClient.passkeyAuthChallenge({ userId });
-      const assertion = await Passkeys.get({
+      const assertion = await passkeys.get({
         challenge: challenge.challenge,
         rpId: challenge.rpId,
         timeout: challenge.timeoutMs,
@@ -332,7 +390,7 @@ export default function AuthScreen() {
           signature: assertion.response.signature,
           userHandle: assertion.response.userHandle ?? null
         },
-        clientExtensionResults: assertion.clientExtensionResults as Record<string, unknown>
+        clientExtensionResults: assertion.clientExtensionResults ?? {}
       });
     } catch (error) {
       setPasskeyActionStatus(toPasskeyErrorMessage(error));
