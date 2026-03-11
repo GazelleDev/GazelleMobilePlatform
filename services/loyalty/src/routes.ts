@@ -21,6 +21,10 @@ const userHeadersSchema = z.object({
   "x-user-id": z.string().uuid().optional()
 });
 
+const gatewayHeadersSchema = z.object({
+  "x-gateway-token": z.string().optional()
+});
+
 const mutationBaseSchema = z.object({
   userId: z.string().uuid(),
   orderId: z.string().uuid().optional(),
@@ -166,6 +170,35 @@ function resolveUserId(request: FastifyRequest, reply: FastifyReply) {
   }
 
   return parsed.data["x-user-id"] ?? defaultUserId;
+}
+
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
+
+function authorizeGatewayRequest(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  gatewayToken: string | undefined
+) {
+  if (!gatewayToken) {
+    return true;
+  }
+
+  const parsedHeaders = gatewayHeadersSchema.safeParse(request.headers);
+  const providedToken = parsedHeaders.success ? parsedHeaders.data["x-gateway-token"] : undefined;
+  if (providedToken === gatewayToken) {
+    return true;
+  }
+
+  sendError(reply, {
+    statusCode: 401,
+    code: "UNAUTHORIZED_GATEWAY_REQUEST",
+    message: "Gateway token is invalid",
+    requestId: request.id
+  });
+  return false;
 }
 
 function resolveMutationPoints(input: ApplyLedgerMutation) {
@@ -451,6 +484,7 @@ async function createLoyaltyRepository(logger: FastifyBaseLogger): Promise<Loyal
 }
 
 export async function registerRoutes(app: FastifyInstance) {
+  const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const repository = await createLoyaltyRepository(app.log);
 
   app.addHook("onClose", async () => {
@@ -461,6 +495,10 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get("/ready", async () => ({ status: "ready", service: "loyalty", persistence: repository.backend }));
 
   app.get("/v1/loyalty/balance", async (request, reply) => {
+    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+      return;
+    }
+
     const userId = resolveUserId(request, reply);
     if (!userId) {
       return;
@@ -470,6 +508,10 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   app.get("/v1/loyalty/ledger", async (request, reply) => {
+    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+      return;
+    }
+
     const userId = resolveUserId(request, reply);
     if (!userId) {
       return;

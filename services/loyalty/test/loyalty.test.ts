@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loyaltyBalanceSchema, loyaltyLedgerEntrySchema } from "@gazelle/contracts-loyalty";
 import { z } from "zod";
 import { buildApp } from "../src/app.js";
@@ -235,5 +235,37 @@ describe("loyalty service", () => {
     });
 
     await app.close();
+  });
+
+  it("requires gateway token on customer routes when configured", async () => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "loyalty-gateway-token");
+    try {
+      const app = await buildApp();
+      const userId = "123e4567-e89b-12d3-a456-426614174406";
+
+      const unauthorizedBalance = await app.inject({
+        method: "GET",
+        url: "/v1/loyalty/balance",
+        headers: { "x-user-id": userId }
+      });
+      expect(unauthorizedBalance.statusCode).toBe(401);
+      expect(unauthorizedBalance.json()).toMatchObject({
+        code: "UNAUTHORIZED_GATEWAY_REQUEST"
+      });
+
+      const authorizedBalance = await app.inject({
+        method: "GET",
+        url: "/v1/loyalty/balance",
+        headers: {
+          "x-user-id": userId,
+          "x-gateway-token": "loyalty-gateway-token"
+        }
+      });
+      expect(authorizedBalance.statusCode).toBe(200);
+
+      await app.close();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

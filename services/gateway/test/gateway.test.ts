@@ -9,6 +9,7 @@ describe("gateway", () => {
   let previousCatalogBaseUrl: string | undefined;
   let previousLoyaltyBaseUrl: string | undefined;
   let previousNotificationsBaseUrl: string | undefined;
+  let previousGatewayInternalToken: string | undefined;
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -17,11 +18,13 @@ describe("gateway", () => {
     previousCatalogBaseUrl = process.env.CATALOG_SERVICE_BASE_URL;
     previousLoyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL;
     previousNotificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL;
+    previousGatewayInternalToken = process.env.GATEWAY_INTERNAL_API_TOKEN;
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
     process.env.ORDERS_SERVICE_BASE_URL = "http://orders.internal";
     process.env.CATALOG_SERVICE_BASE_URL = "http://catalog.internal";
     process.env.LOYALTY_SERVICE_BASE_URL = "http://loyalty.internal";
     process.env.NOTIFICATIONS_SERVICE_BASE_URL = "http://notifications.internal";
+    process.env.GATEWAY_INTERNAL_API_TOKEN = "gateway-test-token";
     vi.stubGlobal("fetch", fetchMock);
 
     fetchMock.mockImplementation(async (input, init) => {
@@ -330,6 +333,12 @@ describe("gateway", () => {
     } else {
       process.env.NOTIFICATIONS_SERVICE_BASE_URL = previousNotificationsBaseUrl;
     }
+
+    if (previousGatewayInternalToken === undefined) {
+      delete process.env.GATEWAY_INTERNAL_API_TOKEN;
+    } else {
+      process.env.GATEWAY_INTERNAL_API_TOKEN = previousGatewayInternalToken;
+    }
   });
 
   it("returns health", async () => {
@@ -568,6 +577,7 @@ describe("gateway", () => {
     if (quoteCall) {
       const upstreamHeaders = new Headers((quoteCall[1]?.headers ?? {}) as HeadersInit);
       expect(upstreamHeaders.get("x-request-id")).toBe(requestId);
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
     }
 
     const metricsResponse = await app.inject({

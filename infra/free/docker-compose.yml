@@ -23,6 +23,7 @@ services:
       - CATALOG_SERVICE_BASE_URL=http://catalog:3002
       - LOYALTY_SERVICE_BASE_URL=http://loyalty:3004
       - NOTIFICATIONS_SERVICE_BASE_URL=http://notifications:3005
+      - GATEWAY_INTERNAL_API_TOKEN=${GATEWAY_INTERNAL_API_TOKEN:-}
     depends_on:
       - identity
       - orders
@@ -47,6 +48,7 @@ services:
       - PAYMENTS_SERVICE_BASE_URL=http://payments:3003
       - LOYALTY_SERVICE_BASE_URL=http://loyalty:3004
       - NOTIFICATIONS_SERVICE_BASE_URL=http://notifications:3005
+      - GATEWAY_INTERNAL_API_TOKEN=${GATEWAY_INTERNAL_API_TOKEN:-}
 
   catalog:
     image: ghcr.io/gazelledev/gazellemobileplatform/catalog:${IMAGE_TAG:-latest}
@@ -68,6 +70,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=3004
+      - GATEWAY_INTERNAL_API_TOKEN=${GATEWAY_INTERNAL_API_TOKEN:-}
 
   notifications:
     image: ghcr.io/gazelledev/gazellemobileplatform/notifications:${IMAGE_TAG:-latest}
@@ -75,6 +78,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=3005
+      - GATEWAY_INTERNAL_API_TOKEN=${GATEWAY_INTERNAL_API_TOKEN:-}
 
   postgres:
     image: postgres:16-alpine

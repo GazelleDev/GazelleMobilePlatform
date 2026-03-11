@@ -53,6 +53,11 @@ function ensureBearerAuth(request: FastifyRequest, reply: FastifyReply) {
   return true;
 }
 
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
+
 const authSuccessSchema = z.object({ success: z.literal(true) });
 
 function parseJsonSafely(rawBody: string): unknown {
@@ -86,9 +91,10 @@ async function proxyUpstream<TResponse>(params: {
   method: "GET" | "POST" | "PUT";
   path: string;
   body?: unknown;
+  additionalHeaders?: Record<string, string | undefined>;
   responseSchema: z.ZodType<TResponse>;
 }) {
-  const { request, reply, baseUrl, serviceLabel, method, path, body, responseSchema } = params;
+  const { request, reply, baseUrl, serviceLabel, method, path, body, additionalHeaders, responseSchema } = params;
 
   const headers: Record<string, string> = {
     "x-request-id": request.id
@@ -101,6 +107,13 @@ async function proxyUpstream<TResponse>(params: {
   }
   if (typeof userIdHeader === "string") {
     headers["x-user-id"] = userIdHeader;
+  }
+  if (additionalHeaders) {
+    for (const [key, value] of Object.entries(additionalHeaders)) {
+      if (value) {
+        headers[key] = value;
+      }
+    }
   }
 
   if (body !== undefined) {
@@ -167,6 +180,7 @@ export async function registerRoutes(app: FastifyInstance) {
   const catalogBaseUrl = process.env.CATALOG_SERVICE_BASE_URL ?? "http://127.0.0.1:3002";
   const loyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL ?? "http://127.0.0.1:3004";
   const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
+  const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
 
   app.get("/health", async () => ({ status: "ok", service: "gateway" }));
   app.get("/ready", async () => ({ status: "ready", service: "gateway" }));
@@ -384,6 +398,9 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: "/v1/orders/quote",
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderQuoteSchema
     });
   });
@@ -402,6 +419,9 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: "/v1/orders",
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
@@ -421,6 +441,9 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: `/v1/orders/${orderId}/pay`,
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
@@ -437,6 +460,9 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Orders",
       method: "GET",
       path: "/v1/orders",
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: z.array(orderSchema)
     });
   });
@@ -454,6 +480,9 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Orders",
       method: "GET",
       path: `/v1/orders/${orderId}`,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
@@ -473,6 +502,9 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: `/v1/orders/${orderId}/cancel`,
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
@@ -489,6 +521,9 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Loyalty",
       method: "GET",
       path: "/v1/loyalty/balance",
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: loyaltyBalanceSchema
     });
   });
@@ -505,6 +540,9 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Loyalty",
       method: "GET",
       path: "/v1/loyalty/ledger",
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: z.array(loyaltyLedgerEntrySchema)
     });
   });
@@ -523,6 +561,9 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "PUT",
       path: "/v1/devices/push-token",
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: pushTokenUpsertResponseSchema
     });
   });
