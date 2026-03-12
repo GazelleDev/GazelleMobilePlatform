@@ -237,6 +237,42 @@ describe("loyalty service", () => {
     await app.close();
   });
 
+  it("rate limits internal ledger mutations when configured threshold is reached", async () => {
+    vi.stubEnv("LOYALTY_RATE_LIMIT_MUTATION_MAX", "1");
+    vi.stubEnv("LOYALTY_RATE_LIMIT_WINDOW_MS", "60000");
+    const app = await buildApp();
+    const userId = "123e4567-e89b-12d3-a456-426614174406";
+
+    try {
+      const firstMutation = await app.inject({
+        method: "POST",
+        url: "/v1/loyalty/internal/ledger/apply",
+        payload: {
+          userId,
+          type: "EARN",
+          amountCents: 100,
+          idempotencyKey: "evt-rate-limit-1"
+        }
+      });
+      expect(firstMutation.statusCode).toBe(200);
+
+      const secondMutation = await app.inject({
+        method: "POST",
+        url: "/v1/loyalty/internal/ledger/apply",
+        payload: {
+          userId,
+          type: "EARN",
+          amountCents: 100,
+          idempotencyKey: "evt-rate-limit-2"
+        }
+      });
+      expect(secondMutation.statusCode).toBe(429);
+    } finally {
+      vi.unstubAllEnvs();
+      await app.close();
+    }
+  });
+
   it("requires gateway token on customer routes when configured", async () => {
     vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "loyalty-gateway-token");
     try {

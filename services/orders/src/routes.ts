@@ -189,6 +189,9 @@ const unitPriceByItemId: Record<string, number> = {
 
 const fallbackUnitPriceCents = 500;
 const taxRateBasisPoints = 600;
+const defaultRateLimitWindowMs = 60_000;
+const defaultOrdersWriteRateLimitMax = 120;
+const defaultOrdersInternalReconcileRateLimitMax = 180;
 
 type OrderQuote = z.output<typeof orderQuoteSchema>;
 type Order = z.output<typeof orderSchema>;
@@ -198,6 +201,15 @@ const defaultLoyaltyUserId = "123e4567-e89b-12d3-a456-426614174000";
 function trimToUndefined(value: string | undefined) {
   const next = value?.trim();
   return next && next.length > 0 ? next : undefined;
+}
+
+function toPositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
 }
 
 function toRefundIdempotencyKey(orderId: string, reason: string) {
@@ -558,6 +570,18 @@ export async function registerRoutes(app: FastifyInstance) {
   const loyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL ?? "http://127.0.0.1:3004";
   const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
   const internalApiToken = trimToUndefined(process.env.ORDERS_INTERNAL_API_TOKEN);
+  const ordersRateLimitWindowMs = toPositiveInteger(process.env.ORDERS_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
+  const ordersWriteRateLimit = {
+    max: toPositiveInteger(process.env.ORDERS_RATE_LIMIT_WRITE_MAX, defaultOrdersWriteRateLimitMax),
+    timeWindow: ordersRateLimitWindowMs
+  };
+  const ordersInternalReconcileRateLimit = {
+    max: toPositiveInteger(
+      process.env.ORDERS_RATE_LIMIT_INTERNAL_RECONCILE_MAX,
+      defaultOrdersInternalReconcileRateLimitMax
+    ),
+    timeWindow: ordersRateLimitWindowMs
+  };
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const repository = await createOrdersRepository(app.log);
 
@@ -568,10 +592,15 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get("/health", async () => ({ status: "ok", service: "orders" }));
   app.get("/ready", async () => ({ status: "ready", service: "orders", persistence: repository.backend }));
 
-  app.post("/v1/orders/internal/payments/reconcile", async (request, reply) => {
-    if (!authorizeInternalRequest(request, reply, internalApiToken)) {
-      return;
-    }
+  app.post(
+    "/v1/orders/internal/payments/reconcile",
+    {
+      preHandler: app.rateLimit(ordersInternalReconcileRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeInternalRequest(request, reply, internalApiToken)) {
+        return;
+      }
 
     const input = ordersPaymentReconciliationSchema.parse(request.body);
     const existingOrder = await repository.getOrder(input.orderId);
@@ -802,32 +831,44 @@ export async function registerRoutes(app: FastifyInstance) {
       order: canceledOrder
     });
 
-    return ordersPaymentReconciliationResultSchema.parse({
-      accepted: true,
-      applied: true,
-      orderStatus: canceledOrder.status
-    });
-  });
-
-  app.post("/v1/orders/quote", async (request, reply) => {
-    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
-      return;
+      return ordersPaymentReconciliationResultSchema.parse({
+        accepted: true,
+        applied: true,
+        orderStatus: canceledOrder.status
+      });
     }
+  );
 
-    const input = quoteRequestSchema.parse(request.body);
-    const quote = createQuote(input);
+  app.post(
+    "/v1/orders/quote",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+        return;
+      }
 
-    await repository.saveQuote(quote);
-    return quote;
-  });
+      const input = quoteRequestSchema.parse(request.body);
+      const quote = createQuote(input);
 
-  app.post("/v1/orders", async (request, reply) => {
-    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
-      return;
+      await repository.saveQuote(quote);
+      return quote;
     }
+  );
 
-    const input = createOrderRequestSchema.parse(request.body);
-    const quote = await repository.getQuote(input.quoteId);
+  app.post(
+    "/v1/orders",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+        return;
+      }
+
+      const input = createOrderRequestSchema.parse(request.body);
+      const quote = await repository.getQuote(input.quoteId);
 
     if (!quote) {
       return sendError(reply, {
@@ -873,17 +914,23 @@ export async function registerRoutes(app: FastifyInstance) {
       order
     });
 
-    return order;
-  });
-
-  app.post("/v1/orders/:orderId/pay", async (request, reply) => {
-    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
-      return;
+      return order;
     }
+  );
 
-    const { orderId } = orderIdParamsSchema.parse(request.params);
-    const input = payOrderRequestSchema.parse(request.body);
-    const existingOrder = await repository.getOrder(orderId);
+  app.post(
+    "/v1/orders/:orderId/pay",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+        return;
+      }
+
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const input = payOrderRequestSchema.parse(request.body);
+      const existingOrder = await repository.getOrder(orderId);
 
     if (!existingOrder) {
       return sendError(reply, {
@@ -1083,8 +1130,9 @@ export async function registerRoutes(app: FastifyInstance) {
       order: paidOrder
     });
 
-    return paidOrder;
-  });
+      return paidOrder;
+    }
+  );
 
   app.get("/v1/orders", async (request, reply) => {
     if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
@@ -1116,14 +1164,19 @@ export async function registerRoutes(app: FastifyInstance) {
     return orderSchema.parse(order);
   });
 
-  app.post("/v1/orders/:orderId/cancel", async (request, reply) => {
-    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
-      return;
-    }
+  app.post(
+    "/v1/orders/:orderId/cancel",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+        return;
+      }
 
-    const { orderId } = orderIdParamsSchema.parse(request.params);
-    const input = cancelOrderRequestSchema.parse(request.body);
-    const existingOrder = await repository.getOrder(orderId);
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const input = cancelOrderRequestSchema.parse(request.body);
+      const existingOrder = await repository.getOrder(orderId);
 
     if (!existingOrder) {
       return sendError(reply, {
@@ -1330,8 +1383,9 @@ export async function registerRoutes(app: FastifyInstance) {
       order: canceledOrder
     });
 
-    return canceledOrder;
-  });
+      return canceledOrder;
+    }
+  );
 
   app.post("/v1/orders/internal/ping", async (request) => {
     const parsed = payloadSchema.parse(request.body ?? {});
