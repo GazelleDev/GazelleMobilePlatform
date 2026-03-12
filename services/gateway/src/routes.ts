@@ -34,6 +34,7 @@ const authHeaderSchema = z.object({
 });
 const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
 const cancelOrderRequestSchema = z.object({ reason: z.string().min(1) });
+const defaultRateLimitWindowMs = 60_000;
 
 function unauthorized(requestId: string) {
   return apiErrorSchema.parse({
@@ -51,6 +52,45 @@ function ensureBearerAuth(request: FastifyRequest, reply: FastifyReply) {
   }
 
   return true;
+}
+
+async function requireBearerAuth(request: FastifyRequest, reply: FastifyReply) {
+  if (!ensureBearerAuth(request, reply)) {
+    return reply;
+  }
+
+  return undefined;
+}
+
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
+
+function toPositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.floor(parsed);
+}
+
+function toHeaderValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  return value;
+}
+
+function userScopedRateLimitKey(request: FastifyRequest) {
+  const userId = trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
+  if (userId) {
+    return `user:${userId.toLowerCase()}`;
+  }
+
+  return `ip:${request.ip}`;
 }
 
 const authSuccessSchema = z.object({ success: z.literal(true) });
@@ -86,9 +126,10 @@ async function proxyUpstream<TResponse>(params: {
   method: "GET" | "POST" | "PUT";
   path: string;
   body?: unknown;
+  additionalHeaders?: Record<string, string | undefined>;
   responseSchema: z.ZodType<TResponse>;
 }) {
-  const { request, reply, baseUrl, serviceLabel, method, path, body, responseSchema } = params;
+  const { request, reply, baseUrl, serviceLabel, method, path, body, additionalHeaders, responseSchema } = params;
 
   const headers: Record<string, string> = {
     "x-request-id": request.id
@@ -101,6 +142,13 @@ async function proxyUpstream<TResponse>(params: {
   }
   if (typeof userIdHeader === "string") {
     headers["x-user-id"] = userIdHeader;
+  }
+  if (additionalHeaders) {
+    for (const [key, value] of Object.entries(additionalHeaders)) {
+      if (value) {
+        headers[key] = value;
+      }
+    }
   }
 
   if (body !== undefined) {
@@ -167,6 +215,47 @@ export async function registerRoutes(app: FastifyInstance) {
   const catalogBaseUrl = process.env.CATALOG_SERVICE_BASE_URL ?? "http://127.0.0.1:3002";
   const loyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL ?? "http://127.0.0.1:3004";
   const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
+  const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
+  const rateLimitWindowMs = toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
+  const authWriteRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_AUTH_WRITE_MAX, 24),
+    timeWindow: rateLimitWindowMs
+  };
+  const authReadRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_AUTH_READ_MAX, 120),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const catalogReadRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_CATALOG_READ_MAX, 180),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const ordersReadRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_ORDERS_READ_MAX, 120),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const ordersWriteRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_ORDERS_WRITE_MAX, 60),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const checkoutRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_CHECKOUT_MAX, 20),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const loyaltyReadRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_LOYALTY_READ_MAX, 120),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const pushTokenRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_PUSH_TOKEN_MAX, 30),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
 
   app.get("/health", async () => ({ status: "ok", service: "gateway" }));
   app.get("/ready", async () => ({ status: "ready", service: "gateway" }));
@@ -179,7 +268,12 @@ export async function registerRoutes(app: FastifyInstance) {
     notifications: notificationsContract.basePath
   }));
 
-  app.post("/v1/auth/apple/exchange", async (request, reply) => {
+  app.post(
+    "/v1/auth/apple/exchange",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = appleExchangeRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -192,9 +286,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: authSessionSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/passkey/register/challenge", async (request, reply) => {
+  app.post(
+    "/v1/auth/passkey/register/challenge",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = passkeyChallengeRequestSchema.parse(request.body ?? {});
 
     return proxyUpstream({
@@ -207,9 +307,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: passkeyChallengeResponseSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/passkey/register/verify", async (request, reply) => {
+  app.post(
+    "/v1/auth/passkey/register/verify",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = passkeyVerifyRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -222,9 +328,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: authSessionSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/passkey/auth/challenge", async (request, reply) => {
+  app.post(
+    "/v1/auth/passkey/auth/challenge",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = passkeyChallengeRequestSchema.parse(request.body ?? {});
 
     return proxyUpstream({
@@ -237,9 +349,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: passkeyChallengeResponseSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/passkey/auth/verify", async (request, reply) => {
+  app.post(
+    "/v1/auth/passkey/auth/verify",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = passkeyVerifyRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -252,9 +370,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: authSessionSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/magic-link/request", async (request, reply) => {
+  app.post(
+    "/v1/auth/magic-link/request",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = magicLinkRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -267,9 +391,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: authSuccessSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/magic-link/verify", async (request, reply) => {
+  app.post(
+    "/v1/auth/magic-link/verify",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = magicLinkVerifySchema.parse(request.body);
 
     return proxyUpstream({
@@ -282,9 +412,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: authSessionSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/refresh", async (request, reply) => {
+  app.post(
+    "/v1/auth/refresh",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = refreshRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -297,9 +433,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: authSessionSchema
     });
-  });
+    }
+  );
 
-  app.post("/v1/auth/logout", async (request, reply) => {
+  app.post(
+    "/v1/auth/logout",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
     const input = logoutRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -312,13 +454,15 @@ export async function registerRoutes(app: FastifyInstance) {
       body: input,
       responseSchema: authSuccessSchema
     });
-  });
-
-  app.get("/v1/auth/me", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
     }
+  );
 
+  app.get(
+    "/v1/auth/me",
+    {
+      preHandler: [app.rateLimit(authReadRateLimit), requireBearerAuth]
+    },
+    async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -328,13 +472,15 @@ export async function registerRoutes(app: FastifyInstance) {
       path: "/v1/auth/me",
       responseSchema: meResponseSchema
     });
-  });
-
-  app.get("/v1/me", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
     }
+  );
 
+  app.get(
+    "/v1/me",
+    {
+      preHandler: [app.rateLimit(authReadRateLimit), requireBearerAuth]
+    },
+    async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -344,9 +490,10 @@ export async function registerRoutes(app: FastifyInstance) {
       path: "/v1/auth/me",
       responseSchema: meResponseSchema
     });
-  });
+    }
+  );
 
-  app.get("/v1/menu", async (request, reply) =>
+  app.get("/v1/menu", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
     proxyUpstream({
       request,
       reply,
@@ -358,7 +505,7 @@ export async function registerRoutes(app: FastifyInstance) {
     })
   );
 
-  app.get("/v1/store/config", async (request, reply) =>
+  app.get("/v1/store/config", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
     proxyUpstream({
       request,
       reply,
@@ -370,10 +517,10 @@ export async function registerRoutes(app: FastifyInstance) {
     })
   );
 
-  app.post("/v1/orders/quote", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
+  app.post(
+    "/v1/orders/quote",
+    { preHandler: [app.rateLimit(ordersWriteRateLimit), requireBearerAuth] },
+    async (request, reply) => {
     const input = quoteRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -384,14 +531,15 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: "/v1/orders/quote",
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderQuoteSchema
     });
-  });
-
-  app.post("/v1/orders", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
     }
+  );
+
+  app.post("/v1/orders", { preHandler: [app.rateLimit(ordersWriteRateLimit), requireBearerAuth] }, async (request, reply) => {
     const input = createOrderRequestSchema.parse(request.body);
 
     return proxyUpstream({
@@ -402,14 +550,14 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: "/v1/orders",
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
 
-  app.post("/v1/orders/:orderId/pay", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
+  app.post("/v1/orders/:orderId/pay", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = payOrderRequestSchema.parse(request.body);
 
@@ -421,15 +569,14 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: `/v1/orders/${orderId}/pay`,
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
 
-  app.get("/v1/orders", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
-
+  app.get("/v1/orders", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -437,14 +584,14 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Orders",
       method: "GET",
       path: "/v1/orders",
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: z.array(orderSchema)
     });
   });
 
-  app.get("/v1/orders/:orderId", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
+  app.get("/v1/orders/:orderId", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
 
     return proxyUpstream({
@@ -454,14 +601,14 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Orders",
       method: "GET",
       path: `/v1/orders/${orderId}`,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
 
-  app.post("/v1/orders/:orderId/cancel", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
+  app.post("/v1/orders/:orderId/cancel", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = cancelOrderRequestSchema.parse(request.body);
 
@@ -473,15 +620,14 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: `/v1/orders/${orderId}/cancel`,
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: orderSchema
     });
   });
 
-  app.get("/v1/loyalty/balance", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
-
+  app.get("/v1/loyalty/balance", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireBearerAuth] }, async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -489,15 +635,14 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Loyalty",
       method: "GET",
       path: "/v1/loyalty/balance",
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: loyaltyBalanceSchema
     });
   });
 
-  app.get("/v1/loyalty/ledger", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
-
+  app.get("/v1/loyalty/ledger", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireBearerAuth] }, async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -505,14 +650,14 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Loyalty",
       method: "GET",
       path: "/v1/loyalty/ledger",
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: z.array(loyaltyLedgerEntrySchema)
     });
   });
 
-  app.put("/v1/devices/push-token", async (request, reply) => {
-    if (!ensureBearerAuth(request, reply)) {
-      return;
-    }
+  app.put("/v1/devices/push-token", { preHandler: [app.rateLimit(pushTokenRateLimit), requireBearerAuth] }, async (request, reply) => {
     const input = pushTokenUpsertSchema.parse(request.body);
 
     return proxyUpstream({
@@ -523,6 +668,9 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "PUT",
       path: "/v1/devices/push-token",
       body: input,
+      additionalHeaders: {
+        "x-gateway-token": gatewayInternalApiToken
+      },
       responseSchema: pushTokenUpsertResponseSchema
     });
   });

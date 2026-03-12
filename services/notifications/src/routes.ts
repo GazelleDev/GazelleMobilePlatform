@@ -16,6 +16,17 @@ const userHeadersSchema = z.object({
   "x-user-id": z.string().uuid().optional()
 });
 
+const gatewayHeadersSchema = z.object({
+  "x-gateway-token": z.string().optional()
+});
+
+const serviceErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  requestId: z.string(),
+  details: z.record(z.unknown()).optional()
+});
+
 const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
 const outboxBatchMax = 200;
 const outboxDefaultBatch = 50;
@@ -43,6 +54,24 @@ function resolveUserId(headers: unknown) {
   return parsed.data["x-user-id"] ?? defaultUserId;
 }
 
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
+
+function authorizeGatewayRequest(
+  headers: unknown,
+  gatewayToken: string | undefined
+) {
+  if (!gatewayToken) {
+    return true;
+  }
+
+  const parsedHeaders = gatewayHeadersSchema.safeParse(headers);
+  const providedToken = parsedHeaders.success ? parsedHeaders.data["x-gateway-token"] : undefined;
+  return providedToken === gatewayToken;
+}
+
 function computeRetryDelayMs(nextAttempt: number) {
   return outboxRetryBaseMs * 2 ** Math.max(nextAttempt - 1, 0);
 }
@@ -55,6 +84,7 @@ function simulatePushDispatch(entry: OutboxEntry) {
 }
 
 export async function registerRoutes(app: FastifyInstance) {
+  const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const repository = await createNotificationsRepository(app.log);
 
   app.addHook("onClose", async () => {
@@ -69,6 +99,16 @@ export async function registerRoutes(app: FastifyInstance) {
   }));
 
   app.put("/v1/devices/push-token", async (request, reply) => {
+    if (!authorizeGatewayRequest(request.headers, gatewayApiToken)) {
+      return reply.status(401).send(
+        serviceErrorSchema.parse({
+          code: "UNAUTHORIZED_GATEWAY_REQUEST",
+          message: "Gateway token is invalid",
+          requestId: request.id
+        })
+      );
+    }
+
     const userId = resolveUserId(request.headers);
     if (!userId) {
       request.log.warn({ requestId: request.id }, "invalid x-user-id header");

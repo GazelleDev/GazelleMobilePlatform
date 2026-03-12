@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 
 describe("notifications service", () => {
@@ -249,5 +249,50 @@ describe("notifications service", () => {
     expect(metricsResponse.json().requests.total).toBeGreaterThanOrEqual(1);
 
     await app.close();
+  });
+
+  it("requires gateway token on push-token upsert when configured", async () => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "notifications-gateway-token");
+    try {
+      const app = await buildApp();
+      const userId = "123e4567-e89b-12d3-a456-426614174999";
+
+      const unauthorizedResponse = await app.inject({
+        method: "PUT",
+        url: "/v1/devices/push-token",
+        headers: {
+          "x-user-id": userId
+        },
+        payload: {
+          deviceId: "ios-unauthorized",
+          platform: "ios",
+          expoPushToken: "ExponentPushToken[unauthorized-token]"
+        }
+      });
+      expect(unauthorizedResponse.statusCode).toBe(401);
+      expect(unauthorizedResponse.json()).toMatchObject({
+        code: "UNAUTHORIZED_GATEWAY_REQUEST"
+      });
+
+      const authorizedResponse = await app.inject({
+        method: "PUT",
+        url: "/v1/devices/push-token",
+        headers: {
+          "x-user-id": userId,
+          "x-gateway-token": "notifications-gateway-token"
+        },
+        payload: {
+          deviceId: "ios-authorized",
+          platform: "ios",
+          expoPushToken: "ExponentPushToken[authorized-token]"
+        }
+      });
+      expect(authorizedResponse.statusCode).toBe(200);
+      expect(authorizedResponse.json()).toEqual({ success: true });
+
+      await app.close();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

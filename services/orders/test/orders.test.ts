@@ -881,4 +881,31 @@ describe("orders service", () => {
 
     await app.close();
   });
+
+  it("requires gateway token on customer routes when configured", async () => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "orders-gateway-token");
+    const app = await buildApp();
+
+    const unauthorizedQuote = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    expect(unauthorizedQuote.statusCode).toBe(401);
+    expect(unauthorizedQuote.json()).toMatchObject({
+      code: "UNAUTHORIZED_GATEWAY_REQUEST"
+    });
+
+    const authorizedQuote = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      headers: {
+        "x-gateway-token": "orders-gateway-token"
+      },
+      payload: sampleQuotePayload
+    });
+    expect(authorizedQuote.statusCode).toBe(200);
+
+    await app.close();
+  });
 });

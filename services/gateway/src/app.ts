@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { registerRoutes } from "./routes.js";
@@ -29,6 +30,10 @@ export async function buildApp() {
   await app.register(cors, {
     origin: true,
     credentials: true
+  });
+
+  await app.register(rateLimit, {
+    global: false
   });
 
   await app.register(swagger, {
