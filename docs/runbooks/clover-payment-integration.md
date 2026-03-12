@@ -32,6 +32,20 @@ Live mode env:
 - `ORDERS_SERVICE_BASE_URL` (defaults to `http://127.0.0.1:3001`)
 - `ORDERS_INTERNAL_API_TOKEN` (set in both `payments` and `orders` to secure internal reconciliation calls)
 
+### Sandbox endpoint baseline (validated)
+
+For Clover sandbox ecommerce:
+
+- `CLOVER_CHARGE_ENDPOINT=https://scl-sandbox.dev.clover.com/v1/charges`
+- `CLOVER_REFUND_ENDPOINT=https://scl-sandbox.dev.clover.com/v1/refunds`
+- `CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT=https://token-sandbox.dev.clover.com/v1/tokens`
+
+Token roles:
+
+- `CLOVER_API_KEY` in service runtime should be the Clover private/ecommerce bearer token.
+- Tokenization endpoint uses `apikey` header value from Clover `apiAccessKey` (public key), when calling directly.
+- `CLOVER_MERCHANT_ID` must be Clover merchant UUID (for example from `GET /v3/merchants/current`), not external MID labels.
+
 ## Webhook Reconciliation
 
 `payments` now accepts provider callbacks at:

@@ -50,7 +50,7 @@ Set in GitHub Environments (`dev`, `staging`, `prod`) and documented in internal
 - [ ] `APPLE_MERCHANT_ID`
 - [ ] `CLOVER_API_KEY`
 - [ ] `CLOVER_MERCHANT_ID`
-- [ ] `CLOVER_WEBHOOK_SECRET`
+- [ ] `CLOVER_WEBHOOK_SHARED_SECRET`
 - [ ] `JWT_PRIVATE_KEY`
 - [ ] `JWT_PUBLIC_KEY`
 - [ ] `EXPO_TOKEN`

@@ -1266,9 +1266,10 @@ async function executeLiveRefund(params: {
     throw new Error(config.misconfigurationReason ?? "Clover provider is not configured");
   }
 
+  const providerChargeId = providerPaymentId ?? request.paymentId;
   const refundUrl = toTemplatedUrl(config.refundEndpoint, {
     merchantId: config.merchantId,
-    paymentId: providerPaymentId ?? request.paymentId
+    paymentId: providerChargeId
   });
   const upstream = await fetch(refundUrl, {
     method: "POST",
@@ -1280,17 +1281,8 @@ async function executeLiveRefund(params: {
       "idempotency-key": request.idempotencyKey
     },
     body: JSON.stringify({
-      merchantId: config.merchantId,
-      paymentId: providerPaymentId ?? request.paymentId,
-      amount: request.amountCents,
-      amountCents: request.amountCents,
-      currency: request.currency,
-      reason: request.reason,
-      metadata: {
-        orderId: request.orderId,
-        idempotencyKey: request.idempotencyKey,
-        origin: "gazelle-payments-service"
-      }
+      // Clover ecommerce API accepts charge-scoped refunds.
+      charge: providerChargeId
     })
   });
 
