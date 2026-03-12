@@ -1,6 +1,7 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useState } from "react";
-import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthSession } from "../../src/auth/session";
 import { buildPricingSummary, describeCustomization } from "../../src/cart/model";
@@ -12,12 +13,13 @@ import {
   type ApplePayWalletPayload
 } from "../../src/orders/applePay";
 import { createDemoApplePayToken, useApplePayCheckoutMutation } from "../../src/orders/checkout";
+import { Button, Card, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
 
 function SummaryRow({ label, value, emphasized = false }: { label: string; value: string; emphasized?: boolean }) {
   return (
-    <View className="flex-row items-center justify-between">
-      <Text className={`text-sm ${emphasized ? "font-semibold text-foreground" : "text-foreground/70"}`}>{label}</Text>
-      <Text className={`text-sm ${emphasized ? "font-semibold text-foreground" : "text-foreground/70"}`}>{value}</Text>
+    <View style={styles.summaryRow}>
+      <Text style={[styles.summaryLabel, emphasized ? styles.summaryStrong : null]}>{label}</Text>
+      <Text style={[styles.summaryLabel, emphasized ? styles.summaryStrong : null]}>{value}</Text>
     </View>
   );
 }
@@ -95,184 +97,254 @@ export default function CartScreen() {
   }
 
   return (
-    <View className="flex-1 bg-background">
-      <ScrollView
-        contentContainerStyle={{
-          paddingHorizontal: 24,
-          paddingTop: insets.top + 18,
-          paddingBottom: Math.max(insets.bottom + 148, 168)
-        }}
-      >
-        <Text className="text-[34px] font-semibold text-foreground">Cart</Text>
-        <Text className="mt-2 text-sm text-foreground/70">
-          Review line items, adjust quantities, and confirm pricing before checkout.
-        </Text>
+    <ScreenScroll>
+      <TitleBlock title="Cart" subtitle="Review line items, pricing, and checkout details before submitting." />
 
-        {items.length === 0 ? (
-          <View className="mt-6 rounded-2xl border border-foreground/15 bg-white px-5 py-5">
-            <Text className="text-sm text-foreground/70">Your cart is empty.</Text>
-            <Link href="/(tabs)/menu" asChild>
-              <Pressable className="mt-4 self-start rounded-full bg-foreground px-5 py-3">
-                <Text className="text-xs font-semibold uppercase tracking-[1.5px] text-background">
-                  Browse Menu
-                </Text>
-              </Pressable>
-            </Link>
-          </View>
-        ) : (
-          <View className="mt-6 gap-3">
-            {items.map((item) => (
-              <View key={item.lineId} className="rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-                <View className="flex-row items-start justify-between">
-                  <Text className="mr-2 flex-1 text-base font-semibold text-foreground">{item.name}</Text>
-                  <Text className="text-sm font-semibold text-foreground">
-                    {formatUsd(item.unitPriceCents * item.quantity)}
-                  </Text>
-                </View>
-                <Text className="mt-1 text-sm text-foreground/70">{describeCustomization(item.customization)}</Text>
-                <Text className="mt-1 text-xs text-foreground/60">{formatUsd(item.unitPriceCents)} each</Text>
+      {items.length === 0 ? (
+        <Card style={{ marginTop: 14 }}>
+          <SectionLabel label="Empty Cart" />
+          <Text style={styles.emptyBody}>Your cart is empty. Add items from the menu to begin checkout.</Text>
+          <Link href="/(tabs)/menu" asChild>
+            <Pressable>
+              <Button
+                label="Browse Menu"
+                style={{ marginTop: 12, alignSelf: "flex-start" }}
+                left={<Ionicons name="cafe-outline" size={15} color="#FFFFFF" />}
+              />
+            </Pressable>
+          </Link>
+        </Card>
+      ) : (
+        <View style={{ marginTop: 14, gap: 12 }}>
+          {items.map((item) => (
+            <Card key={item.lineId}>
+              <View style={styles.itemTopRow}>
+                <Text style={styles.itemName}>{item.name}</Text>
+                <Text style={styles.itemLinePrice}>{formatUsd(item.unitPriceCents * item.quantity)}</Text>
+              </View>
+              <Text style={styles.itemMeta}>{describeCustomization(item.customization)}</Text>
+              <Text style={styles.itemMetaMuted}>{formatUsd(item.unitPriceCents)} each</Text>
 
-                <View className="mt-3 flex-row items-center justify-between">
-                  <View className="flex-row items-center gap-2">
-                    <Pressable
-                      className="h-8 w-8 items-center justify-center rounded-full border border-foreground"
-                      onPress={() => setQuantity(item.lineId, item.quantity - 1)}
-                    >
-                      <Text className="text-base font-semibold text-foreground">-</Text>
-                    </Pressable>
-                    <Text className="w-8 text-center text-sm font-semibold text-foreground">{item.quantity}</Text>
-                    <Pressable
-                      className="h-8 w-8 items-center justify-center rounded-full border border-foreground"
-                      onPress={() => setQuantity(item.lineId, item.quantity + 1)}
-                    >
-                      <Text className="text-base font-semibold text-foreground">+</Text>
-                    </Pressable>
-                  </View>
-
-                  <Pressable className="rounded-full border border-foreground/25 px-3 py-2" onPress={() => removeItem(item.lineId)}>
-                    <Text className="text-xs font-semibold uppercase tracking-[1px] text-foreground/70">Remove</Text>
+              <View style={styles.controlsRow}>
+                <View style={styles.quantityControls}>
+                  <Pressable style={styles.qtyButton} onPress={() => setQuantity(item.lineId, item.quantity - 1)}>
+                    <Ionicons name="remove" size={16} color={uiPalette.text} />
+                  </Pressable>
+                  <Text style={styles.qtyValue}>{item.quantity}</Text>
+                  <Pressable style={styles.qtyButton} onPress={() => setQuantity(item.lineId, item.quantity + 1)}>
+                    <Ionicons name="add" size={16} color={uiPalette.text} />
                   </Pressable>
                 </View>
+
+                <Button label="Remove" variant="ghost" onPress={() => removeItem(item.lineId)} />
               </View>
-            ))}
+            </Card>
+          ))}
 
-            <View className="mt-1 rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-              <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Pricing Summary</Text>
-              <View className="mt-3 gap-2">
-                <SummaryRow label={`Items (${itemCount})`} value={formatUsd(pricingSummary.subtotalCents)} />
-                <SummaryRow
-                  label={`Estimated tax (${(storeConfig.taxRateBasisPoints / 100).toFixed(2)}%)`}
-                  value={formatUsd(pricingSummary.taxCents)}
-                />
-                <View className="my-1 h-px bg-foreground/10" />
-                <SummaryRow label="Estimated total" value={formatUsd(pricingSummary.totalCents)} emphasized />
-              </View>
+          <Card>
+            <SectionLabel label="Pricing Summary" />
+            <View style={{ marginTop: 10, gap: 8 }}>
+              <SummaryRow label={`Items (${itemCount})`} value={formatUsd(pricingSummary.subtotalCents)} />
+              <SummaryRow
+                label={`Tax (${(storeConfig.taxRateBasisPoints / 100).toFixed(2)}%)`}
+                value={formatUsd(pricingSummary.taxCents)}
+              />
+              <View style={styles.summaryDivider} />
+              <SummaryRow label="Estimated Total" value={formatUsd(pricingSummary.totalCents)} emphasized />
             </View>
+          </Card>
 
-            <View className="rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-              <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Pickup</Text>
-              <Text className="mt-2 text-sm text-foreground/75">{storeConfig.pickupInstructions}</Text>
-              <Text className="mt-1 text-xs text-foreground/60">Estimated prep time: {storeConfig.prepEtaMinutes} min</Text>
-            </View>
+          <Card>
+            <SectionLabel label="Pickup" />
+            <Text style={styles.pickupBody}>{storeConfig.pickupInstructions}</Text>
+            <Text style={styles.pickupMeta}>Estimated prep time: {storeConfig.prepEtaMinutes} min</Text>
+          </Card>
 
-            {isAuthenticated ? (
-              <View className="rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-                <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Apple Pay</Text>
+          {isAuthenticated ? (
+            <Card>
+              <SectionLabel label="Apple Pay" />
+              <Button
+                label={
+                  nativeApplePayPending ? "Opening Apple Pay..." : checkoutMutation.isPending ? "Processing..." : "Pay with Apple Pay"
+                }
+                disabled={nativeApplePayPending || checkoutMutation.isPending || !nativeApplePayAvailable}
+                onPress={handleNativeApplePayCheckout}
+                style={{ marginTop: 10 }}
+              />
+              <Text style={styles.checkoutHint}>
+                Native Apple Pay requires iOS support and a build with Apple Pay entitlements.
+              </Text>
 
-                <Pressable
-                  className={`mt-2 rounded-full px-5 py-4 ${
-                    nativeApplePayPending || checkoutMutation.isPending
-                      ? "bg-foreground/50"
-                      : nativeApplePayAvailable
-                        ? "bg-foreground"
-                        : "bg-foreground/30"
-                  }`}
-                  disabled={nativeApplePayPending || checkoutMutation.isPending || !nativeApplePayAvailable}
-                  onPress={handleNativeApplePayCheckout}
-                >
-                  <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-background">
-                    {nativeApplePayPending
-                      ? "Opening Apple Pay..."
-                      : checkoutMutation.isPending
-                        ? "Processing..."
-                        : "Pay with Apple Pay"}
-                  </Text>
-                </Pressable>
-
-                <Text className="mt-2 text-xs text-foreground/60">
-                  Native Apple Pay requires iOS device support and a build with Apple Pay entitlements.
-                </Text>
-
-                <Text className="mt-4 text-xs uppercase tracking-[1.5px] text-foreground/60">
-                  Fallback token mode (dev)
-                </Text>
-                <TextInput
-                  value={applePayToken}
-                  onChangeText={setApplePayToken}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  secureTextEntry
-                  placeholder="Apple Pay token"
-                  className="mt-2 rounded-xl border border-foreground/20 bg-white px-4 py-3 text-foreground"
-                />
-
-                <Pressable
-                  className="mt-3 self-start rounded-full border border-foreground px-4 py-2"
-                  onPress={() => setApplePayToken(createDemoApplePayToken())}
-                >
-                  <Text className="text-xs font-semibold uppercase tracking-[1.5px] text-foreground">
-                    Use Demo Token
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  className={`mt-3 rounded-full px-5 py-4 ${
-                    checkoutMutation.isPending || nativeApplePayPending ? "bg-foreground/50" : "bg-foreground"
-                  }`}
+              <SectionLabel label="Fallback Token Mode (Dev)" />
+              <TextInput
+                value={applePayToken}
+                onChangeText={setApplePayToken}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+                placeholder="Apple Pay token"
+                placeholderTextColor={uiPalette.textMuted}
+                style={styles.tokenInput}
+              />
+              <View style={styles.fallbackActions}>
+                <Button label="Use Demo Token" variant="secondary" onPress={() => setApplePayToken(createDemoApplePayToken())} />
+                <Button
+                  label={checkoutMutation.isPending ? "Processing..." : "Pay with Token"}
+                  variant="ghost"
                   disabled={checkoutMutation.isPending || nativeApplePayPending}
                   onPress={handleApplePayTokenCheckout}
-                >
-                  <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-background">
-                    {checkoutMutation.isPending ? "Processing..." : "Pay with Token Fallback"}
-                  </Text>
-                </Pressable>
-
-                <Text className="mt-2 text-xs text-foreground/60">
-                  Token fallback is for local simulation and manual testing only.
-                </Text>
+                />
               </View>
-            ) : (
-              <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/cart" } }} asChild>
-                <Pressable className="mt-1 rounded-full bg-foreground px-5 py-4">
-                  <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-background">
-                    Sign In to Checkout
-                  </Text>
-                </Pressable>
-              </Link>
-            )}
+              <Text style={styles.checkoutHint}>Token fallback is for local simulation and manual testing only.</Text>
+            </Card>
+          ) : (
+            <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/cart" } }} asChild>
+              <Pressable>
+                <Button label="Sign In to Checkout" style={{ marginTop: 2 }} />
+              </Pressable>
+            </Link>
+          )}
 
-            <Pressable
-              className="rounded-full border border-foreground px-5 py-3"
-              onPress={() => {
-                clear();
-                setCheckoutStatus("");
-              }}
-            >
-              <Text className="text-center text-xs font-semibold uppercase tracking-[1.5px] text-foreground">
-                Clear Cart
-              </Text>
-            </Pressable>
+          <Button
+            label="Clear Cart"
+            variant="ghost"
+            onPress={() => {
+              clear();
+              setCheckoutStatus("");
+            }}
+          />
 
-            {checkoutStatus ? <Text className="text-xs text-foreground/70">{checkoutStatus}</Text> : null}
+          {checkoutStatus ? <Text style={styles.checkoutStatus}>{checkoutStatus}</Text> : null}
 
-            {storeConfigQuery.error ? (
-              <Text className="text-xs text-foreground/60">
-                Using fallback store settings while live config is unavailable.
-              </Text>
-            ) : null}
-          </View>
-        )}
-      </ScrollView>
-    </View>
+          {storeConfigQuery.error ? (
+            <Text style={styles.checkoutHint}>Using fallback store settings while live config is unavailable.</Text>
+          ) : null}
+        </View>
+      )}
+
+      <View style={{ height: Math.max(insets.bottom, 16) }} />
+    </ScreenScroll>
   );
 }
+
+const styles = StyleSheet.create({
+  emptyBody: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.textSecondary
+  },
+  itemTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10
+  },
+  itemName: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "700",
+    color: uiPalette.text
+  },
+  itemLinePrice: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: uiPalette.text
+  },
+  itemMeta: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 18,
+    color: uiPalette.textSecondary
+  },
+  itemMetaMuted: {
+    marginTop: 2,
+    fontSize: 12,
+    color: uiPalette.textMuted
+  },
+  controlsRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10
+  },
+  quantityControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10
+  },
+  qtyButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.9)"
+  },
+  qtyValue: {
+    width: 22,
+    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "700",
+    color: uiPalette.text
+  },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  summaryLabel: {
+    fontSize: 13,
+    color: uiPalette.textSecondary
+  },
+  summaryStrong: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: uiPalette.text
+  },
+  summaryDivider: {
+    marginVertical: 3,
+    height: 1,
+    backgroundColor: uiPalette.border
+  },
+  pickupBody: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.textSecondary
+  },
+  pickupMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    color: uiPalette.textMuted
+  },
+  checkoutHint: {
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 16,
+    color: uiPalette.textMuted
+  },
+  tokenInput: {
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    backgroundColor: "rgba(255,255,255,0.88)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: uiPalette.text
+  },
+  fallbackActions: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8
+  },
+  checkoutStatus: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: uiPalette.textSecondary
+  }
+});

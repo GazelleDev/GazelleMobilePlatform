@@ -1,7 +1,7 @@
 import "../global.css";
-
 import { Stack } from "expo-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { StatusBar } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthSessionProvider } from "../src/auth/session";
 import { CartProvider } from "../src/cart/store";
@@ -20,12 +20,22 @@ const queryClient = new QueryClient({
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
+      <StatusBar barStyle="dark-content" backgroundColor="#EEF3FA" />
       <QueryClientProvider client={queryClient}>
         <AuthSessionProvider>
           <CartProvider>
             <Stack screenOptions={{ headerShown: false }}>
               <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="auth" options={{ presentation: "modal" }} />
+              <Stack.Screen
+                name="auth"
+                options={{ presentation: "modal" }}
+              />
+              <Stack.Screen
+                name="menu-customize"
+                options={{
+                  presentation: "modal"
+                }}
+              />
             </Stack>
           </CartProvider>
         </AuthSessionProvider>

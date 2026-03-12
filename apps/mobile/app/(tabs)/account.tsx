@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useAuthSession } from "../../src/auth/session";
 import {
   findActiveOrder,
@@ -11,6 +11,7 @@ import {
   usePushTokenRegistrationMutation
 } from "../../src/account/data";
 import { formatUsd } from "../../src/menu/catalog";
+import { Button, Card, Chip, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected error";
@@ -29,38 +30,45 @@ function formatOrderStatus(status: string) {
   return status.replaceAll("_", " ");
 }
 
+function OrderStatusChip({ status }: { status: string }) {
+  const isPositive = status === "READY" || status === "COMPLETED";
+  const isCritical = status === "CANCELED";
+
+  return (
+    <View
+      style={[
+        styles.statusPill,
+        isPositive ? styles.statusPillPositive : null,
+        isCritical ? styles.statusPillCritical : null
+      ]}
+    >
+      <Text
+        style={[
+          styles.statusPillText,
+          isPositive ? styles.statusPillTextPositive : null,
+          isCritical ? styles.statusPillTextCritical : null
+        ]}
+      >
+        {formatOrderStatus(status)}
+      </Text>
+    </View>
+  );
+}
+
 export default function AccountScreen() {
-  const insets = useSafeAreaInsets();
   const { isAuthenticated, session, signOut } = useAuthSession();
   const ordersQuery = useOrderHistoryQuery(isAuthenticated);
   const loyaltyBalanceQuery = useLoyaltyBalanceQuery(isAuthenticated);
   const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
   const pushTokenMutation = usePushTokenRegistrationMutation();
+
   const [notificationStatus, setNotificationStatus] = useState("");
+  const [signOutPending, setSignOutPending] = useState(false);
+
   const orders = ordersQuery.data ?? [];
   const activeOrder = findActiveOrder(orders);
   const loyaltyBalance = loyaltyBalanceQuery.data;
   const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
-
-  if (!isAuthenticated) {
-    return (
-      <View className="flex-1 bg-background px-6" style={{ paddingTop: insets.top + 20 }}>
-        <Text className="text-[34px] font-semibold text-foreground">Account</Text>
-        <View className="mt-6 rounded-2xl border border-foreground/15 bg-white px-5 py-5">
-          <Text className="text-sm text-foreground/70">Sign in to access profile, order tracking, loyalty, and notification settings.</Text>
-          <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/account" } }} asChild>
-            <Pressable
-              className="mt-4 self-start rounded-full bg-foreground px-5 py-3"
-              accessibilityRole="button"
-              accessibilityLabel="Sign in"
-            >
-              <Text className="text-xs font-semibold uppercase tracking-[1.5px] text-background">Sign In</Text>
-            </Pressable>
-          </Link>
-        </View>
-      </View>
-    );
-  }
 
   const isRefreshing =
     ordersQuery.isFetching ||
@@ -69,7 +77,12 @@ export default function AccountScreen() {
     pushTokenMutation.isPending;
 
   async function handleSignOut() {
-    await signOut();
+    setSignOutPending(true);
+    try {
+      await signOut();
+    } finally {
+      setSignOutPending(false);
+    }
   }
 
   function handleRefresh() {
@@ -81,162 +94,346 @@ export default function AccountScreen() {
   function handleRegisterPushToken() {
     const userIdFragment = session?.userId.slice(0, 8) ?? "guest";
     const tokenSeed = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const deviceId = `mobile-${userIdFragment}`;
-    const platform = "ios";
-    const expoPushToken = `ExponentPushToken[${tokenSeed}]`;
 
     setNotificationStatus("Registering push token...");
     pushTokenMutation.mutate(
-      { deviceId, platform, expoPushToken },
       {
-        onSuccess: () => {
-          setNotificationStatus("Push token registration updated.");
-        },
-        onError: (error) => {
-          setNotificationStatus(toErrorMessage(error));
-        }
+        deviceId: `mobile-${userIdFragment}`,
+        platform: "ios",
+        expoPushToken: `ExponentPushToken[${tokenSeed}]`
+      },
+      {
+        onSuccess: () => setNotificationStatus("Push token registration updated."),
+        onError: (error) => setNotificationStatus(toErrorMessage(error))
       }
     );
   }
 
-  return (
-    <View className="flex-1 bg-background">
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 24, paddingTop: insets.top + 18, paddingBottom: insets.bottom + 120 }}>
-        <Text className="text-[34px] font-semibold text-foreground">Account</Text>
-        <Text className="mt-2 text-sm text-foreground/70">Manage your order activity, rewards, and delivery settings.</Text>
+  if (!isAuthenticated) {
+    return (
+      <ScreenScroll>
+        <TitleBlock
+          title="Account"
+          subtitle="Sign in to access order tracking, loyalty balances, and notification preferences."
+        />
 
-        <View className="mt-6 rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-          <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Profile</Text>
-          <Text className="mt-2 text-sm text-foreground">User ID: {session?.userId ?? "Unknown"}</Text>
-          <Text className="mt-1 text-xs text-foreground/70">Session expires: {formatDateTime(session?.expiresAt ?? "")}</Text>
-        </View>
-
-        <View className="mt-4 rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-          <View className="flex-row items-center justify-between">
-            <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Active Order</Text>
-            <Pressable
-              className={`rounded-full border px-3 py-2 ${isRefreshing ? "border-foreground/30" : "border-foreground/60"}`}
-              disabled={isRefreshing}
-              onPress={handleRefresh}
-              accessibilityRole="button"
-              accessibilityLabel="Refresh account data"
-            >
-              <Text className="text-[10px] font-semibold uppercase tracking-[1.5px] text-foreground/80">
-                {isRefreshing ? "Refreshing..." : "Refresh"}
-              </Text>
+        <Card style={{ marginTop: 16 }}>
+          <SectionLabel label="Profile Access" />
+          <Text style={styles.emptyBody}>
+            Your account dashboard shows active order progress, recent history, and rewards activity.
+          </Text>
+          <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/account" } }} asChild>
+            <Pressable style={styles.signInCta}>
+              <Ionicons name="log-in-outline" size={16} color="#FFFFFF" />
+              <Text style={styles.signInCtaText}>Sign In</Text>
             </Pressable>
+          </Link>
+        </Card>
+      </ScreenScroll>
+    );
+  }
+
+  return (
+    <ScreenScroll>
+      <TitleBlock
+        title="Account"
+        subtitle="Manage profile, loyalty rewards, order history, and push notifications."
+        action={
+          <Button
+            label={isRefreshing ? "Refreshing" : "Refresh"}
+            variant="secondary"
+            onPress={handleRefresh}
+            disabled={isRefreshing}
+          />
+        }
+      />
+
+      <Card style={{ marginTop: 16 }}>
+        <SectionLabel label="Profile" />
+        <Text style={styles.profileValue}>{session?.userId ?? "Unknown user"}</Text>
+        <Text style={styles.profileMeta}>Session expires {formatDateTime(session?.expiresAt ?? "")}</Text>
+      </Card>
+
+      <Card style={{ marginTop: 12 }}>
+        <SectionLabel label="Active Order" />
+        {ordersQuery.isLoading ? <Text style={styles.bodyText}>Loading active order...</Text> : null}
+
+        {ordersQuery.error ? (
+          <View style={{ marginTop: 10 }}>
+            <Text style={styles.errorText}>{toErrorMessage(ordersQuery.error)}</Text>
+            <Button label="Retry" variant="ghost" onPress={() => void ordersQuery.refetch()} style={{ marginTop: 8, alignSelf: "flex-start" }} />
           </View>
-          {ordersQuery.isLoading ? <Text className="mt-3 text-sm text-foreground/70">Loading active order...</Text> : null}
-          {ordersQuery.error ? (
-            <View className="mt-3">
-              <Text className="text-sm text-foreground/70">{toErrorMessage(ordersQuery.error)}</Text>
-              <Pressable
-                className="mt-2 self-start rounded-full border border-foreground px-3 py-2"
-                onPress={() => {
-                  void ordersQuery.refetch();
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Retry loading active order"
-              >
-                <Text className="text-[10px] font-semibold uppercase tracking-[1.5px] text-foreground">Retry</Text>
-              </Pressable>
+        ) : null}
+
+        {!ordersQuery.isLoading && !ordersQuery.error ? (
+          activeOrder ? (
+            <View style={styles.activeOrderCard}>
+              <OrderStatusChip status={activeOrder.status} />
+              <Text style={styles.pickupCodeLabel}>Pickup code</Text>
+              <Text style={styles.pickupCodeValue}>{activeOrder.pickupCode}</Text>
+              <Text style={styles.profileMeta}>
+                Updated {formatDateTime(activeOrder.timeline[activeOrder.timeline.length - 1]?.occurredAt ?? "")}
+              </Text>
             </View>
-          ) : null}
-          {!ordersQuery.isLoading && !ordersQuery.error ? (
-            activeOrder ? (
-              <View className="mt-3 rounded-xl border border-foreground/10 bg-background px-3 py-3">
-                <Text className="text-xs uppercase tracking-[1.2px] text-foreground/60">{formatOrderStatus(activeOrder.status)}</Text>
-                <Text className="mt-1 text-sm font-semibold text-foreground">Pickup code: {activeOrder.pickupCode}</Text>
-                <Text className="mt-1 text-xs text-foreground/70">
-                  Updated: {formatDateTime(activeOrder.timeline[activeOrder.timeline.length - 1]?.occurredAt ?? "")}
+          ) : (
+            <Text style={styles.bodyText}>No active order right now.</Text>
+          )
+        ) : null}
+      </Card>
+
+      <Card style={{ marginTop: 12 }}>
+        <SectionLabel label="Order History" />
+        {ordersQuery.isLoading ? <Text style={styles.bodyText}>Loading history...</Text> : null}
+        {ordersQuery.error ? <Text style={styles.errorText}>Unable to load order history.</Text> : null}
+
+        {!ordersQuery.isLoading && !ordersQuery.error && orders.length === 0 ? (
+          <Text style={styles.bodyText}>No completed orders yet.</Text>
+        ) : null}
+
+        {!ordersQuery.isLoading && !ordersQuery.error && orders.length > 0 ? (
+          <View style={styles.listWrap}>
+            {orders.slice(0, 5).map((order) => (
+              <View key={order.id} style={styles.listItem}>
+                <View style={styles.listItemTop}>
+                  <OrderStatusChip status={order.status} />
+                  <Text style={styles.listItemAmount}>{formatUsd(order.total.amountCents)}</Text>
+                </View>
+                <Text style={styles.listItemCode}>{order.pickupCode}</Text>
+                <Text style={styles.listItemMeta}>
+                  {formatDateTime(order.timeline[order.timeline.length - 1]?.occurredAt ?? "")}
                 </Text>
               </View>
-            ) : (
-              <Text className="mt-3 text-sm text-foreground/70">No active order right now.</Text>
-            )
-          ) : null}
-        </View>
+            ))}
+          </View>
+        ) : null}
+      </Card>
 
-        <View className="mt-4 rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-          <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Order History</Text>
-          {ordersQuery.isLoading ? <Text className="mt-3 text-sm text-foreground/70">Loading order history...</Text> : null}
-          {ordersQuery.error ? (
-            <Text className="mt-3 text-sm text-foreground/70">Unable to load order history.</Text>
-          ) : null}
-          {!ordersQuery.isLoading && !ordersQuery.error && orders.length === 0 ? (
-            <Text className="mt-3 text-sm text-foreground/70">No completed orders yet.</Text>
-          ) : null}
-          {!ordersQuery.isLoading && !ordersQuery.error && orders.length > 0 ? (
-            <View className="mt-3 gap-2">
-              {orders.slice(0, 5).map((order) => (
-                <View key={order.id} className="rounded-xl border border-foreground/10 bg-background px-3 py-3">
-                  <Text className="text-xs uppercase tracking-[1.2px] text-foreground/60">{formatOrderStatus(order.status)}</Text>
-                  <Text className="mt-1 text-sm font-semibold text-foreground">{order.pickupCode}</Text>
-                  <Text className="mt-1 text-xs text-foreground/70">
-                    {formatUsd(order.total.amountCents)} • {formatDateTime(order.timeline[order.timeline.length - 1]?.occurredAt ?? "")}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
+      <Card style={{ marginTop: 12 }}>
+        <SectionLabel label="Loyalty" />
+        {loyaltyBalanceQuery.isLoading ? <Text style={styles.bodyText}>Loading loyalty balance...</Text> : null}
+        {loyaltyBalanceQuery.error ? <Text style={styles.errorText}>Unable to load loyalty balance.</Text> : null}
 
-        <View className="mt-4 rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-          <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Loyalty</Text>
-          {loyaltyBalanceQuery.isLoading ? <Text className="mt-3 text-sm text-foreground/70">Loading loyalty balance...</Text> : null}
-          {loyaltyBalanceQuery.error ? <Text className="mt-3 text-sm text-foreground/70">Unable to load loyalty balance.</Text> : null}
-          {loyaltyBalance ? (
-            <View className="mt-3 rounded-xl border border-foreground/10 bg-background px-3 py-3">
-              <Text className="text-sm font-semibold text-foreground">{loyaltyBalance.availablePoints} points available</Text>
-              <Text className="mt-1 text-xs text-foreground/70">
-                Pending {loyaltyBalance.pendingPoints} • Lifetime earned {loyaltyBalance.lifetimeEarned}
-              </Text>
-            </View>
-          ) : null}
-          {loyaltyLedger.length > 0 ? (
-            <View className="mt-3 gap-2">
-              {loyaltyLedger.slice(0, 4).map((entry) => (
-                <View key={entry.id} className="rounded-xl border border-foreground/10 bg-background px-3 py-3">
-                  <Text className="text-xs uppercase tracking-[1.2px] text-foreground/60">
-                    {entry.type} • {entry.points > 0 ? `+${entry.points}` : entry.points}
-                  </Text>
-                  <Text className="mt-1 text-xs text-foreground/70">{formatDateTime(entry.createdAt)}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
-
-        <View className="mt-4 rounded-2xl border border-foreground/15 bg-white px-4 py-4">
-          <Text className="text-xs uppercase tracking-[1.5px] text-foreground/60">Notification Settings</Text>
-          <Text className="mt-2 text-sm text-foreground/75">
-            Register this device token to receive order status updates.
-          </Text>
-          <Pressable
-            className={`mt-3 rounded-full border px-5 py-3 ${pushTokenMutation.isPending ? "border-foreground/30" : "border-foreground"}`}
-            disabled={pushTokenMutation.isPending}
-            onPress={handleRegisterPushToken}
-            accessibilityRole="button"
-            accessibilityLabel="Register push token for order updates"
-          >
-            <Text className="text-center text-xs font-semibold uppercase tracking-[1.8px] text-foreground">
-              {pushTokenMutation.isPending ? "Saving..." : "Register Push Updates"}
+        {loyaltyBalance ? (
+          <View style={styles.pointsPanel}>
+            <Text style={styles.pointsValue}>{loyaltyBalance.availablePoints} points</Text>
+            <Text style={styles.pointsMeta}>
+              Pending {loyaltyBalance.pendingPoints} • Lifetime earned {loyaltyBalance.lifetimeEarned}
             </Text>
-          </Pressable>
-          {notificationStatus ? <Text className="mt-2 text-xs text-foreground/70">{notificationStatus}</Text> : null}
-        </View>
+          </View>
+        ) : null}
 
-        <Pressable
-          className="mt-5 rounded-full border border-foreground px-6 py-4"
-          onPress={() => {
-            void handleSignOut();
-          }}
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-        >
-          <Text className="text-center text-xs font-semibold uppercase tracking-[2px] text-foreground">Sign Out</Text>
-        </Pressable>
-      </ScrollView>
-    </View>
+        {loyaltyLedger.length > 0 ? (
+          <View style={styles.ledgerWrap}>
+            {loyaltyLedger.slice(0, 4).map((entry) => (
+              <View key={entry.id} style={styles.ledgerItem}>
+                <Chip
+                  label={`${entry.type} ${entry.points > 0 ? `+${entry.points}` : entry.points}`}
+                  active={entry.points > 0}
+                />
+                <Text style={styles.ledgerMeta}>{formatDateTime(entry.createdAt)}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+      </Card>
+
+      <Card style={{ marginTop: 12 }}>
+        <SectionLabel label="Notification Settings" />
+        <Text style={styles.bodyText}>Register this device token to receive order updates in real time.</Text>
+        <Button
+          label={pushTokenMutation.isPending ? "Saving..." : "Register Push Updates"}
+          onPress={handleRegisterPushToken}
+          disabled={pushTokenMutation.isPending}
+          style={{ marginTop: 10 }}
+        />
+        {notificationStatus ? <Text style={styles.statusText}>{notificationStatus}</Text> : null}
+      </Card>
+
+      <Button
+        label={signOutPending ? "Signing Out..." : "Sign Out"}
+        variant="ghost"
+        onPress={() => {
+          void handleSignOut();
+        }}
+        disabled={signOutPending}
+        style={{ marginTop: 12 }}
+      />
+    </ScreenScroll>
   );
 }
+
+const styles = StyleSheet.create({
+  emptyBody: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.textSecondary
+  },
+  signInCta: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    backgroundColor: uiPalette.primary
+  },
+  signInCtaText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.3
+  },
+  profileValue: {
+    marginTop: 8,
+    fontSize: 15,
+    fontWeight: "700",
+    color: uiPalette.text
+  },
+  profileMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    color: uiPalette.textMuted
+  },
+  bodyText: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.textSecondary
+  },
+  errorText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: uiPalette.danger
+  },
+  activeOrderCard: {
+    marginTop: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    backgroundColor: "rgba(255,255,255,0.8)",
+    padding: 12
+  },
+  pickupCodeLabel: {
+    marginTop: 8,
+    fontSize: 12,
+    color: uiPalette.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 1
+  },
+  pickupCodeValue: {
+    marginTop: 4,
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    color: uiPalette.text
+  },
+  statusPill: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "rgba(15,23,42,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.12)"
+  },
+  statusPillPositive: {
+    backgroundColor: "rgba(52,199,89,0.14)",
+    borderColor: "rgba(52,199,89,0.34)"
+  },
+  statusPillCritical: {
+    backgroundColor: "rgba(255,59,48,0.14)",
+    borderColor: "rgba(255,59,48,0.34)"
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    color: uiPalette.textSecondary,
+    textTransform: "uppercase"
+  },
+  statusPillTextPositive: {
+    color: "#118C43"
+  },
+  statusPillTextCritical: {
+    color: "#B52821"
+  },
+  listWrap: {
+    marginTop: 10,
+    gap: 8
+  },
+  listItem: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    backgroundColor: "rgba(255,255,255,0.84)",
+    padding: 10
+  },
+  listItemTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8
+  },
+  listItemAmount: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: uiPalette.text
+  },
+  listItemCode: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: "600",
+    color: uiPalette.text
+  },
+  listItemMeta: {
+    marginTop: 3,
+    fontSize: 12,
+    color: uiPalette.textMuted
+  },
+  pointsPanel: {
+    marginTop: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    backgroundColor: "rgba(255,255,255,0.8)",
+    padding: 12
+  },
+  pointsValue: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: uiPalette.text
+  },
+  pointsMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    color: uiPalette.textMuted
+  },
+  ledgerWrap: {
+    marginTop: 10,
+    gap: 8
+  },
+  ledgerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    padding: 8,
+    backgroundColor: "rgba(255,255,255,0.76)"
+  },
+  ledgerMeta: {
+    fontSize: 12,
+    color: uiPalette.textMuted
+  },
+  statusText: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 17,
+    color: uiPalette.textSecondary
+  }
+});
