@@ -2,6 +2,7 @@ import { BlurView } from "expo-blur";
 import type { ReactNode } from "react";
 import {
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,28 +14,33 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export const uiPalette = {
-  background: "#EEF3FA",
-  backgroundAlt: "#F8FAFD",
-  card: "rgba(255,255,255,0.92)",
-  cardMuted: "rgba(255,255,255,0.78)",
-  text: "#0F172A",
-  textSecondary: "#566274",
-  textMuted: "#748296",
-  border: "rgba(15, 23, 42, 0.1)",
-  primary: "#007AFF",
-  primaryText: "#FFFFFF",
-  accent: "#34C759",
-  warning: "#FF9F0A",
-  danger: "#FF3B30"
+  background: "#F6EFE6",
+  backgroundAlt: "#EDE1D1",
+  card: "rgba(255, 249, 241, 0.88)",
+  cardMuted: "rgba(243, 233, 221, 0.76)",
+  surfaceStrong: "#FFF8F0",
+  text: "#42210B",
+  textSecondary: "#736357",
+  textMuted: "#998675",
+  border: "rgba(115, 99, 87, 0.18)",
+  primary: "#603813",
+  primaryText: "#FFF8F0",
+  accent: "#A67C52",
+  accentSoft: "rgba(198, 156, 109, 0.18)",
+  brass: "#C69C6D",
+  walnut: "#754C24",
+  glow: "rgba(198, 156, 109, 0.24)",
+  warning: "#C88938",
+  danger: "#B75A46"
 } as const;
 
 export const uiShadow = {
   card: {
-    shadowColor: "#0B1324",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 6
+    shadowColor: "#603813",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.12,
+    shadowRadius: 28,
+    elevation: 8
   } as ViewStyle
 } as const;
 
@@ -42,9 +48,17 @@ type ScreenProps = {
   children: ReactNode;
   bottomInset?: number;
   contentContainerStyle?: StyleProp<ViewStyle>;
+  refreshing?: boolean;
+  onRefresh?: () => void;
 };
 
-export function ScreenScroll({ children, bottomInset = 132, contentContainerStyle }: ScreenProps) {
+export function ScreenScroll({
+  children,
+  bottomInset = 132,
+  contentContainerStyle,
+  refreshing = false,
+  onRefresh
+}: ScreenProps) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -52,6 +66,18 @@ export function ScreenScroll({ children, bottomInset = 132, contentContainerStyl
       <ScreenBackdrop />
       <ScrollView
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          onRefresh ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={uiPalette.primary}
+              colors={[uiPalette.primary]}
+              progressBackgroundColor={uiPalette.surfaceStrong}
+              progressViewOffset={insets.top + 12}
+            />
+          ) : undefined
+        }
         contentContainerStyle={[
           styles.screenContent,
           {
@@ -84,7 +110,17 @@ export function ScreenStatic({ children, style }: ScreenStaticProps) {
 }
 
 export function ScreenBackdrop() {
-  return <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.solidBackdrop]} />;
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <View style={[StyleSheet.absoluteFill, styles.solidBackdrop]} />
+      <View style={styles.backdropGlowLarge} />
+      <View style={styles.backdropGlowSmall} />
+      <View style={styles.backdropCurve} />
+      <View style={styles.backdropLineOne} />
+      <View style={styles.backdropLineTwo} />
+      <View style={styles.backdropLineThree} />
+    </View>
+  );
 }
 
 type TitleBlockProps = {
@@ -204,17 +240,24 @@ export function SectionLabel({ label }: { label: string }) {
 
 const buttonVariantStyles = StyleSheet.create({
   primary: {
-    backgroundColor: uiPalette.primary
+    backgroundColor: uiPalette.primary,
+    borderWidth: 1,
+    borderColor: "rgba(255, 248, 240, 0.18)",
+    shadowColor: uiPalette.primary,
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 7
   },
   secondary: {
-    backgroundColor: uiPalette.card,
+    backgroundColor: uiPalette.surfaceStrong,
     borderWidth: 1,
     borderColor: uiPalette.border
   },
   ghost: {
-    backgroundColor: "transparent",
+    backgroundColor: "rgba(255, 248, 240, 0.4)",
     borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.2)"
+    borderColor: "rgba(115, 99, 87, 0.22)"
   }
 });
 
@@ -241,15 +284,73 @@ const styles = StyleSheet.create({
   solidBackdrop: {
     backgroundColor: uiPalette.backgroundAlt
   },
+  backdropGlowLarge: {
+    position: "absolute",
+    top: -70,
+    right: -110,
+    width: 320,
+    height: 320,
+    borderRadius: 999,
+    backgroundColor: uiPalette.glow,
+    opacity: 0.9
+  },
+  backdropGlowSmall: {
+    position: "absolute",
+    bottom: 120,
+    left: -70,
+    width: 210,
+    height: 210,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 241, 220, 0.76)"
+  },
+  backdropCurve: {
+    position: "absolute",
+    top: 118,
+    right: -8,
+    width: 192,
+    height: 268,
+    borderTopLeftRadius: 128,
+    borderBottomLeftRadius: 128,
+    borderWidth: 1,
+    borderColor: "rgba(198, 156, 109, 0.22)",
+    backgroundColor: "rgba(255, 248, 240, 0.24)"
+  },
+  backdropLineOne: {
+    position: "absolute",
+    top: 86,
+    left: 24,
+    right: 42,
+    height: 2,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 248, 240, 0.9)"
+  },
+  backdropLineTwo: {
+    position: "absolute",
+    top: 114,
+    left: 120,
+    right: 24,
+    height: 2,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 248, 240, 0.7)"
+  },
+  backdropLineThree: {
+    position: "absolute",
+    top: 142,
+    left: 48,
+    right: 88,
+    height: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 248, 240, 0.55)"
+  },
   titleWrap: {
     flexDirection: "row",
     gap: 12,
     alignItems: "flex-start"
   },
   titleText: {
-    fontSize: 36,
+    fontSize: 38,
     fontWeight: "700",
-    letterSpacing: -0.8,
+    letterSpacing: -1.2,
     color: uiPalette.text
   },
   subtitleText: {
@@ -259,43 +360,43 @@ const styles = StyleSheet.create({
     color: uiPalette.textSecondary
   },
   card: {
-    borderRadius: 22,
+    borderRadius: 26,
     backgroundColor: uiPalette.card,
     borderWidth: 1,
     borderColor: uiPalette.border,
-    padding: 16,
+    padding: 18,
     ...uiShadow.card
   },
   cardMuted: {
     backgroundColor: uiPalette.cardMuted
   },
   cardShell: {
-    borderRadius: 22,
+    borderRadius: 30,
     overflow: "hidden",
     ...uiShadow.card
   },
   cardBlur: {
-    borderRadius: 22
+    borderRadius: 30
   },
   cardBlurInner: {
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.72)",
+    borderRadius: 30,
+    backgroundColor: "rgba(255, 248, 240, 0.72)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.58)",
-    padding: 16
+    borderColor: "rgba(255, 248, 240, 0.56)",
+    padding: 18
   },
   buttonBase: {
-    minHeight: 50,
-    borderRadius: 14,
+    minHeight: 54,
+    borderRadius: 18,
     justifyContent: "center",
-    paddingHorizontal: 16
+    paddingHorizontal: 18
   },
   buttonDisabled: {
     opacity: 0.48
   },
   buttonPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.995 }]
+    opacity: 0.92,
+    transform: [{ scale: 0.992 }]
   },
   buttonInner: {
     flexDirection: "row",
@@ -304,21 +405,21 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   buttonText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "700",
-    letterSpacing: 0.3
+    letterSpacing: 0.2
   },
   chip: {
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.8)",
+    backgroundColor: "rgba(255, 248, 240, 0.88)",
     borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.1)"
+    borderColor: "rgba(115, 99, 87, 0.18)"
   },
   chipActive: {
-    backgroundColor: uiPalette.text,
-    borderColor: uiPalette.text
+    backgroundColor: uiPalette.walnut,
+    borderColor: uiPalette.walnut
   },
   chipPressed: {
     opacity: 0.8
@@ -329,13 +430,13 @@ const styles = StyleSheet.create({
     color: uiPalette.textSecondary
   },
   chipTextActive: {
-    color: "#EFF5FF"
+    color: uiPalette.primaryText
   },
   sectionLabel: {
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 1.2,
-    color: uiPalette.textMuted,
+    color: uiPalette.accent,
     textTransform: "uppercase"
   }
 });

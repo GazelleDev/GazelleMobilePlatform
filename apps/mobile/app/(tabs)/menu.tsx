@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import Constants from "expo-constants";
-import { Link, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   Animated,
@@ -9,6 +9,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,7 +19,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../../src/cart/store";
 import { formatUsd, resolveMenuData, useMenuQuery, type MenuCategory, type MenuItem } from "../../src/menu/catalog";
-import { Button, Card, ScreenBackdrop, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
+import { Button, Card, GlassCard, ScreenBackdrop, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
 
 type LiquidGlassViewProps = {
   children: ReactNode;
@@ -200,11 +201,43 @@ function CategorySelector({ options, selectedCategoryId, onSelect }: { options: 
   );
 }
 
+function resolveItemIcon(item: MenuItem): keyof typeof Ionicons.glyphMap {
+  const haystack = `${item.name} ${item.description}`.toLowerCase();
+
+  if (haystack.includes("tea") || haystack.includes("matcha")) {
+    return "leaf-outline";
+  }
+
+  if (
+    haystack.includes("croissant") ||
+    haystack.includes("cookie") ||
+    haystack.includes("muffin") ||
+    haystack.includes("pastry") ||
+    haystack.includes("cake")
+  ) {
+    return "nutrition-outline";
+  }
+
+  if (
+    haystack.includes("espresso") ||
+    haystack.includes("latte") ||
+    haystack.includes("coffee") ||
+    haystack.includes("cappuccino")
+  ) {
+    return "cafe-outline";
+  }
+
+  return "sparkles-outline";
+}
+
 function ItemCard({ item, onCustomize }: { item: MenuItem; onCustomize: (item: MenuItem) => void }) {
   return (
     <Card style={styles.itemCard}>
       <View style={styles.itemTopRow}>
-        <View style={{ flex: 1 }}>
+        <View style={styles.itemVisual}>
+          <Ionicons name={resolveItemIcon(item)} size={20} color={uiPalette.walnut} />
+        </View>
+        <View style={styles.itemBody}>
           <View style={styles.itemNameRow}>
             <Text style={styles.itemName}>{item.name}</Text>
             {item.badgeCodes.length > 0 ? (
@@ -219,7 +252,9 @@ function ItemCard({ item, onCustomize }: { item: MenuItem; onCustomize: (item: M
           </View>
           <Text style={styles.itemDesc}>{item.description}</Text>
         </View>
-        <Text style={styles.itemPrice}>{formatUsd(item.priceCents)}</Text>
+        <View style={styles.itemPricePill}>
+          <Text style={styles.itemPrice}>{formatUsd(item.priceCents)}</Text>
+        </View>
       </View>
       <View style={styles.customizeCtaWrap}>
         {renderGlassPill(
@@ -254,7 +289,7 @@ function CategorySections({ categories, onCustomize }: { categories: MenuCategor
 export default function MenuScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { itemCount, subtotalCents } = useCart();
+  const { itemCount } = useCart();
   const menuQuery = useMenuQuery();
   const menu = resolveMenuData(menuQuery.data);
   const categories = menu.categories;
@@ -297,10 +332,45 @@ export default function MenuScreen() {
       <ScreenBackdrop />
       <ScrollView
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={menuQuery.isRefetching}
+            onRefresh={() => void menuQuery.refetch()}
+            tintColor={uiPalette.primary}
+            colors={[uiPalette.primary]}
+            progressBackgroundColor={uiPalette.surfaceStrong}
+            progressViewOffset={insets.top + 12}
+          />
+        }
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: insets.top + 14, paddingBottom: Math.max(insets.bottom + 216, 230) }}
       >
-        <TitleBlock title="Menu" subtitle="Browse categories, customize items, and build your order." />
-        <Card style={{ marginTop: 14 }}>
+        <TitleBlock title="Menu" subtitle="Browse the live collection, shape each item to your taste, and keep pickup moving." />
+
+        <GlassCard style={{ marginTop: 16 }}>
+          <SectionLabel label="Curated Menu" />
+          <Text style={styles.heroTitle}>Designed for quick pickup and slow coffee moments.</Text>
+          <Text style={styles.heroCopy}>
+            The menu stays live, the choices stay clear, and customization stays close to the item
+            instead of buried later in checkout.
+          </Text>
+          <View style={styles.heroInfoRow}>
+            <View style={styles.heroInfoPill}>
+              <Ionicons name="time-outline" size={14} color={uiPalette.accent} />
+              <Text style={styles.heroInfoText}>{menuQuery.isLoading ? "Refreshing menu" : "Live availability"}</Text>
+            </View>
+            <View style={styles.heroInfoPill}>
+              <Ionicons name="color-wand-outline" size={14} color={uiPalette.accent} />
+              <Text style={styles.heroInfoText}>Made to customize</Text>
+            </View>
+            <View style={styles.heroInfoPill}>
+              <Ionicons name="bag-handle-outline" size={14} color={uiPalette.accent} />
+              <Text style={styles.heroInfoText}>{itemCount > 0 ? `${itemCount} in bag` : "Pickup-ready flow"}</Text>
+            </View>
+          </View>
+        </GlassCard>
+
+        <Card style={[styles.searchCard, { marginTop: 14 }]}>
+          <SectionLabel label="Find Your Order" />
           <TextInput
             value={searchTerm}
             onChangeText={setSearchTerm}
@@ -316,7 +386,7 @@ export default function MenuScreen() {
         ) : null}
         {menuQuery.error ? (
           <Card style={{ marginTop: 14 }}>
-            <Text style={styles.statusText}>Could not refresh live menu. Showing fallback catalog.</Text>
+            <Text style={styles.statusText}>Some live menu updates are unavailable right now, but you can still order.</Text>
             <Button label="Retry" variant="ghost" onPress={() => void menuQuery.refetch()} style={{ marginTop: 10, alignSelf: "flex-start" }} />
           </Card>
         ) : null}
@@ -326,42 +396,71 @@ export default function MenuScreen() {
           <CategorySections categories={visibleCategories} onCustomize={openCustomization} />
         )}
       </ScrollView>
-      {itemCount > 0 ? (
-        <View style={[styles.cartCtaWrap, { bottom: Math.max(insets.bottom + 92, 108) }]} pointerEvents="box-none">
-          <Link href="/(tabs)/cart" asChild>
-            <Pressable style={styles.cartCta}>
-              <Ionicons name="bag-check-outline" size={17} color="#FFFFFF" />
-              <Text style={styles.cartCtaText}>View Cart ({itemCount}) • {formatUsd(subtotalCents)}</Text>
-            </Pressable>
-          </Link>
-        </View>
-      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: uiPalette.background },
+  heroTitle: {
+    marginTop: 8,
+    fontSize: 28,
+    lineHeight: 33,
+    fontWeight: "700",
+    letterSpacing: -0.8,
+    color: uiPalette.text
+  },
+  heroCopy: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 22,
+    color: uiPalette.textSecondary
+  },
+  heroInfoRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  heroInfoPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: "rgba(255, 248, 240, 0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(198, 156, 109, 0.18)"
+  },
+  heroInfoText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: uiPalette.text
+  },
+  searchCard: {
+    gap: 10
+  },
   searchInput: {
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.85)",
+    backgroundColor: "rgba(255, 248, 240, 0.84)",
     paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingVertical: 12,
     color: uiPalette.text,
     fontSize: 15,
-    marginBottom: 10
+    marginTop: -2
   },
   categorySelectorWrap: {
     width: "100%",
     height: CATEGORY_SELECTOR_HEIGHT,
     borderRadius: 999,
     overflow: "hidden",
-    backgroundColor: "rgba(213, 214, 219, 0.56)",
+    backgroundColor: "rgba(205, 178, 148, 0.3)",
     borderWidth: 1,
-    borderColor: "rgba(243, 243, 246, 0.54)",
-    shadowColor: "#1E1E24",
+    borderColor: "rgba(198, 156, 109, 0.28)",
+    shadowColor: uiPalette.walnut,
     shadowOpacity: 0.1,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
@@ -375,9 +474,9 @@ const styles = StyleSheet.create({
     width: ITEM_WIDTH,
     marginLeft: -(ITEM_WIDTH / 2),
     borderRadius: 999,
-    backgroundColor: "rgba(247, 247, 250, 0.72)",
+    backgroundColor: "rgba(255, 248, 240, 0.82)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.9)"
+    borderColor: "rgba(198, 156, 109, 0.26)"
   },
   categorySelectorStrip: {
     position: "absolute",
@@ -396,11 +495,11 @@ const styles = StyleSheet.create({
   categorySelectorLabel: {
     fontSize: 12,
     fontWeight: "700",
-    color: "rgba(31, 41, 55, 0.45)",
+    color: uiPalette.textMuted,
     textAlign: "center"
   },
   categorySelectorLabelActive: {
-    color: "#1F2937",
+    color: uiPalette.text,
     fontSize: 13
   },
   categorySelectorFadeLeft: {
@@ -411,7 +510,7 @@ const styles = StyleSheet.create({
     width: 48,
     borderTopLeftRadius: 999,
     borderBottomLeftRadius: 999,
-    backgroundColor: "rgba(213, 214, 219, 0.0)"
+    backgroundColor: "rgba(205, 178, 148, 0.0)"
   },
   categorySelectorFadeRight: {
     position: "absolute",
@@ -421,25 +520,57 @@ const styles = StyleSheet.create({
     width: 48,
     borderTopRightRadius: 999,
     borderBottomRightRadius: 999,
-    backgroundColor: "rgba(213, 214, 219, 0.0)"
+    backgroundColor: "rgba(205, 178, 148, 0.0)"
   },
-  itemCard: { padding: 14 },
-  itemTopRow: { flexDirection: "row", gap: 8 },
+  itemCard: { padding: 16 },
+  itemTopRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  itemVisual: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(198, 156, 109, 0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(198, 156, 109, 0.24)"
+  },
+  itemBody: {
+    flex: 1
+  },
   itemNameRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
   itemNameBadgeRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
   itemName: { fontSize: 16, fontWeight: "700", color: uiPalette.text },
-  itemDesc: { marginTop: 3, fontSize: 13, lineHeight: 18, color: uiPalette.textSecondary },
-  itemPrice: { fontSize: 15, fontWeight: "700", color: uiPalette.text },
-  badgePill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(0, 122, 255, 0.12)" },
-  badgeText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8, color: "#0B5CC4" },
+  itemDesc: { marginTop: 4, fontSize: 13, lineHeight: 19, color: uiPalette.textSecondary },
+  itemPricePill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: "rgba(198, 156, 109, 0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(198, 156, 109, 0.22)"
+  },
+  itemPrice: { fontSize: 14, fontWeight: "700", color: uiPalette.walnut },
+  badgePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(198, 156, 109, 0.16)"
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    color: uiPalette.walnut
+  },
   customizeCtaWrap: {
     marginTop: 12,
     width: "100%",
     height: CUSTOMIZE_BUTTON_HEIGHT,
     borderRadius: 999,
     overflow: "hidden",
-    shadowColor: "#0F172A",
-    shadowOpacity: 0.11,
+    shadowColor: uiPalette.walnut,
+    shadowOpacity: 0.14,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3
@@ -450,39 +581,22 @@ const styles = StyleSheet.create({
     height: "100%",
     borderRadius: 999,
     overflow: "hidden",
-    backgroundColor: "rgba(213, 214, 219, 0.56)",
+    backgroundColor: "rgba(205, 178, 148, 0.3)",
     borderWidth: 1,
-    borderColor: "rgba(243, 243, 246, 0.54)"
+    borderColor: "rgba(198, 156, 109, 0.28)"
   },
   customizeButton: {
     width: "100%",
     height: CUSTOMIZE_BUTTON_HEIGHT,
     borderRadius: 999,
     paddingHorizontal: 16,
-    backgroundColor: "rgba(247, 247, 250, 0.58)",
+    backgroundColor: "rgba(255, 248, 240, 0.76)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.78)",
+    borderColor: "rgba(198, 156, 109, 0.24)",
     justifyContent: "center"
   },
   customizeButtonContent: { paddingTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12 },
   customizeButtonPressed: { opacity: 0.86 },
-  customizeButtonText: { color: "#1F2937", fontSize: 14, lineHeight: 18, fontWeight: "700", letterSpacing: 0.1, textAlign: "center" },
-  statusText: { fontSize: 13, lineHeight: 18, color: uiPalette.textSecondary },
-  cartCtaWrap: { position: "absolute", left: 20, right: 20, alignItems: "center" },
-  cartCta: {
-    minHeight: 52,
-    borderRadius: 16,
-    backgroundColor: uiPalette.text,
-    paddingHorizontal: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-    shadowColor: "#0B1324",
-    shadowOpacity: 0.24,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8
-  },
-  cartCtaText: { color: "#ECF2FF", fontSize: 13, fontWeight: "700", letterSpacing: 0.2 }
+  customizeButtonText: { color: uiPalette.text, fontSize: 14, lineHeight: 18, fontWeight: "700", letterSpacing: 0.1, textAlign: "center" },
+  statusText: { fontSize: 13, lineHeight: 18, color: uiPalette.textSecondary }
 });

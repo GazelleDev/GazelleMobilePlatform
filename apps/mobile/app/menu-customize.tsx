@@ -374,7 +374,7 @@ export default function MenuCustomizeModalScreen() {
                         size={16}
                         color={
                           quantity <= 1
-                            ? "rgba(60,60,67,0.3)"
+                            ? "rgba(153, 134, 117, 0.48)"
                             : uiPalette.text
                         }
                       />
@@ -393,7 +393,7 @@ export default function MenuCustomizeModalScreen() {
                         size={16}
                         color={
                           quantity >= MAX_QUANTITY
-                            ? "rgba(60,60,67,0.3)"
+                            ? "rgba(153, 134, 117, 0.48)"
                             : uiPalette.text
                         }
                       />
@@ -431,7 +431,7 @@ export default function MenuCustomizeModalScreen() {
                         <Ionicons
                           name="bag-check-outline"
                           size={18}
-                          color="#1F2937"
+                          color={uiPalette.text}
                         />
                       </View>
                       <Text style={styles.addToCartButtonLabel}>
@@ -461,12 +461,13 @@ const styles = StyleSheet.create({
   },
   sheet: {
     flex: 1,
-    marginTop: 8,
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
-    backgroundColor: "rgba(242, 242, 247, 0.97)",
+    backgroundColor: "rgba(246, 239, 230, 0.98)",
     paddingHorizontal: 20,
-    paddingTop: 8
+    paddingTop: 8,
+    borderWidth: 1,
+    borderColor: "rgba(198, 156, 109, 0.16)"
   },
 
   modalHandleWrap: {
@@ -478,7 +479,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 5,
     borderRadius: 999,
-    backgroundColor: "rgba(60, 60, 67, 0.22)"
+    backgroundColor: "rgba(153, 134, 117, 0.42)"
   },
 
   modalHeaderRow: {
@@ -503,10 +504,10 @@ const styles = StyleSheet.create({
 
   loadingWrap: {
     marginTop: 12,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.62)",
+    borderRadius: 22,
+    backgroundColor: "rgba(255, 248, 240, 0.72)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.10)",
+    borderColor: "rgba(115, 99, 87, 0.14)",
     paddingHorizontal: 14,
     paddingVertical: 18,
     alignItems: "center"
@@ -532,7 +533,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "rgba(0, 122, 255, 0.12)"
+    backgroundColor: "rgba(198, 156, 109, 0.16)"
   },
 
   badgeText: {
@@ -540,15 +541,15 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.8,
-    color: "#0B5CC4"
+    color: uiPalette.walnut
   },
 
   modalSection: {
     marginTop: 12,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.62)",
+    borderRadius: 24,
+    backgroundColor: "rgba(255, 248, 240, 0.72)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.10)",
+    borderColor: "rgba(115, 99, 87, 0.14)",
     paddingHorizontal: 14,
     paddingVertical: 14
   },
@@ -568,10 +569,10 @@ const styles = StyleSheet.create({
 
   noteInput: {
     marginTop: 8,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.12)",
-    backgroundColor: "rgba(255,255,255,0.78)",
+    borderColor: "rgba(115, 99, 87, 0.16)",
+    backgroundColor: "rgba(255, 248, 240, 0.82)",
     minHeight: 92,
     textAlignVertical: "top",
     paddingHorizontal: 14,
@@ -602,8 +603,8 @@ const styles = StyleSheet.create({
     height: 30,
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.2)",
-    backgroundColor: "rgba(255,255,255,0.86)",
+    borderColor: "rgba(115, 99, 87, 0.18)",
+    backgroundColor: "rgba(255, 248, 240, 0.9)",
     justifyContent: "center",
     alignItems: "center"
   },
@@ -623,7 +624,7 @@ const styles = StyleSheet.create({
   priceBreakdown: {
     marginTop: 10,
     fontSize: 12,
-    color: "rgba(60, 60, 67, 0.76)"
+    color: uiPalette.textMuted
   },
 
   totalPrice: {
@@ -636,8 +637,8 @@ const styles = StyleSheet.create({
   stickyFooter: {
     paddingTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(60,60,67,0.10)",
-    backgroundColor: "rgba(242, 242, 247, 0.97)"
+    borderTopColor: "rgba(115, 99, 87, 0.14)",
+    backgroundColor: "rgba(246, 239, 230, 0.98)"
   },
 
   addToCartShell: {
@@ -645,9 +646,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     overflow: "hidden",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(243, 243, 246, 0.54)",
-    shadowColor: "#0F172A",
-    shadowOpacity: 0.14,
+    borderColor: "rgba(198, 156, 109, 0.24)",
+    shadowColor: uiPalette.walnut,
+    shadowOpacity: 0.18,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 7 },
     elevation: 8
@@ -662,18 +663,18 @@ const styles = StyleSheet.create({
   addToCartGlassSurface: {
     borderRadius: 999,
     overflow: "hidden",
-    backgroundColor: "rgba(213, 214, 219, 0.56)",
+    backgroundColor: "rgba(205, 178, 148, 0.3)",
     borderWidth: 1,
-    borderColor: "rgba(243, 243, 246, 0.54)"
+    borderColor: "rgba(198, 156, 109, 0.28)"
   },
 
   addToCartButton: {
     borderRadius: 999,
     paddingHorizontal: 24,
     paddingVertical: 0,
-    backgroundColor: "rgba(247, 247, 250, 0.58)",
+    backgroundColor: "rgba(255, 248, 240, 0.78)",
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.78)",
+    borderColor: "rgba(198, 156, 109, 0.26)",
     justifyContent: "center",
     overflow: "hidden"
   },
@@ -700,7 +701,7 @@ const styles = StyleSheet.create({
   },
 
   addToCartButtonLabel: {
-    color: "#1F2937",
+    color: uiPalette.text,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: "700",

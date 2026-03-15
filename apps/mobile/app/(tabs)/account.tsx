@@ -4,14 +4,11 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useAuthSession } from "../../src/auth/session";
 import {
-  findActiveOrder,
   useLoyaltyBalanceQuery,
   useLoyaltyLedgerQuery,
-  useOrderHistoryQuery,
   usePushTokenRegistrationMutation
 } from "../../src/account/data";
-import { formatUsd } from "../../src/menu/catalog";
-import { Button, Card, Chip, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
+import { Button, Chip, GlassCard, Card, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected error";
@@ -26,55 +23,51 @@ function formatDateTime(value: string) {
   return new Date(parsed).toLocaleString();
 }
 
-function formatOrderStatus(status: string) {
-  return status.replaceAll("_", " ");
+function DetailPill({
+  icon,
+  label
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+}) {
+  return (
+    <View style={styles.detailPill}>
+      <Ionicons name={icon} size={14} color={uiPalette.accent} />
+      <Text style={styles.detailPillText}>{label}</Text>
+    </View>
+  );
 }
 
-function OrderStatusChip({ status }: { status: string }) {
-  const isPositive = status === "READY" || status === "COMPLETED";
-  const isCritical = status === "CANCELED";
-
+function MetricTile({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
   return (
-    <View
-      style={[
-        styles.statusPill,
-        isPositive ? styles.statusPillPositive : null,
-        isCritical ? styles.statusPillCritical : null
-      ]}
-    >
-      <Text
-        style={[
-          styles.statusPillText,
-          isPositive ? styles.statusPillTextPositive : null,
-          isCritical ? styles.statusPillTextCritical : null
-        ]}
-      >
-        {formatOrderStatus(status)}
-      </Text>
+    <View style={styles.metricTile}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
     </View>
   );
 }
 
 export default function AccountScreen() {
   const { isAuthenticated, session, signOut } = useAuthSession();
-  const ordersQuery = useOrderHistoryQuery(isAuthenticated);
   const loyaltyBalanceQuery = useLoyaltyBalanceQuery(isAuthenticated);
   const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
   const pushTokenMutation = usePushTokenRegistrationMutation();
+  const showNotificationTesting = __DEV__;
 
   const [notificationStatus, setNotificationStatus] = useState("");
   const [signOutPending, setSignOutPending] = useState(false);
 
-  const orders = ordersQuery.data ?? [];
-  const activeOrder = findActiveOrder(orders);
   const loyaltyBalance = loyaltyBalanceQuery.data;
   const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
-
   const isRefreshing =
-    ordersQuery.isFetching ||
-    loyaltyBalanceQuery.isFetching ||
-    loyaltyLedgerQuery.isFetching ||
-    pushTokenMutation.isPending;
+    loyaltyBalanceQuery.isFetching || loyaltyLedgerQuery.isFetching || pushTokenMutation.isPending;
+  const isPullRefreshing = loyaltyBalanceQuery.isRefetching || loyaltyLedgerQuery.isRefetching;
 
   async function handleSignOut() {
     setSignOutPending(true);
@@ -86,7 +79,6 @@ export default function AccountScreen() {
   }
 
   function handleRefresh() {
-    void ordersQuery.refetch();
     void loyaltyBalanceQuery.refetch();
     void loyaltyLedgerQuery.refetch();
   }
@@ -114,33 +106,53 @@ export default function AccountScreen() {
       <ScreenScroll>
         <TitleBlock
           title="Account"
-          subtitle="Sign in to access order tracking, loyalty balances, and notification preferences."
+          subtitle="Sign in once to keep rewards, alerts, and your secure session in one polished place."
         />
 
-        <Card style={{ marginTop: 16 }}>
-          <SectionLabel label="Profile Access" />
-          <Text style={styles.emptyBody}>
-            Your account dashboard shows active order progress, recent history, and rewards activity.
-          </Text>
+        <GlassCard style={{ marginTop: 16 }}>
+          <SectionLabel label="Customer Access" />
+          <View style={styles.emptyHeroHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.emptyTitle}>Your profile belongs here.</Text>
+              <Text style={styles.emptyBody}>
+                Keep rewards progress, notification preferences, and session controls attached to one account.
+              </Text>
+            </View>
+            <View style={styles.heroIconWrap}>
+              <Ionicons name="person-circle-outline" size={24} color={uiPalette.walnut} />
+            </View>
+          </View>
+          <View style={styles.detailRow}>
+            <DetailPill icon="star-outline" label="Rewards" />
+            <DetailPill icon="notifications-outline" label="Pickup alerts" />
+            <DetailPill icon="shield-checkmark-outline" label="Secure session" />
+          </View>
           <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/account" } }} asChild>
-            <Pressable style={styles.signInCta}>
-              <Ionicons name="log-in-outline" size={16} color="#FFFFFF" />
-              <Text style={styles.signInCtaText}>Sign In</Text>
+            <Pressable>
+              <Button
+                label="Sign In"
+                style={{ marginTop: 16, alignSelf: "flex-start" }}
+                left={<Ionicons name="log-in-outline" size={16} color={uiPalette.primaryText} />}
+              />
             </Pressable>
           </Link>
-        </Card>
+        </GlassCard>
       </ScreenScroll>
     );
   }
 
   return (
-    <ScreenScroll>
+    <ScreenScroll
+      bottomInset={156}
+      refreshing={isPullRefreshing}
+      onRefresh={handleRefresh}
+    >
       <TitleBlock
         title="Account"
-        subtitle="Manage profile, loyalty rewards, order history, and push notifications."
+        subtitle="Rewards, alerts, and session controls stay here while Orders handles the live pickup timeline."
         action={
           <Button
-            label={isRefreshing ? "Refreshing" : "Refresh"}
+            label={isRefreshing ? "Updating" : "Refresh"}
             variant="secondary"
             onPress={handleRefresh}
             disabled={isRefreshing}
@@ -148,83 +160,43 @@ export default function AccountScreen() {
         }
       />
 
-      <Card style={{ marginTop: 16 }}>
-        <SectionLabel label="Profile" />
-        <Text style={styles.profileValue}>{session?.userId ?? "Unknown user"}</Text>
-        <Text style={styles.profileMeta}>Session expires {formatDateTime(session?.expiresAt ?? "")}</Text>
-      </Card>
-
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Active Order" />
-        {ordersQuery.isLoading ? <Text style={styles.bodyText}>Loading active order...</Text> : null}
-
-        {ordersQuery.error ? (
-          <View style={{ marginTop: 10 }}>
-            <Text style={styles.errorText}>{toErrorMessage(ordersQuery.error)}</Text>
-            <Button label="Retry" variant="ghost" onPress={() => void ordersQuery.refetch()} style={{ marginTop: 8, alignSelf: "flex-start" }} />
+      <GlassCard style={{ marginTop: 16 }}>
+        <SectionLabel label="Overview" />
+        <View style={styles.profileHeader}>
+          <View style={styles.heroIconWrap}>
+            <Ionicons name="sparkles-outline" size={22} color={uiPalette.walnut} />
           </View>
-        ) : null}
-
-        {!ordersQuery.isLoading && !ordersQuery.error ? (
-          activeOrder ? (
-            <View style={styles.activeOrderCard}>
-              <OrderStatusChip status={activeOrder.status} />
-              <Text style={styles.pickupCodeLabel}>Pickup code</Text>
-              <Text style={styles.pickupCodeValue}>{activeOrder.pickupCode}</Text>
-              <Text style={styles.profileMeta}>
-                Updated {formatDateTime(activeOrder.timeline[activeOrder.timeline.length - 1]?.occurredAt ?? "")}
-              </Text>
-            </View>
-          ) : (
-            <Text style={styles.bodyText}>No active order right now.</Text>
-          )
-        ) : null}
-      </Card>
-
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Order History" />
-        {ordersQuery.isLoading ? <Text style={styles.bodyText}>Loading history...</Text> : null}
-        {ordersQuery.error ? <Text style={styles.errorText}>Unable to load order history.</Text> : null}
-
-        {!ordersQuery.isLoading && !ordersQuery.error && orders.length === 0 ? (
-          <Text style={styles.bodyText}>No completed orders yet.</Text>
-        ) : null}
-
-        {!ordersQuery.isLoading && !ordersQuery.error && orders.length > 0 ? (
-          <View style={styles.listWrap}>
-            {orders.slice(0, 5).map((order) => (
-              <View key={order.id} style={styles.listItem}>
-                <View style={styles.listItemTop}>
-                  <OrderStatusChip status={order.status} />
-                  <Text style={styles.listItemAmount}>{formatUsd(order.total.amountCents)}</Text>
-                </View>
-                <Text style={styles.listItemCode}>{order.pickupCode}</Text>
-                <Text style={styles.listItemMeta}>
-                  {formatDateTime(order.timeline[order.timeline.length - 1]?.occurredAt ?? "")}
-                </Text>
-              </View>
-            ))}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.heroTitle}>The account layer stays calm and useful.</Text>
+            <Text style={styles.heroCopy}>
+              Rewards progress, alert controls, and secure session details are close by without competing with active orders.
+            </Text>
           </View>
-        ) : null}
-      </Card>
+        </View>
+        <View style={styles.metricGrid}>
+          <MetricTile label="Available" value={loyaltyBalance ? `${loyaltyBalance.availablePoints} pts` : "Loading"} />
+          <MetricTile label="Pending" value={loyaltyBalance ? `${loyaltyBalance.pendingPoints} pts` : "--"} />
+          <MetricTile label="Lifetime" value={loyaltyBalance ? `${loyaltyBalance.lifetimeEarned} pts` : "--"} />
+        </View>
+        <Text style={styles.profileMeta}>Secure session active until {formatDateTime(session?.expiresAt ?? "")}</Text>
+      </GlassCard>
 
       <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Loyalty" />
-        {loyaltyBalanceQuery.isLoading ? <Text style={styles.bodyText}>Loading loyalty balance...</Text> : null}
-        {loyaltyBalanceQuery.error ? <Text style={styles.errorText}>Unable to load loyalty balance.</Text> : null}
+        <SectionLabel label="Rewards" />
+        {loyaltyBalanceQuery.isLoading ? <Text style={styles.bodyText}>Loading rewards balance...</Text> : null}
+        {loyaltyBalanceQuery.error ? <Text style={styles.errorText}>Unable to load rewards balance.</Text> : null}
 
         {loyaltyBalance ? (
-          <View style={styles.pointsPanel}>
-            <Text style={styles.pointsValue}>{loyaltyBalance.availablePoints} points</Text>
-            <Text style={styles.pointsMeta}>
-              Pending {loyaltyBalance.pendingPoints} • Lifetime earned {loyaltyBalance.lifetimeEarned}
-            </Text>
+          <View style={styles.rewardsGrid}>
+            <MetricTile label="Available" value={`${loyaltyBalance.availablePoints} pts`} />
+            <MetricTile label="Pending" value={`${loyaltyBalance.pendingPoints} pts`} />
+            <MetricTile label="Lifetime" value={`${loyaltyBalance.lifetimeEarned} pts`} />
           </View>
         ) : null}
 
         {loyaltyLedger.length > 0 ? (
           <View style={styles.ledgerWrap}>
-            {loyaltyLedger.slice(0, 4).map((entry) => (
+            {loyaltyLedger.slice(0, 5).map((entry) => (
               <View key={entry.id} style={styles.ledgerItem}>
                 <Chip
                   label={`${entry.type} ${entry.points > 0 ? `+${entry.points}` : entry.points}`}
@@ -238,202 +210,189 @@ export default function AccountScreen() {
       </Card>
 
       <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Notification Settings" />
-        <Text style={styles.bodyText}>Register this device token to receive order updates in real time.</Text>
-        <Button
-          label={pushTokenMutation.isPending ? "Saving..." : "Register Push Updates"}
-          onPress={handleRegisterPushToken}
-          disabled={pushTokenMutation.isPending}
-          style={{ marginTop: 10 }}
-        />
-        {notificationStatus ? <Text style={styles.statusText}>{notificationStatus}</Text> : null}
+        <SectionLabel label="Order Alerts" />
+        <Text style={styles.bodyText}>
+          Keep pickup updates close at hand so the handoff feels as smooth as the ordering flow.
+        </Text>
+        {showNotificationTesting ? (
+          <>
+            <Button
+              label={pushTokenMutation.isPending ? "Saving..." : "Enable Test Updates"}
+              onPress={handleRegisterPushToken}
+              disabled={pushTokenMutation.isPending}
+              style={{ marginTop: 12 }}
+            />
+            {notificationStatus ? <Text style={styles.statusText}>{notificationStatus}</Text> : null}
+            <Text style={styles.profileMeta}>Developer test registration is only shown in development builds.</Text>
+          </>
+        ) : (
+          <View style={styles.emptyPanel}>
+            <Ionicons name="notifications-outline" size={18} color={uiPalette.walnut} />
+            <Text style={styles.bodyText}>Push alert preferences will appear here once device permissions are enabled.</Text>
+          </View>
+        )}
       </Card>
 
-      <Button
-        label={signOutPending ? "Signing Out..." : "Sign Out"}
-        variant="ghost"
-        onPress={() => {
-          void handleSignOut();
-        }}
-        disabled={signOutPending}
-        style={{ marginTop: 12 }}
-      />
+      <View style={styles.footerActions}>
+        <Button
+          label={signOutPending ? "Signing Out..." : "Sign Out"}
+          variant="ghost"
+          onPress={() => {
+            void handleSignOut();
+          }}
+          disabled={signOutPending}
+        />
+      </View>
     </ScreenScroll>
   );
 }
 
 const styles = StyleSheet.create({
+  emptyHeroHeader: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 16
+  },
+  heroIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(198, 156, 109, 0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(198, 156, 109, 0.24)"
+  },
+  emptyTitle: {
+    fontSize: 28,
+    lineHeight: 32,
+    fontWeight: "700",
+    letterSpacing: -0.8,
+    color: uiPalette.text
+  },
   emptyBody: {
     marginTop: 8,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 22,
     color: uiPalette.textSecondary
   },
-  signInCta: {
-    marginTop: 12,
-    alignSelf: "flex-start",
+  profileHeader: {
+    marginTop: 8,
+    flexDirection: "row",
+    gap: 16,
+    alignItems: "flex-start"
+  },
+  heroTitle: {
+    fontSize: 28,
+    lineHeight: 33,
+    fontWeight: "700",
+    letterSpacing: -0.8,
+    color: uiPalette.text
+  },
+  heroCopy: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 22,
+    color: uiPalette.textSecondary
+  },
+  profileMeta: {
+    marginTop: 14,
+    fontSize: 12,
+    color: uiPalette.textMuted
+  },
+  detailRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  detailPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
     borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    backgroundColor: uiPalette.primary
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: "rgba(255, 248, 240, 0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(198, 156, 109, 0.18)"
   },
-  signInCtaText: {
-    color: "#FFFFFF",
-    fontSize: 13,
+  detailPillText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: uiPalette.text
+  },
+  metricGrid: {
+    marginTop: 16,
+    flexDirection: "row",
+    gap: 10
+  },
+  metricTile: {
+    flex: 1,
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: "rgba(255, 248, 240, 0.76)",
+    borderWidth: 1,
+    borderColor: uiPalette.border
+  },
+  metricLabel: {
+    fontSize: 11,
     fontWeight: "700",
-    letterSpacing: 0.3
+    color: uiPalette.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8
   },
-  profileValue: {
+  metricValue: {
     marginTop: 8,
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: "700",
     color: uiPalette.text
   },
-  profileMeta: {
-    marginTop: 4,
+  rewardsGrid: {
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 10
+  },
+  ledgerWrap: {
+    marginTop: 14,
+    gap: 10
+  },
+  ledgerItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  ledgerMeta: {
     fontSize: 12,
     color: uiPalette.textMuted
   },
   bodyText: {
     marginTop: 8,
-    fontSize: 14,
+    fontSize: 13,
     lineHeight: 20,
     color: uiPalette.textSecondary
   },
   errorText: {
     marginTop: 8,
     fontSize: 13,
+    lineHeight: 20,
     color: uiPalette.danger
   },
-  activeOrderCard: {
-    marginTop: 10,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    padding: 12
-  },
-  pickupCodeLabel: {
-    marginTop: 8,
-    fontSize: 12,
-    color: uiPalette.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 1
-  },
-  pickupCodeValue: {
-    marginTop: 4,
-    fontSize: 22,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    color: uiPalette.text
-  },
-  statusPill: {
-    alignSelf: "flex-start",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "rgba(15,23,42,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(15,23,42,0.12)"
-  },
-  statusPillPositive: {
-    backgroundColor: "rgba(52,199,89,0.14)",
-    borderColor: "rgba(52,199,89,0.34)"
-  },
-  statusPillCritical: {
-    backgroundColor: "rgba(255,59,48,0.14)",
-    borderColor: "rgba(255,59,48,0.34)"
-  },
-  statusPillText: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    color: uiPalette.textSecondary,
-    textTransform: "uppercase"
-  },
-  statusPillTextPositive: {
-    color: "#118C43"
-  },
-  statusPillTextCritical: {
-    color: "#B52821"
-  },
-  listWrap: {
-    marginTop: 10,
-    gap: 8
-  },
-  listItem: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.84)",
-    padding: 10
-  },
-  listItemTop: {
+  emptyPanel: {
+    marginTop: 12,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 8
-  },
-  listItemAmount: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-  listItemCode: {
-    marginTop: 8,
-    fontSize: 14,
-    fontWeight: "600",
-    color: uiPalette.text
-  },
-  listItemMeta: {
-    marginTop: 3,
-    fontSize: 12,
-    color: uiPalette.textMuted
-  },
-  pointsPanel: {
-    marginTop: 8,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    padding: 12
-  },
-  pointsValue: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-  pointsMeta: {
-    marginTop: 4,
-    fontSize: 12,
-    color: uiPalette.textMuted
-  },
-  ledgerWrap: {
-    marginTop: 10,
-    gap: 8
-  },
-  ledgerItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    padding: 8,
-    backgroundColor: "rgba(255,255,255,0.76)"
-  },
-  ledgerMeta: {
-    fontSize: 12,
-    color: uiPalette.textMuted
   },
   statusText: {
-    marginTop: 8,
-    fontSize: 12,
-    lineHeight: 17,
-    color: uiPalette.textSecondary
+    marginTop: 10,
+    fontSize: 13,
+    lineHeight: 19,
+    color: uiPalette.text
+  },
+  footerActions: {
+    marginTop: 12
   }
 });
