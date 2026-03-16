@@ -3,8 +3,18 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
 PIDS=()
 CLEANED_UP=0
+
+if [[ -f "${ENV_FILE}" ]]; then
+  echo "[dev-services] loading env from ${ENV_FILE}"
+  set -a
+  # shellcheck disable=SC1090
+  source "${ENV_FILE}"
+  set +a
+fi
+
 BIND_HOST="${BIND_HOST:-127.0.0.1}"
 GATEWAY_PUBLIC_HOST="${GATEWAY_PUBLIC_HOST:-127.0.0.1}"
 IDENTITY_UPSTREAM_HOST="${IDENTITY_UPSTREAM_HOST:-127.0.0.1}"

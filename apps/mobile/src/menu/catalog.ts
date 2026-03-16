@@ -6,6 +6,7 @@ const menuItemSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  imageUrl: z.string().min(1).optional(),
   priceCents: z.number().int().nonnegative(),
   badgeCodes: z.array(z.string()),
   visible: z.boolean()

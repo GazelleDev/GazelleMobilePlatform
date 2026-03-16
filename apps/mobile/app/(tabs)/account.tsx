@@ -1,44 +1,22 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Link } from "expo-router";
+import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useAuthSession } from "../../src/auth/session";
 import {
   useLoyaltyBalanceQuery,
   useLoyaltyLedgerQuery,
   usePushTokenRegistrationMutation
 } from "../../src/account/data";
-import { Button, Chip, GlassCard, Card, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unexpected error";
-}
+import { Button, Card, Chip, GlassCard, ScreenScroll, SectionLabel, TitleBlock, uiPalette, uiTypography } from "../../src/ui/system";
 
 function formatDateTime(value: string) {
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) {
-    return value;
-  }
-
+  if (!Number.isFinite(parsed)) return value;
   return new Date(parsed).toLocaleString();
 }
 
-function DetailPill({
-  icon,
-  label
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-}) {
-  return (
-    <View style={styles.detailPill}>
-      <Ionicons name={icon} size={14} color={uiPalette.accent} />
-      <Text style={styles.detailPillText}>{label}</Text>
-    </View>
-  );
-}
-
-function MetricTile({
+function Metric({
   label,
   value
 }: {
@@ -46,7 +24,7 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <View style={styles.metricTile}>
+    <View style={styles.metricCard}>
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={styles.metricValue}>{value}</Text>
     </View>
@@ -54,20 +32,17 @@ function MetricTile({
 }
 
 export default function AccountScreen() {
+  const router = useRouter();
   const { isAuthenticated, session, signOut } = useAuthSession();
   const loyaltyBalanceQuery = useLoyaltyBalanceQuery(isAuthenticated);
   const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
   const pushTokenMutation = usePushTokenRegistrationMutation();
   const showNotificationTesting = __DEV__;
-
-  const [notificationStatus, setNotificationStatus] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
   const [signOutPending, setSignOutPending] = useState(false);
 
   const loyaltyBalance = loyaltyBalanceQuery.data;
   const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
-  const isRefreshing =
-    loyaltyBalanceQuery.isFetching || loyaltyLedgerQuery.isFetching || pushTokenMutation.isPending;
-  const isPullRefreshing = loyaltyBalanceQuery.isRefetching || loyaltyLedgerQuery.isRefetching;
 
   async function handleSignOut() {
     setSignOutPending(true);
@@ -83,11 +58,15 @@ export default function AccountScreen() {
     void loyaltyLedgerQuery.refetch();
   }
 
+  function handleSignIn() {
+    router.push({ pathname: "/auth", params: { returnTo: "/(tabs)/account" } });
+  }
+
   function handleRegisterPushToken() {
     const userIdFragment = session?.userId.slice(0, 8) ?? "guest";
     const tokenSeed = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-    setNotificationStatus("Registering push token...");
+    setStatusMessage("Registering push token…");
     pushTokenMutation.mutate(
       {
         deviceId: `mobile-${userIdFragment}`,
@@ -95,8 +74,8 @@ export default function AccountScreen() {
         expoPushToken: `ExponentPushToken[${tokenSeed}]`
       },
       {
-        onSuccess: () => setNotificationStatus("Push token registration updated."),
-        onError: (error) => setNotificationStatus(toErrorMessage(error))
+        onSuccess: () => setStatusMessage("Push token registration updated."),
+        onError: (error) => setStatusMessage(error instanceof Error ? error.message : "Unexpected error")
       }
     );
   }
@@ -106,36 +85,23 @@ export default function AccountScreen() {
       <ScreenScroll>
         <TitleBlock
           title="Account"
-          subtitle="Sign in once to keep rewards, alerts, and your secure session in one polished place."
+          subtitle="Rewards, alerts, and session settings stay separate from the order flow."
+          action={
+            <Button
+              label="Sign In"
+              variant="secondary"
+              onPress={handleSignIn}
+              left={<Ionicons name="log-in-outline" size={16} color={uiPalette.text} />}
+            />
+          }
         />
 
-        <GlassCard style={{ marginTop: 16 }}>
-          <SectionLabel label="Customer Access" />
-          <View style={styles.emptyHeroHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.emptyTitle}>Your profile belongs here.</Text>
-              <Text style={styles.emptyBody}>
-                Keep rewards progress, notification preferences, and session controls attached to one account.
-              </Text>
-            </View>
-            <View style={styles.heroIconWrap}>
-              <Ionicons name="person-circle-outline" size={24} color={uiPalette.walnut} />
-            </View>
-          </View>
-          <View style={styles.detailRow}>
-            <DetailPill icon="star-outline" label="Rewards" />
-            <DetailPill icon="notifications-outline" label="Pickup alerts" />
-            <DetailPill icon="shield-checkmark-outline" label="Secure session" />
-          </View>
-          <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/account" } }} asChild>
-            <Pressable>
-              <Button
-                label="Sign In"
-                style={{ marginTop: 16, alignSelf: "flex-start" }}
-                left={<Ionicons name="log-in-outline" size={16} color={uiPalette.primaryText} />}
-              />
-            </Pressable>
-          </Link>
+        <GlassCard style={{ marginTop: 18 }}>
+          <SectionLabel label="Sign in required" />
+          <Text style={styles.heroTitle}>Account details live here.</Text>
+          <Text style={styles.heroBody}>
+            Sign in to keep rewards, alerts, and your session attached to one account without adding friction to ordering.
+          </Text>
         </GlassCard>
       </ScreenScroll>
     );
@@ -144,98 +110,68 @@ export default function AccountScreen() {
   return (
     <ScreenScroll
       bottomInset={156}
-      refreshing={isPullRefreshing}
+      refreshing={loyaltyBalanceQuery.isRefetching || loyaltyLedgerQuery.isRefetching}
       onRefresh={handleRefresh}
     >
       <TitleBlock
         title="Account"
-        subtitle="Rewards, alerts, and session controls stay here while Orders handles the live pickup timeline."
-        action={
-          <Button
-            label={isRefreshing ? "Updating" : "Refresh"}
-            variant="secondary"
-            onPress={handleRefresh}
-            disabled={isRefreshing}
-          />
-        }
+        subtitle="A separate place for rewards, session, and alert settings."
+        action={<Button label="Refresh" variant="secondary" onPress={handleRefresh} />}
       />
 
-      <GlassCard style={{ marginTop: 16 }}>
+      <GlassCard style={{ marginTop: 18 }}>
         <SectionLabel label="Overview" />
-        <View style={styles.profileHeader}>
-          <View style={styles.heroIconWrap}>
-            <Ionicons name="sparkles-outline" size={22} color={uiPalette.walnut} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.heroTitle}>The account layer stays calm and useful.</Text>
-            <Text style={styles.heroCopy}>
-              Rewards progress, alert controls, and secure session details are close by without competing with active orders.
-            </Text>
-          </View>
-        </View>
+        <Text style={styles.heroTitle}>Session and rewards stay lightweight.</Text>
+        <Text style={styles.heroBody}>
+          Orders live in their own tab. This screen stays focused on account information and preferences.
+        </Text>
         <View style={styles.metricGrid}>
-          <MetricTile label="Available" value={loyaltyBalance ? `${loyaltyBalance.availablePoints} pts` : "Loading"} />
-          <MetricTile label="Pending" value={loyaltyBalance ? `${loyaltyBalance.pendingPoints} pts` : "--"} />
-          <MetricTile label="Lifetime" value={loyaltyBalance ? `${loyaltyBalance.lifetimeEarned} pts` : "--"} />
+          <Metric label="Available" value={loyaltyBalance ? `${loyaltyBalance.availablePoints} pts` : "Loading"} />
+          <Metric label="Pending" value={loyaltyBalance ? `${loyaltyBalance.pendingPoints} pts` : "--"} />
+          <Metric label="Lifetime" value={loyaltyBalance ? `${loyaltyBalance.lifetimeEarned} pts` : "--"} />
         </View>
-        <Text style={styles.profileMeta}>Secure session active until {formatDateTime(session?.expiresAt ?? "")}</Text>
+        <Text style={styles.sessionMeta}>Session active until {formatDateTime(session?.expiresAt ?? "")}</Text>
       </GlassCard>
 
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Rewards" />
-        {loyaltyBalanceQuery.isLoading ? <Text style={styles.bodyText}>Loading rewards balance...</Text> : null}
-        {loyaltyBalanceQuery.error ? <Text style={styles.errorText}>Unable to load rewards balance.</Text> : null}
-
-        {loyaltyBalance ? (
-          <View style={styles.rewardsGrid}>
-            <MetricTile label="Available" value={`${loyaltyBalance.availablePoints} pts`} />
-            <MetricTile label="Pending" value={`${loyaltyBalance.pendingPoints} pts`} />
-            <MetricTile label="Lifetime" value={`${loyaltyBalance.lifetimeEarned} pts`} />
-          </View>
-        ) : null}
-
-        {loyaltyLedger.length > 0 ? (
-          <View style={styles.ledgerWrap}>
-            {loyaltyLedger.slice(0, 5).map((entry) => (
-              <View key={entry.id} style={styles.ledgerItem}>
-                <Chip
-                  label={`${entry.type} ${entry.points > 0 ? `+${entry.points}` : entry.points}`}
-                  active={entry.points > 0}
-                />
-                <Text style={styles.ledgerMeta}>{formatDateTime(entry.createdAt)}</Text>
+      <Card style={{ marginTop: 14 }}>
+        <SectionLabel label="Rewards activity" />
+        {loyaltyLedger.length === 0 ? (
+          <Text style={styles.bodyText}>Rewards activity will appear here after your next completed order.</Text>
+        ) : (
+          <View style={styles.groupedList}>
+            {loyaltyLedger.slice(0, 5).map((entry, index) => (
+              <View key={entry.id}>
+                <View style={styles.ledgerRow}>
+                  <Chip label={`${entry.type} ${entry.points > 0 ? `+${entry.points}` : entry.points}`} active={entry.points > 0} />
+                  <Text style={styles.ledgerMeta}>{formatDateTime(entry.createdAt)}</Text>
+                </View>
+                {index < Math.min(loyaltyLedger.length, 5) - 1 ? <View style={styles.divider} /> : null}
               </View>
             ))}
           </View>
-        ) : null}
+        )}
       </Card>
 
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Order Alerts" />
-        <Text style={styles.bodyText}>
-          Keep pickup updates close at hand so the handoff feels as smooth as the ordering flow.
-        </Text>
+      <Card style={{ marginTop: 14 }}>
+        <SectionLabel label="Alerts" />
+        <Text style={styles.bodyText}>Notification controls should support pickup, not compete with it.</Text>
         {showNotificationTesting ? (
           <>
             <Button
-              label={pushTokenMutation.isPending ? "Saving..." : "Enable Test Updates"}
+              label={pushTokenMutation.isPending ? "Saving…" : "Enable Test Updates"}
               onPress={handleRegisterPushToken}
-              disabled={pushTokenMutation.isPending}
-              style={{ marginTop: 12 }}
+              style={{ marginTop: 16 }}
             />
-            {notificationStatus ? <Text style={styles.statusText}>{notificationStatus}</Text> : null}
-            <Text style={styles.profileMeta}>Developer test registration is only shown in development builds.</Text>
+            {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
           </>
         ) : (
-          <View style={styles.emptyPanel}>
-            <Ionicons name="notifications-outline" size={18} color={uiPalette.walnut} />
-            <Text style={styles.bodyText}>Push alert preferences will appear here once device permissions are enabled.</Text>
-          </View>
+          <Text style={styles.bodyText}>Push alert settings will appear here once device permissions are enabled.</Text>
         )}
       </Card>
 
       <View style={styles.footerActions}>
         <Button
-          label={signOutPending ? "Signing Out..." : "Sign Out"}
+          label={signOutPending ? "Signing Out…" : "Sign Out"}
           variant="ghost"
           onPress={() => {
             void handleSignOut();
@@ -248,151 +184,91 @@ export default function AccountScreen() {
 }
 
 const styles = StyleSheet.create({
-  emptyHeroHeader: {
-    marginTop: 8,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 16
-  },
-  heroIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(198, 156, 109, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.24)"
-  },
-  emptyTitle: {
-    fontSize: 28,
-    lineHeight: 32,
-    fontWeight: "700",
-    letterSpacing: -0.8,
-    color: uiPalette.text
-  },
-  emptyBody: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 22,
-    color: uiPalette.textSecondary
-  },
-  profileHeader: {
-    marginTop: 8,
-    flexDirection: "row",
-    gap: 16,
-    alignItems: "flex-start"
-  },
   heroTitle: {
-    fontSize: 28,
-    lineHeight: 33,
+    marginTop: 10,
+    fontSize: 30,
+    lineHeight: 34,
     fontWeight: "700",
     letterSpacing: -0.8,
-    color: uiPalette.text
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily
   },
-  heroCopy: {
-    marginTop: 8,
+  heroBody: {
+    marginTop: 10,
     fontSize: 14,
     lineHeight: 22,
     color: uiPalette.textSecondary
-  },
-  profileMeta: {
-    marginTop: 14,
-    fontSize: 12,
-    color: uiPalette.textMuted
-  },
-  detailRow: {
-    marginTop: 14,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8
-  },
-  detailPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    backgroundColor: "rgba(255, 248, 240, 0.78)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.18)"
-  },
-  detailPillText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: uiPalette.text
   },
   metricGrid: {
-    marginTop: 16,
+    marginTop: 18,
     flexDirection: "row",
     gap: 10
   },
-  metricTile: {
+  metricCard: {
     flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
     borderRadius: 18,
-    padding: 14,
-    backgroundColor: "rgba(255, 248, 240, 0.76)",
+    backgroundColor: uiPalette.surfaceStrong,
     borderWidth: 1,
     borderColor: uiPalette.border
   },
   metricLabel: {
     fontSize: 11,
-    fontWeight: "700",
-    color: uiPalette.textMuted,
+    lineHeight: 14,
     textTransform: "uppercase",
-    letterSpacing: 0.8
+    letterSpacing: 1,
+    color: uiPalette.textMuted,
+    fontWeight: "700"
   },
   metricValue: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: "700",
+    marginTop: 6,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: "600",
     color: uiPalette.text
   },
-  rewardsGrid: {
-    marginTop: 12,
-    flexDirection: "row",
-    gap: 10
+  sessionMeta: {
+    marginTop: 16,
+    fontSize: 12,
+    lineHeight: 18,
+    color: uiPalette.textSecondary
   },
-  ledgerWrap: {
-    marginTop: 14,
-    gap: 10
+  groupedList: {
+    marginTop: 14
   },
-  ledgerItem: {
+  ledgerRow: {
+    minHeight: 56,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12
   },
   ledgerMeta: {
+    flex: 1,
+    textAlign: "right",
     fontSize: 12,
-    color: uiPalette.textMuted
-  },
-  bodyText: {
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 20,
+    lineHeight: 18,
     color: uiPalette.textSecondary
   },
-  errorText: {
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 20,
-    color: uiPalette.danger
+  divider: {
+    height: 1,
+    backgroundColor: uiPalette.border
   },
-  emptyPanel: {
-    marginTop: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8
+  bodyText: {
+    marginTop: 14,
+    fontSize: 14,
+    lineHeight: 22,
+    color: uiPalette.textSecondary
   },
   statusText: {
-    marginTop: 10,
+    marginTop: 12,
     fontSize: 13,
     lineHeight: 19,
     color: uiPalette.text
   },
   footerActions: {
-    marginTop: 12
+    marginTop: 14,
+    alignItems: "flex-start"
   }
 });

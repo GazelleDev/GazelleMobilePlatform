@@ -158,6 +158,39 @@ export interface NotificationsOutboxTable {
   updated_at: Generated<string>;
 }
 
+export interface CatalogMenuCategoryTable {
+  location_id: string;
+  category_id: string;
+  title: string;
+  sort_order: number;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface CatalogMenuItemTable {
+  location_id: string;
+  item_id: string;
+  category_id: string;
+  name: string;
+  description: string;
+  image_url: string | null;
+  price_cents: number;
+  badge_codes_json: unknown;
+  visible: boolean;
+  sort_order: number;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface CatalogStoreConfigTable {
+  location_id: string;
+  prep_eta_minutes: number;
+  tax_rate_basis_points: number;
+  pickup_instructions: string;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface PersistenceDatabase {
   payments_charges: PaymentsChargeTable;
   payments_refunds: PaymentsRefundTable;
@@ -174,6 +207,9 @@ export interface PersistenceDatabase {
   notifications_push_tokens: NotificationsPushTokenTable;
   notifications_order_state_dispatches: NotificationsOrderStateDispatchTable;
   notifications_outbox: NotificationsOutboxTable;
+  catalog_menu_categories: CatalogMenuCategoryTable;
+  catalog_menu_items: CatalogMenuItemTable;
+  catalog_store_configs: CatalogStoreConfigTable;
 }
 
 export type PersistenceDb = Kysely<PersistenceDatabase>;
@@ -192,6 +228,9 @@ export function getDatabaseUrl(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export async function ensurePersistenceTables(db: PersistenceDb) {
+  await db.transaction().execute(async (trx) => {
+  await sql`SELECT pg_advisory_xact_lock(947531, 1)`.execute(trx);
+
   await sql`
     CREATE TABLE IF NOT EXISTS payments_charges (
       payment_id UUID PRIMARY KEY,
@@ -209,17 +248,17 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (order_id, idempotency_key)
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     ALTER TABLE payments_charges
     ADD COLUMN IF NOT EXISTS provider_payment_id TEXT
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS payments_charges_order_created_at_idx
     ON payments_charges (order_id, created_at DESC)
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS payments_refunds (
@@ -236,12 +275,12 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (order_id, idempotency_key)
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS payments_refunds_order_created_at_idx
     ON payments_refunds (order_id, created_at DESC)
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS loyalty_balances (
@@ -251,7 +290,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       lifetime_earned INTEGER NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS loyalty_ledger_entries (
@@ -262,12 +301,12 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       order_id UUID,
       created_at TIMESTAMPTZ NOT NULL
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS loyalty_ledger_entries_user_created_at_idx
     ON loyalty_ledger_entries (user_id, created_at DESC)
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS loyalty_idempotency_keys (
@@ -278,7 +317,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (user_id, idempotency_key)
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS orders_quotes (
@@ -287,7 +326,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       quote_json JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS orders (
@@ -301,12 +340,12 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS orders_created_at_idx
     ON orders (created_at DESC)
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS orders_create_idempotency (
@@ -316,7 +355,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (quote_id, quote_hash)
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS orders_payment_idempotency (
@@ -325,7 +364,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (order_id, idempotency_key)
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS identity_sessions (
@@ -338,12 +377,12 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS identity_sessions_user_idx
     ON identity_sessions (user_id, created_at DESC)
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS identity_passkey_challenges (
@@ -356,12 +395,12 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       consumed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS identity_passkey_challenges_flow_idx
     ON identity_passkey_challenges (flow, created_at DESC)
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS identity_passkey_credentials (
@@ -376,12 +415,12 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS identity_passkey_credentials_user_idx
     ON identity_passkey_credentials (user_id, created_at DESC)
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS notifications_push_tokens (
@@ -393,7 +432,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (user_id, device_id)
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS notifications_order_state_dispatches (
@@ -404,7 +443,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       occurred_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS notifications_outbox (
@@ -422,10 +461,68 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-  `.execute(db);
+  `.execute(trx);
 
   await sql`
     CREATE INDEX IF NOT EXISTS notifications_outbox_status_available_idx
     ON notifications_outbox (status, available_at, created_at)
-  `.execute(db);
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS catalog_menu_categories (
+      location_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (location_id, category_id)
+    )
+  `.execute(trx);
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS catalog_menu_categories_location_sort_idx
+    ON catalog_menu_categories (location_id, sort_order)
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS catalog_menu_items (
+      location_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      image_url TEXT,
+      price_cents INTEGER NOT NULL,
+      badge_codes_json JSONB NOT NULL,
+      visible BOOLEAN NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (location_id, item_id),
+      FOREIGN KEY (location_id, category_id) REFERENCES catalog_menu_categories (location_id, category_id) ON DELETE CASCADE
+    )
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE catalog_menu_items
+    ADD COLUMN IF NOT EXISTS image_url TEXT
+  `.execute(trx);
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS catalog_menu_items_location_category_sort_idx
+    ON catalog_menu_items (location_id, category_id, sort_order)
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS catalog_store_configs (
+      location_id TEXT PRIMARY KEY,
+      prep_eta_minutes INTEGER NOT NULL,
+      tax_rate_basis_points INTEGER NOT NULL,
+      pickup_instructions TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `.execute(trx);
+  });
 }

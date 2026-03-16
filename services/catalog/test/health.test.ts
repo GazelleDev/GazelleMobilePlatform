@@ -64,4 +64,18 @@ describe("catalog service", () => {
 
     await app.close();
   });
+
+  it("reports persistence backend on /ready", async () => {
+    const app = await buildApp();
+    const response = await app.inject({ method: "GET", url: "/ready" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      status: "ready",
+      service: "catalog",
+      persistence: expect.stringMatching(/^(memory|postgres)$/)
+    });
+
+    await app.close();
+  });
 });

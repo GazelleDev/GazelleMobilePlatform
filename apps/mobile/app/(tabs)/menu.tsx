@@ -1,337 +1,206 @@
 import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
-import Constants from "expo-constants";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated,
-  Easing,
-  PanResponder,
-  Platform,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
-  View
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent
 } from "react-native";
+import Animated, { Extrapolation, interpolate, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../../src/cart/store";
 import { formatUsd, resolveMenuData, useMenuQuery, type MenuCategory, type MenuItem } from "../../src/menu/catalog";
-import { Button, Card, GlassCard, ScreenBackdrop, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
+import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../../src/navigation/tabBarMetrics";
+import { ScreenBackdrop, SectionLabel, TabBarDepthBackdrop, uiPalette, uiTypography } from "../../src/ui/system";
 
-type LiquidGlassViewProps = {
-  children: ReactNode;
-  style: {
-    width?: number | "100%";
-    height?: number | "100%";
-    borderRadius: number;
-    overflow: "hidden";
-  };
-  effect?: "clear" | "regular" | "none";
-  colorScheme?: "light" | "dark" | "system";
+type MenuSection = {
+  id: string;
+  label: string;
+  items: MenuItem[];
 };
 
-const isExpoGo = Constants.appOwnership === "expo";
-const CUSTOMIZE_BUTTON_HEIGHT = 46;
-const CATEGORY_SELECTOR_HEIGHT = 44;
-const CATEGORY_SELECTOR_INSET = 3;
+const MENU_HEADER_TOP_PADDING = 0;
+const MENU_HEADER_EXPANDED_HEIGHT = 124;
+const MENU_HEADER_COLLAPSED_HEIGHT = 52;
+const MENU_HEADER_SNAP_VELOCITY_THRESHOLD = 0.2;
+const MENU_HEADER_SNAP_EDGE_TOLERANCE = 2;
+const MENU_SECTION_HEADER_GAP = 30;
 
-function renderGlassPill(children: ReactNode) {
-  if (Platform.OS === "ios" && !isExpoGo) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { LiquidGlassView, isLiquidGlassSupported } = require("@callstack/liquid-glass") as {
-        LiquidGlassView: ComponentType<LiquidGlassViewProps>;
-        isLiquidGlassSupported: boolean;
-      };
-      if (isLiquidGlassSupported) {
-        return (
-          <LiquidGlassView effect="regular" colorScheme="system" style={{ width: "100%", height: "100%", borderRadius: 999, overflow: "hidden" }}>
-            <View style={styles.customizeGlassSurface}>{children}</View>
-          </LiquidGlassView>
-        );
-      }
-    } catch (error) {
-      void error;
-    }
-  }
-  return (
-    <BlurView tint="light" intensity={Platform.OS === "ios" ? 66 : 56} style={styles.customizeBlurFallback}>
-      <View style={styles.customizeGlassSurface}>{children}</View>
-    </BlurView>
-  );
-}
+function MenuItemArtwork({ imageUrl }: { imageUrl?: string }) {
+  const [imageFailed, setImageFailed] = useState(false);
 
-
-type CategoryOption = { id: string; label: string };
-
-const ITEM_WIDTH = 110;
-// Extra padding copies on each side so dragging reveals neighbours
-const SIDE_COPIES = 2;
-
-function CategorySelector({ options, selectedCategoryId, onSelect }: { options: CategoryOption[]; selectedCategoryId: string; onSelect: (id: string) => void }) {
-  const [wrapWidth, setWrapWidth] = useState(0);
-  const count = options.length;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const currentOffset = useRef(0);
-  const dragStartX = useRef(0);
-  const selectedIndex = Math.max(options.findIndex((o) => o.id === selectedCategoryId), 0);
-
-  // The strip has (SIDE_COPIES * 2 + 1) * count items total.
-  // The "real" items sit in the middle block starting at SIDE_COPIES * count.
-  const totalItems = (SIDE_COPIES * 2 + 1) * count;
-
-  // Offset so that item at virtualIndex is centered in wrapWidth
-  function offsetForVirtualIndex(vIdx: number, containerWidth: number) {
-    return containerWidth / 2 - vIdx * ITEM_WIDTH - ITEM_WIDTH / 2;
-  }
-
-  // The virtual index of the selected item in the center block
-  function centerVirtualIndex(realIndex: number) {
-    return SIDE_COPIES * count + realIndex;
-  }
-
-  function snapToNearest(rawOffset: number) {
-    if (wrapWidth === 0) return;
-    const center = wrapWidth / 2;
-    // Which virtual index is closest to center?
-    const rawVIdx = (center - rawOffset - ITEM_WIDTH / 2) / ITEM_WIDTH;
-    const nearestVIdx = Math.round(rawVIdx);
-    const snapTarget = offsetForVirtualIndex(nearestVIdx, wrapWidth);
-    // Map back to real index
-    const realIndex = ((nearestVIdx % count) + count) % count;
-
-    onSelect(options[realIndex].id);
-    currentOffset.current = snapTarget;
-
-    Animated.timing(translateX, {
-      toValue: snapTarget,
-      duration: 800,
-      easing: Easing.out(Easing.exp),
-      useNativeDriver: true
-    }).start(() => {
-      // Normalize back to center block after animation so we always
-      // have SIDE_COPIES worth of items available on each side
-      const normalized = offsetForVirtualIndex(centerVirtualIndex(realIndex), wrapWidth);
-      currentOffset.current = normalized;
-      translateX.setValue(normalized);
-    });
-  }
-
-  // Set initial position to center block on mount / wrapWidth change
   useEffect(() => {
-    if (wrapWidth === 0) return;
-    const target = offsetForVirtualIndex(centerVirtualIndex(selectedIndex), wrapWidth);
-    currentOffset.current = target;
-    translateX.setValue(target);
-  }, [wrapWidth]);
-
-  // Animate when selectedIndex changes externally
-  useEffect(() => {
-    if (wrapWidth === 0) return;
-    const target = offsetForVirtualIndex(centerVirtualIndex(selectedIndex), wrapWidth);
-    currentOffset.current = target;
-    Animated.timing(translateX, {
-      toValue: target,
-      duration: 800,
-      easing: Easing.out(Easing.exp),
-      useNativeDriver: true
-    }).start();
-  }, [selectedIndex]);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 4,
-      onPanResponderGrant: () => {
-        dragStartX.current = currentOffset.current;
-        translateX.stopAnimation();
-      },
-      onPanResponderMove: (_, g) => {
-        translateX.setValue(dragStartX.current + g.dx);
-      },
-      onPanResponderRelease: (_, g) => {
-        snapToNearest(dragStartX.current + g.dx);
-      },
-      onPanResponderTerminate: (_, g) => {
-        snapToNearest(dragStartX.current + g.dx);
-      }
-    })
-  ).current;
-
-  // Build virtual item list: SIDE_COPIES copies before + real items + SIDE_COPIES copies after
-  const virtualItems = Array.from({ length: totalItems }, (_, vIdx) => {
-    const realIndex = ((vIdx % count) + count) % count;
-    return { vIdx, option: options[realIndex] };
-  });
+    setImageFailed(false);
+  }, [imageUrl]);
 
   return (
-    <View
-      style={styles.categorySelectorWrap}
-      onLayout={(e) => setWrapWidth(e.nativeEvent.layout.width)}
-    >
-      <BlurView tint="light" intensity={Platform.OS === "ios" ? 66 : 56} style={StyleSheet.absoluteFillObject} />
-      <View pointerEvents="none" style={styles.categorySelectorWindow} />
-
-      <Animated.View
-        style={[styles.categorySelectorStrip, { width: totalItems * ITEM_WIDTH, transform: [{ translateX }] }]}
-        {...panResponder.panHandlers}
-      >
-        {virtualItems.map(({ vIdx, option }) => {
-          const isActive = option.id === selectedCategoryId;
-          return (
-            <Pressable
-              key={vIdx}
-              style={styles.categorySelectorItem}
-              onPress={() => snapToNearest(offsetForVirtualIndex(vIdx, wrapWidth))}
-            >
-              <Text style={[styles.categorySelectorLabel, isActive && styles.categorySelectorLabelActive]}>
-                {option.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </Animated.View>
-
-      <View pointerEvents="none" style={styles.categorySelectorFadeLeft} />
-      <View pointerEvents="none" style={styles.categorySelectorFadeRight} />
+    <View style={styles.menuImage}>
+      {imageUrl && !imageFailed ? (
+        <Image source={{ uri: imageUrl }} style={styles.menuImagePhoto} resizeMode="cover" onError={() => setImageFailed(true)} />
+      ) : (
+        <Ionicons name="cafe-outline" size={22} color={uiPalette.accent} />
+      )}
     </View>
   );
 }
 
-function resolveItemIcon(item: MenuItem): keyof typeof Ionicons.glyphMap {
-  const haystack = `${item.name} ${item.description}`.toLowerCase();
-
-  if (haystack.includes("tea") || haystack.includes("matcha")) {
-    return "leaf-outline";
-  }
-
-  if (
-    haystack.includes("croissant") ||
-    haystack.includes("cookie") ||
-    haystack.includes("muffin") ||
-    haystack.includes("pastry") ||
-    haystack.includes("cake")
-  ) {
-    return "nutrition-outline";
-  }
-
-  if (
-    haystack.includes("espresso") ||
-    haystack.includes("latte") ||
-    haystack.includes("coffee") ||
-    haystack.includes("cappuccino")
-  ) {
-    return "cafe-outline";
-  }
-
-  return "sparkles-outline";
-}
-
-function ItemCard({ item, onCustomize }: { item: MenuItem; onCustomize: (item: MenuItem) => void }) {
+function MenuRow({
+  item,
+  showDivider,
+  onPress
+}: {
+  item: MenuItem;
+  showDivider: boolean;
+  onPress: () => void;
+}) {
   return (
-    <Card style={styles.itemCard}>
-      <View style={styles.itemTopRow}>
-        <View style={styles.itemVisual}>
-          <Ionicons name={resolveItemIcon(item)} size={20} color={uiPalette.walnut} />
-        </View>
-        <View style={styles.itemBody}>
-          <View style={styles.itemNameRow}>
-            <Text style={styles.itemName}>{item.name}</Text>
-            {item.badgeCodes.length > 0 ? (
-              <View style={styles.itemNameBadgeRow}>
-                {item.badgeCodes.map((badge) => (
-                  <View key={badge} style={styles.badgePill}>
-                    <Text style={styles.badgeText}>{badge}</Text>
-                  </View>
-                ))}
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.menuRow, pressed ? styles.pressed : null]}>
+      <View style={styles.menuRowMain}>
+        <MenuItemArtwork imageUrl={item.imageUrl} />
+        <View style={[styles.menuBodyWrap, showDivider ? styles.menuBodyWrapWithDivider : null]}>
+          <View style={styles.menuBodyContent}>
+            <View style={styles.menuCopy}>
+              <View style={styles.menuTitleRow}>
+                <Text style={styles.menuTitle}>{item.name}</Text>
+                <Text style={styles.menuMeta}>{formatUsd(item.priceCents)}</Text>
               </View>
-            ) : null}
-          </View>
-          <Text style={styles.itemDesc}>{item.description}</Text>
-        </View>
-        <View style={styles.itemPricePill}>
-          <Text style={styles.itemPrice}>{formatUsd(item.priceCents)}</Text>
-        </View>
-      </View>
-      <View style={styles.customizeCtaWrap}>
-        {renderGlassPill(
-          <Pressable onPress={() => onCustomize(item)} style={({ pressed }) => [styles.customizeButton, pressed ? styles.customizeButtonPressed : null]}>
-            <View style={styles.customizeButtonContent}>
-              <Text style={styles.customizeButtonText}>Customize</Text>
+              <Text numberOfLines={3} style={styles.menuDescription}>
+                {item.description}
+              </Text>
             </View>
-          </Pressable>
-        )}
+          </View>
+        </View>
       </View>
-    </Card>
+    </Pressable>
   );
 }
 
-function CategorySections({ categories, onCustomize }: { categories: MenuCategory[]; onCustomize: (item: MenuItem) => void }) {
-  return (
-    <View style={{ marginTop: 14, gap: 20 }}>
-      {categories.map((category) => (
-        <View key={category.id}>
-          <SectionLabel label={category.title} />
-          <View style={{ marginTop: 8, gap: 10 }}>
-            {category.items.map((item) => (
-              <ItemCard key={item.id} item={item} onCustomize={onCustomize} />
-            ))}
-          </View>
-        </View>
-      ))}
-    </View>
-  );
+function buildSections(categories: MenuCategory[]): MenuSection[] {
+  const allItems = categories.flatMap((category) => category.items);
+
+  return [
+    { id: "featured", label: "Featured", items: allItems.slice(0, 4) },
+    ...categories.map((category) => ({
+      id: category.id,
+      label: category.title,
+      items: category.items
+    }))
+  ];
 }
 
 export default function MenuScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { itemCount } = useCart();
+  const { itemCount, subtotalCents } = useCart();
   const menuQuery = useMenuQuery();
   const menu = resolveMenuData(menuQuery.data);
-  const categories = menu.categories;
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const scrollY = useSharedValue(0);
+  const dockBottom = getTabBarBottomOffset(insets.bottom > 0);
+  const contentBottomInset = dockBottom + TAB_BAR_HEIGHT + 24;
+  const headerExpandedHeight = insets.top + MENU_HEADER_EXPANDED_HEIGHT;
+  const headerCollapsedHeight = insets.top + MENU_HEADER_COLLAPSED_HEIGHT;
+  const headerCollapseDistance = headerExpandedHeight - headerCollapsedHeight;
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("all");
+  const sections = useMemo(() => buildSections(menu.categories), [menu.categories]);
 
-  useEffect(() => {
-    if (selectedCategoryId === "all") return;
-    const exists = categories.some((category) => category.id === selectedCategoryId);
-    if (!exists) setSelectedCategoryId("all");
-  }, [categories, selectedCategoryId]);
+  const setScrollViewRef = useCallback((node: ScrollView | null) => {
+    scrollViewRef.current = node;
+  }, []);
 
-  const searchLower = searchTerm.trim().toLowerCase();
-  const categoryOptions = useMemo(
-    () => [{ id: "all", label: "All" }, ...categories.map((category) => ({ id: category.id, label: category.title }))],
-    [categories]
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetY = Math.max(event.nativeEvent.contentOffset.y, 0);
+      scrollY.value = offsetY;
+    },
+    [scrollY]
   );
 
-  const visibleCategories = useMemo(() => {
-    const withCategorySelection = selectedCategoryId === "all" ? categories : categories.filter((category) => category.id === selectedCategoryId);
-    if (!searchLower) return withCategorySelection;
-    return withCategorySelection
-      .map((category) => ({
-        ...category,
-        items: category.items.filter((item) => {
-          const haystack = `${item.name} ${item.description} ${item.badgeCodes.join(" ")}`.toLowerCase();
-          return haystack.includes(searchLower);
-        })
-      }))
-      .filter((category) => category.items.length > 0);
-  }, [categories, searchLower, selectedCategoryId]);
+  const headerStyle = useAnimatedStyle(() => ({
+    height: interpolate(
+      scrollY.value,
+      [0, headerCollapseDistance],
+      [headerExpandedHeight, headerCollapsedHeight],
+      Extrapolation.CLAMP
+    )
+  }));
 
-  function openCustomization(item: MenuItem) {
-    router.push({ pathname: "/menu-customize", params: { itemId: item.id } });
-  }
+  const pickupMetaStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 20, 50], [1, 0.35, 0], Extrapolation.CLAMP),
+    height: interpolate(scrollY.value, [0, 50], [18, 0], Extrapolation.CLAMP),
+    marginBottom: interpolate(scrollY.value, [0, 50], [6, 0], Extrapolation.CLAMP)
+  }));
+
+  const locationStyle = useAnimatedStyle(() => ({
+    fontSize: interpolate(scrollY.value, [0, headerCollapseDistance], [19, 17], Extrapolation.CLAMP),
+    lineHeight: interpolate(scrollY.value, [0, headerCollapseDistance], [24, 18], Extrapolation.CLAMP),
+    letterSpacing: interpolate(scrollY.value, [0, headerCollapseDistance], [2, 1.2], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(scrollY.value, [0, headerCollapseDistance], [0, -11], Extrapolation.CLAMP) }]
+  }));
+
+  const tabsStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 36, 80], [1, 0.4, 0], Extrapolation.CLAMP),
+    height: interpolate(scrollY.value, [0, 80], [34, 0], Extrapolation.CLAMP),
+    marginTop: interpolate(scrollY.value, [0, 80], [9, 0], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(scrollY.value, [0, 80], [0, -8], Extrapolation.CLAMP) }]
+  }));
+
+  const snapHeader = useCallback(
+    (offsetY: number, velocityY = 0) => {
+      if (offsetY <= MENU_HEADER_SNAP_EDGE_TOLERANCE || offsetY >= headerCollapseDistance - MENU_HEADER_SNAP_EDGE_TOLERANCE) {
+        return;
+      }
+
+      let targetOffset = offsetY >= headerCollapseDistance / 2 ? headerCollapseDistance : 0;
+
+      if (velocityY > 0.15) {
+        targetOffset = headerCollapseDistance;
+      } else if (velocityY < -0.15) {
+        targetOffset = 0;
+      }
+
+      scrollViewRef.current?.scrollTo({ y: targetOffset, animated: true });
+    },
+    [headerCollapseDistance]
+  );
+
+  const handleScrollEndDrag = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const velocityY = event.nativeEvent.velocity?.y ?? 0;
+
+      if (Math.abs(velocityY) >= MENU_HEADER_SNAP_VELOCITY_THRESHOLD) {
+        return;
+      }
+
+      snapHeader(event.nativeEvent.contentOffset.y, velocityY);
+    },
+    [snapHeader]
+  );
+
+  const handleMomentumScrollEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      snapHeader(event.nativeEvent.contentOffset.y);
+    },
+    [snapHeader]
+  );
 
   return (
     <View style={styles.screen}>
       <ScreenBackdrop />
-      <ScrollView
+
+      <Animated.ScrollView
+        ref={setScrollViewRef}
         showsVerticalScrollIndicator={false}
+        onScroll={handleScroll}
+        onScrollEndDrag={handleScrollEndDrag}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={menuQuery.isRefetching}
@@ -342,261 +211,243 @@ export default function MenuScreen() {
             progressViewOffset={insets.top + 12}
           />
         }
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: insets.top + 14, paddingBottom: Math.max(insets.bottom + 216, 230) }}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: headerExpandedHeight,
+            paddingBottom: contentBottomInset
+          }
+        ]}
       >
-        <TitleBlock title="Menu" subtitle="Browse the live collection, shape each item to your taste, and keep pickup moving." />
-
-        <GlassCard style={{ marginTop: 16 }}>
-          <SectionLabel label="Curated Menu" />
-          <Text style={styles.heroTitle}>Designed for quick pickup and slow coffee moments.</Text>
-          <Text style={styles.heroCopy}>
-            The menu stays live, the choices stay clear, and customization stays close to the item
-            instead of buried later in checkout.
-          </Text>
-          <View style={styles.heroInfoRow}>
-            <View style={styles.heroInfoPill}>
-              <Ionicons name="time-outline" size={14} color={uiPalette.accent} />
-              <Text style={styles.heroInfoText}>{menuQuery.isLoading ? "Refreshing menu" : "Live availability"}</Text>
+        {sections.flatMap((section) => [
+          <View key={`${section.id}-header`} style={styles.sectionStickyHeader}>
+            <View style={styles.sectionHeader}>
+              <SectionLabel label={section.label} />
+              <Ionicons name="chevron-up-outline" size={16} color={uiPalette.textMuted} />
             </View>
-            <View style={styles.heroInfoPill}>
-              <Ionicons name="color-wand-outline" size={14} color={uiPalette.accent} />
-              <Text style={styles.heroInfoText}>Made to customize</Text>
-            </View>
-            <View style={styles.heroInfoPill}>
-              <Ionicons name="bag-handle-outline" size={14} color={uiPalette.accent} />
-              <Text style={styles.heroInfoText}>{itemCount > 0 ? `${itemCount} in bag` : "Pickup-ready flow"}</Text>
+          </View>,
+          <View key={`${section.id}-list`} style={styles.sectionListBlock}>
+            <View style={styles.sectionList}>
+              {section.items.map((item, index) => (
+                <MenuRow
+                  key={item.id}
+                  item={item}
+                  showDivider={index < section.items.length - 1}
+                  onPress={() => router.push({ pathname: "/menu-customize", params: { itemId: item.id } })}
+                />
+              ))}
+              {section.items.length === 0 ? <Text style={styles.emptyText}>Nothing matches that search right now.</Text> : null}
             </View>
           </View>
-        </GlassCard>
+        ])}
+      </Animated.ScrollView>
 
-        <Card style={[styles.searchCard, { marginTop: 14 }]}>
-          <SectionLabel label="Find Your Order" />
-          <TextInput
-            value={searchTerm}
-            onChangeText={setSearchTerm}
-            autoCapitalize="none"
-            placeholder="Search drinks and bites"
-            placeholderTextColor={uiPalette.textMuted}
-            style={styles.searchInput}
-          />
-          <CategorySelector options={categoryOptions} selectedCategoryId={selectedCategoryId} onSelect={setSelectedCategoryId} />
-        </Card>
-        {menuQuery.isLoading ? (
-          <Card style={{ marginTop: 14 }} muted><Text style={styles.statusText}>Loading menu...</Text></Card>
-        ) : null}
-        {menuQuery.error ? (
-          <Card style={{ marginTop: 14 }}>
-            <Text style={styles.statusText}>Some live menu updates are unavailable right now, but you can still order.</Text>
-            <Button label="Retry" variant="ghost" onPress={() => void menuQuery.refetch()} style={{ marginTop: 10, alignSelf: "flex-start" }} />
-          </Card>
-        ) : null}
-        {visibleCategories.length === 0 ? (
-          <Card style={{ marginTop: 14 }}><Text style={styles.statusText}>No items match your filters.</Text></Card>
-        ) : (
-          <CategorySections categories={visibleCategories} onCustomize={openCustomization} />
-        )}
-      </ScrollView>
+      <Animated.View style={[styles.headerShell, { paddingTop: insets.top + MENU_HEADER_TOP_PADDING }, headerStyle]}>
+        <View style={styles.header}>
+          <View style={styles.headerCopy}>
+            <Animated.View style={[styles.pickupMetaWrap, pickupMetaStyle]}>
+              <Text style={styles.pickupMeta}>Estimated pick-up is 12 mins</Text>
+            </Animated.View>
+            <Animated.Text style={[styles.locationText, locationStyle]}>Ann Arbor, Mi.</Animated.Text>
+          </View>
+
+          {itemCount > 0 ? (
+            <Pressable onPress={() => router.push("/cart")} style={styles.bagButton}>
+              <Text style={styles.bagLabel}>{`Bag ${itemCount}`}</Text>
+              <Text style={styles.bagMeta}>{formatUsd(subtotalCents)}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <Animated.View style={[styles.tabsWrap, tabsStyle]}>
+          <View style={styles.tabRow}>
+            <Text style={styles.activeTab}>Menu</Text>
+          </View>
+        </Animated.View>
+      </Animated.View>
+
+      <TabBarDepthBackdrop />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: uiPalette.background },
-  heroTitle: {
-    marginTop: 8,
-    fontSize: 28,
-    lineHeight: 33,
-    fontWeight: "700",
-    letterSpacing: -0.8,
-    color: uiPalette.text
+  screen: {
+    flex: 1,
+    backgroundColor: uiPalette.background
   },
-  heroCopy: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 22,
-    color: uiPalette.textSecondary
+  scrollContent: {
+    paddingHorizontal: 20
   },
-  heroInfoRow: {
-    marginTop: 16,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8
-  },
-  heroInfoPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    backgroundColor: "rgba(255, 248, 240, 0.78)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.18)"
-  },
-  heroInfoText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: uiPalette.text
-  },
-  searchCard: {
-    gap: 10
-  },
-  searchInput: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255, 248, 240, 0.84)",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: uiPalette.text,
-    fontSize: 15,
-    marginTop: -2
-  },
-  categorySelectorWrap: {
-    width: "100%",
-    height: CATEGORY_SELECTOR_HEIGHT,
-    borderRadius: 999,
-    overflow: "hidden",
-    backgroundColor: "rgba(205, 178, 148, 0.3)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.28)",
-    shadowColor: uiPalette.walnut,
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3
-  },
-  categorySelectorWindow: {
-    position: "absolute",
-    top: CATEGORY_SELECTOR_INSET,
-    bottom: CATEGORY_SELECTOR_INSET,
-    left: "50%",
-    width: ITEM_WIDTH,
-    marginLeft: -(ITEM_WIDTH / 2),
-    borderRadius: 999,
-    backgroundColor: "rgba(255, 248, 240, 0.82)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.26)"
-  },
-  categorySelectorStrip: {
+  headerShell: {
     position: "absolute",
     top: 0,
-    bottom: 0,
     left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingHorizontal: 20,
+    backgroundColor: uiPalette.background,
+    overflow: "hidden",
+    justifyContent: "flex-end"
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16
+  },
+  headerCopy: {
+    flex: 1
+  },
+  pickupMetaWrap: {
+    overflow: "hidden"
+  },
+  pickupMeta: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: uiPalette.textSecondary
+  },
+  locationText: {
+    marginTop: 3,
+    fontSize: 19,
+    lineHeight: 24,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
+  },
+  bagMeta: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: uiPalette.textMuted,
+    fontWeight: "600"
+  },
+  bagButton: {
+    minHeight: 42,
+    paddingHorizontal: 14,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    backgroundColor: "rgba(255,255,255,0.52)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  bagLabel: {
+    fontSize: 13,
+    lineHeight: 16,
+    color: uiPalette.text,
+    fontWeight: "600"
+  },
+  tabsWrap: {
+    overflow: "hidden"
+  },
+  tabRow: {
     flexDirection: "row",
     alignItems: "center"
   },
-  categorySelectorItem: {
-    width: ITEM_WIDTH,
-    height: "100%",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  categorySelectorLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: uiPalette.textMuted,
-    textAlign: "center"
-  },
-  categorySelectorLabelActive: {
+  activeTab: {
+    fontSize: 28,
+    lineHeight: 32,
     color: uiPalette.text,
-    fontSize: 13
+    fontWeight: "600"
   },
-  categorySelectorFadeLeft: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    left: 0,
-    width: 48,
-    borderTopLeftRadius: 999,
-    borderBottomLeftRadius: 999,
-    backgroundColor: "rgba(205, 178, 148, 0.0)"
+  sectionStickyHeader: {
+    marginTop: MENU_SECTION_HEADER_GAP
   },
-  categorySelectorFadeRight: {
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    right: 0,
-    width: 48,
-    borderTopRightRadius: 999,
-    borderBottomRightRadius: 999,
-    backgroundColor: "rgba(205, 178, 148, 0.0)"
+  sectionListBlock: {
+    marginTop: 0
   },
-  itemCard: { padding: 16 },
-  itemTopRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
-  itemVisual: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
+  sectionHeader: {
+    backgroundColor: uiPalette.background,
+    paddingBottom: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  sectionList: {
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border
+  },
+  menuRow: {
+    minHeight: 132
+  },
+  menuRowMain: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 16,
+    width: "100%"
+  },
+  menuImage: {
+    width: 108,
+    height: 132,
+    backgroundColor: "#D5D4CE",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(198, 156, 109, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.24)"
+    overflow: "hidden"
   },
-  itemBody: {
-    flex: 1
-  },
-  itemNameRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
-  itemNameBadgeRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
-  itemName: { fontSize: 16, fontWeight: "700", color: uiPalette.text },
-  itemDesc: { marginTop: 4, fontSize: 13, lineHeight: 19, color: uiPalette.textSecondary },
-  itemPricePill: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    backgroundColor: "rgba(198, 156, 109, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.22)"
-  },
-  itemPrice: { fontSize: 14, fontWeight: "700", color: uiPalette.walnut },
-  badgePill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: "rgba(198, 156, 109, 0.16)"
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    color: uiPalette.walnut
-  },
-  customizeCtaWrap: {
-    marginTop: 12,
+  menuImagePhoto: {
     width: "100%",
-    height: CUSTOMIZE_BUTTON_HEIGHT,
-    borderRadius: 999,
-    overflow: "hidden",
-    shadowColor: uiPalette.walnut,
-    shadowOpacity: 0.14,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3
+    height: "100%"
   },
-  customizeBlurFallback: { width: "100%", height: CUSTOMIZE_BUTTON_HEIGHT, borderRadius: 999, overflow: "hidden" },
-  customizeGlassSurface: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 999,
-    overflow: "hidden",
-    backgroundColor: "rgba(205, 178, 148, 0.3)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.28)"
-  },
-  customizeButton: {
-    width: "100%",
-    height: CUSTOMIZE_BUTTON_HEIGHT,
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    backgroundColor: "rgba(255, 248, 240, 0.76)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.24)",
+  menuBodyWrap: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 132,
+    paddingTop: 0,
+    paddingBottom: 0,
     justifyContent: "center"
   },
-  customizeButtonContent: { paddingTop: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 12 },
-  customizeButtonPressed: { opacity: 0.86 },
-  customizeButtonText: { color: uiPalette.text, fontSize: 14, lineHeight: 18, fontWeight: "700", letterSpacing: 0.1, textAlign: "center" },
-  statusText: { fontSize: 13, lineHeight: 18, color: uiPalette.textSecondary }
+  menuBodyWrapWithDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: uiPalette.border
+  },
+  menuBodyContent: {
+    minHeight: 132,
+    justifyContent: "center",
+    paddingVertical: 10
+  },
+  menuCopy: {
+    justifyContent: "center",
+    gap: 1
+  },
+  menuTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  menuTitle: {
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 20,
+    letterSpacing: 1.3,
+    textTransform: "uppercase",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "500"
+  },
+  menuDescription: {
+    fontSize: 12,
+    lineHeight: 14,
+    color: uiPalette.textSecondary
+  },
+  menuMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "400"
+  },
+  emptyText: {
+    paddingVertical: 20,
+    fontSize: 15,
+    lineHeight: 22,
+    color: uiPalette.textSecondary
+  },
+  pressed: {
+    opacity: 0.84
+  }
 });

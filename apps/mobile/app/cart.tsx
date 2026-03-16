@@ -8,11 +8,7 @@ import { useAuthSession } from "../src/auth/session";
 import { buildPricingSummary, describeCustomization } from "../src/cart/model";
 import { useCart } from "../src/cart/store";
 import { formatUsd, resolveStoreConfigData, useStoreConfigQuery } from "../src/menu/catalog";
-import {
-  canAttemptNativeApplePay,
-  requestNativeApplePayWallet,
-  type ApplePayWalletPayload
-} from "../src/orders/applePay";
+import { canAttemptNativeApplePay, requestNativeApplePayWallet, type ApplePayWalletPayload } from "../src/orders/applePay";
 import {
   CheckoutSubmissionError,
   createDemoApplePayToken,
@@ -21,7 +17,7 @@ import {
   useApplePayCheckoutMutation
 } from "../src/orders/checkout";
 import { useCheckoutFlow } from "../src/orders/flow";
-import { Button, Card, GlassCard, SectionLabel, uiPalette } from "../src/ui/system";
+import { Button, Card, GlassCard, SectionLabel, uiPalette, uiTypography } from "../src/ui/system";
 
 function SummaryRow({
   label,
@@ -34,53 +30,32 @@ function SummaryRow({
 }) {
   return (
     <View style={styles.summaryRow}>
-      <Text style={[styles.summaryLabel, emphasized ? styles.summaryStrong : null]}>{label}</Text>
-      <Text style={[styles.summaryLabel, emphasized ? styles.summaryStrong : null]}>{value}</Text>
+      <Text style={[styles.summaryText, emphasized ? styles.summaryStrong : null]}>{label}</Text>
+      <Text style={[styles.summaryText, emphasized ? styles.summaryStrong : null]}>{value}</Text>
     </View>
   );
 }
 
-function DetailPill({
-  icon,
-  label
+function StepHeader({
+  index,
+  title,
+  subtitle
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
+  index: string;
+  title: string;
+  subtitle: string;
 }) {
   return (
-    <View style={styles.detailPill}>
-      <Ionicons name={icon} size={14} color={uiPalette.accent} />
-      <Text style={styles.detailPillText}>{label}</Text>
+    <View style={styles.stepHeader}>
+      <View style={styles.stepBadge}>
+        <Text style={styles.stepBadgeText}>{index}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.stepTitle}>{title}</Text>
+        <Text style={styles.stepSubtitle}>{subtitle}</Text>
+      </View>
     </View>
   );
-}
-
-function resolveCartItemIcon(name: string): keyof typeof Ionicons.glyphMap {
-  const haystack = name.toLowerCase();
-
-  if (haystack.includes("tea") || haystack.includes("matcha")) {
-    return "leaf-outline";
-  }
-
-  if (
-    haystack.includes("croissant") ||
-    haystack.includes("cookie") ||
-    haystack.includes("muffin") ||
-    haystack.includes("pastry")
-  ) {
-    return "nutrition-outline";
-  }
-
-  if (
-    haystack.includes("latte") ||
-    haystack.includes("espresso") ||
-    haystack.includes("coffee") ||
-    haystack.includes("cappuccino")
-  ) {
-    return "cafe-outline";
-  }
-
-  return "sparkles-outline";
 }
 
 function StatusBanner({
@@ -91,19 +66,23 @@ function StatusBanner({
   tone?: "info" | "warning";
 }) {
   return (
-    <Card muted style={[styles.statusCard, tone === "warning" ? styles.statusCardWarning : null]}>
-      <View style={styles.statusRow}>
-        <View style={[styles.statusIconWrap, tone === "warning" ? styles.statusIconWrapWarning : null]}>
-          <Ionicons
-            name={tone === "warning" ? "alert-circle-outline" : "information-circle-outline"}
-            size={16}
-            color={tone === "warning" ? uiPalette.primaryText : uiPalette.walnut}
-          />
-        </View>
-        <Text style={styles.checkoutStatus}>{message}</Text>
-      </View>
-    </Card>
+    <View style={[styles.banner, tone === "warning" ? styles.bannerWarning : null]}>
+      <Ionicons
+        name={tone === "warning" ? "alert-circle-outline" : "information-circle-outline"}
+        size={16}
+        color={tone === "warning" ? uiPalette.warning : uiPalette.accent}
+      />
+      <Text style={[styles.bannerText, tone === "warning" ? styles.bannerTextWarning : null]}>{message}</Text>
+    </View>
   );
+}
+
+function resolveItemIcon(name: string): keyof typeof Ionicons.glyphMap {
+  const haystack = name.toLowerCase();
+  if (haystack.includes("tea") || haystack.includes("matcha")) return "leaf-outline";
+  if (haystack.includes("croissant") || haystack.includes("cookie") || haystack.includes("muffin") || haystack.includes("pastry")) return "nutrition-outline";
+  if (haystack.includes("latte") || haystack.includes("espresso") || haystack.includes("coffee") || haystack.includes("cappuccino")) return "cafe-outline";
+  return "sparkles-outline";
 }
 
 export default function CartModalScreen() {
@@ -137,7 +116,7 @@ export default function CartModalScreen() {
   }
 
   function submitCheckout(paymentInput: { applePayToken: string } | { applePayWallet: ApplePayWalletPayload }) {
-    setStatusMessage("Submitting your order...");
+    setStatusMessage("Submitting your order…");
 
     checkoutMutation.mutate(
       {
@@ -190,7 +169,6 @@ export default function CartModalScreen() {
       setStatusMessage("Enter a test token before checkout.");
       return;
     }
-
     setApplePayToken("");
     submitCheckout({ applePayToken: token });
   }
@@ -199,14 +177,14 @@ export default function CartModalScreen() {
     if (!nativeApplePayAvailable) {
       setStatusMessage(
         showDevFallback
-          ? "Apple Pay is unavailable in this build. You can still use the developer test flow below."
+          ? "Apple Pay is unavailable in this build. Use the development test flow below."
           : "Apple Pay is unavailable in this build right now."
       );
       return;
     }
 
     setNativeApplePayPending(true);
-    setStatusMessage("Opening Apple Pay...");
+    setStatusMessage("Opening Apple Pay…");
 
     try {
       const walletPayload = await requestNativeApplePayWallet({
@@ -225,177 +203,159 @@ export default function CartModalScreen() {
 
   return (
     <View style={styles.backdrop}>
-      <View style={[styles.sheet, { paddingTop: 6, paddingBottom: Math.max(insets.bottom, 20) + 24 }]}>
+      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 16) + 16 }]}>
         <View style={styles.handleWrap}>
           <View style={styles.modalHandle} />
         </View>
 
-        <View style={styles.sheetHeader}>
-          <View>
-            <Text style={styles.sheetEyebrow}>Order Ahead</Text>
-            <Text style={styles.sheetTitle}>Cart</Text>
-          </View>
+        <View style={styles.header}>
+          <Text style={styles.headerEyebrow}>Checkout</Text>
+          <Text style={styles.headerTitle}>Cart</Text>
         </View>
 
         <ScrollView
           bounces
           showsVerticalScrollIndicator={false}
           contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={styles.sheetContent}
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingBottom: Math.max(insets.bottom, 16) + 28
+          }}
         >
           {items.length === 0 ? (
-            <>
-              <GlassCard>
-                <SectionLabel label="Order Ahead" />
-                <View style={styles.emptyHeroHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.emptyTitle}>Nothing is in your cart yet.</Text>
-                    <Text style={styles.emptyBody}>
-                      Add drinks and bites from the live menu, then come back here to check out.
-                    </Text>
-                  </View>
-                  <View style={styles.heroIconWrap}>
-                    <Ionicons name="bag-handle-outline" size={22} color={uiPalette.walnut} />
-                  </View>
-                </View>
-                <View style={styles.detailRow}>
-                  <DetailPill icon="time-outline" label={`${storeConfig.prepEtaMinutes} min prep`} />
-                  <DetailPill icon="walk-outline" label="Counter pickup" />
-                </View>
-                <Button
-                  label="Browse Menu"
-                  onPress={() => router.replace("/(tabs)/menu")}
-                  style={{ marginTop: 16, alignSelf: "flex-start" }}
-                  left={<Ionicons name="cafe-outline" size={15} color={uiPalette.primaryText} />}
-                />
-              </GlassCard>
-            </>
+            <GlassCard>
+              <SectionLabel label="No items yet" />
+              <Text style={styles.emptyTitle}>Your order starts from the menu.</Text>
+              <Text style={styles.emptyBody}>
+                Build the bag first, then come back here to review items, confirm pickup, and pay with Apple Pay.
+              </Text>
+              <Button
+                label="Browse Menu"
+                onPress={() => router.replace("/(tabs)/menu")}
+                left={<Ionicons name="cafe-outline" size={16} color={uiPalette.primaryText} />}
+                style={{ marginTop: 18, alignSelf: "flex-start" }}
+              />
+            </GlassCard>
           ) : (
             <>
               <GlassCard>
-                <SectionLabel label="Order Overview" />
-                <Text style={styles.heroTitle}>Everything is lined up for pickup.</Text>
-                <Text style={styles.heroCopy}>
-                  Review the order, adjust quantity, and move through checkout without losing the details.
+                <SectionLabel label="Overview" />
+                <Text style={styles.heroTitle}>{`${itemCount} item${itemCount === 1 ? "" : "s"} ready for review`}</Text>
+                <Text style={styles.heroBody}>
+                  The checkout flow is split into three steps: review the bag, confirm pickup, then pay.
                 </Text>
-                <View style={styles.detailRow}>
-                  <DetailPill icon="bag-outline" label={`${itemCount} item${itemCount === 1 ? "" : "s"}`} />
-                  <DetailPill icon="time-outline" label={`${storeConfig.prepEtaMinutes} min prep`} />
-                  <DetailPill icon="cash-outline" label={formatUsd(pricingSummary.totalCents)} />
+                <View style={styles.heroMeta}>
+                  <Text style={styles.heroMetaText}>{formatUsd(pricingSummary.totalCents)}</Text>
+                  <Text style={styles.heroMetaDivider}>•</Text>
+                  <Text style={styles.heroMetaText}>{storeConfig.prepEtaMinutes} min prep</Text>
                 </View>
               </GlassCard>
 
               {retryableOrder ? (
                 <StatusBanner
-                  message={`Payment for order ${retryableOrder.pickupCode} did not complete. You can retry without rebuilding the cart.`}
+                  message={`Payment for order ${retryableOrder.pickupCode} did not complete. You can retry without rebuilding the bag.`}
                   tone="warning"
                 />
               ) : null}
 
-              {items.map((item) => (
-                <Card key={item.lineId} style={styles.itemCard}>
-                  <View style={styles.itemTopRow}>
-                    <View style={styles.itemIconWrap}>
-                      <Ionicons name={resolveCartItemIcon(item.name)} size={20} color={uiPalette.walnut} />
-                    </View>
-                    <View style={styles.itemCopyWrap}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-                      <Text style={styles.itemMeta}>{describeCustomization(item.customization)}</Text>
-                      <Text style={styles.itemMetaMuted}>{formatUsd(item.unitPriceCents)} each</Text>
-                    </View>
-                    <View style={styles.pricePill}>
-                      <Text style={styles.itemLinePrice}>{formatUsd(item.unitPriceCents * item.quantity)}</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.controlsRow}>
-                    <View style={styles.quantityControls}>
-                      <Pressable
-                        style={[styles.qtyButton, item.quantity <= 1 ? styles.qtyButtonSoft : null]}
-                        onPress={() => {
-                          if (item.quantity <= 1) {
-                            removeItem(item.lineId);
-                            return;
-                          }
-                          setQuantity(item.lineId, item.quantity - 1);
-                        }}
-                      >
-                        <Ionicons name="remove" size={16} color={uiPalette.text} />
-                      </Pressable>
-                      <View style={styles.qtyValueShell}>
-                        <Text style={styles.qtyValue}>{item.quantity}</Text>
+              <Card style={{ marginTop: 14 }}>
+                <StepHeader index="1" title="Review items" subtitle="Adjust quantity before payment." />
+                <View style={styles.groupedList}>
+                  {items.map((item, index) => (
+                    <View key={item.lineId}>
+                      <View style={styles.itemRow}>
+                        <View style={styles.itemIcon}>
+                          <Ionicons name={resolveItemIcon(item.name)} size={18} color={uiPalette.accent} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.itemTitle}>{item.name}</Text>
+                          <Text style={styles.itemBody}>{describeCustomization(item.customization)}</Text>
+                          <Text style={styles.itemMeta}>{formatUsd(item.unitPriceCents)} each</Text>
+                        </View>
+                        <Text style={styles.itemPrice}>{formatUsd(item.unitPriceCents * item.quantity)}</Text>
                       </View>
-                      <Pressable style={styles.qtyButton} onPress={() => setQuantity(item.lineId, item.quantity + 1)}>
-                        <Ionicons name="add" size={16} color={uiPalette.text} />
-                      </Pressable>
+
+                      <View style={styles.itemActions}>
+                        <View style={styles.stepper}>
+                          <Pressable
+                            style={[styles.stepperButton, item.quantity <= 1 ? styles.stepperButtonDisabled : null]}
+                            onPress={() => {
+                              if (item.quantity <= 1) {
+                                removeItem(item.lineId);
+                                return;
+                              }
+                              setQuantity(item.lineId, item.quantity - 1);
+                            }}
+                          >
+                            <Ionicons name="remove" size={16} color={uiPalette.text} />
+                          </Pressable>
+                          <Text style={styles.stepperValue}>{item.quantity}</Text>
+                          <Pressable style={styles.stepperButton} onPress={() => setQuantity(item.lineId, item.quantity + 1)}>
+                            <Ionicons name="add" size={16} color={uiPalette.text} />
+                          </Pressable>
+                        </View>
+
+                        <Pressable style={styles.removeButton} onPress={() => removeItem(item.lineId)}>
+                          <Text style={styles.removeButtonText}>Remove</Text>
+                        </Pressable>
+                      </View>
+
+                      {index < items.length - 1 ? <View style={styles.divider} /> : null}
                     </View>
+                  ))}
+                </View>
+              </Card>
 
-                    <Pressable style={styles.removePill} onPress={() => removeItem(item.lineId)}>
-                      <Ionicons name="trash-outline" size={14} color={uiPalette.walnut} />
-                      <Text style={styles.removePillText}>Remove</Text>
-                    </Pressable>
+              <Card style={{ marginTop: 12 }}>
+                <StepHeader index="2" title="Pickup" subtitle="Confirm the handoff details." />
+                <Text style={styles.pickupBody}>{storeConfig.pickupInstructions}</Text>
+                <View style={styles.pickupMeta}>
+                  <View style={styles.pickupPill}>
+                    <Ionicons name="time-outline" size={14} color={uiPalette.accent} />
+                    <Text style={styles.pickupPillText}>{storeConfig.prepEtaMinutes} min average</Text>
                   </View>
-                </Card>
-              ))}
+                  <View style={styles.pickupPill}>
+                    <Ionicons name="walk-outline" size={14} color={uiPalette.accent} />
+                    <Text style={styles.pickupPillText}>Counter pickup</Text>
+                  </View>
+                </View>
+              </Card>
 
-              <Card>
-                <SectionLabel label="Pricing Summary" />
-                <Text style={styles.sectionTitle}>Estimated total</Text>
-                <View style={{ marginTop: 12, gap: 9 }}>
+              <Card style={{ marginTop: 12 }}>
+                <StepHeader index="3" title="Summary" subtitle="Check totals before payment." />
+                <View style={styles.summaryWrap}>
                   <SummaryRow label={`Items (${itemCount})`} value={formatUsd(pricingSummary.subtotalCents)} />
-                  <SummaryRow
-                    label={`Tax (${(storeConfig.taxRateBasisPoints / 100).toFixed(2)}%)`}
-                    value={formatUsd(pricingSummary.taxCents)}
-                  />
-                  <View style={styles.summaryDivider} />
+                  <SummaryRow label={`Tax (${(storeConfig.taxRateBasisPoints / 100).toFixed(2)}%)`} value={formatUsd(pricingSummary.taxCents)} />
+                  <View style={styles.divider} />
                   <SummaryRow label="Total due today" value={formatUsd(pricingSummary.totalCents)} emphasized />
                 </View>
               </Card>
 
-              <Card>
-                <SectionLabel label="Pickup" />
-                <Text style={styles.sectionTitle}>Flagship counter details</Text>
-                <Text style={styles.pickupBody}>{storeConfig.pickupInstructions}</Text>
-                <View style={styles.detailRow}>
-                  <DetailPill icon="time-outline" label={`${storeConfig.prepEtaMinutes} min average`} />
-                  <DetailPill icon="navigate-outline" label="Order-ahead pickup" />
-                </View>
-              </Card>
-
               {isAuthenticated ? (
-                <GlassCard>
-                  <SectionLabel label="Checkout" />
-                  <Text style={styles.sectionTitle}>Secure pickup payment</Text>
-                  <Text style={styles.checkoutBody}>
-                    Apple Pay keeps the final step native, fast, and consistent with the rest of the experience.
+                <GlassCard style={{ marginTop: 12 }}>
+                  <SectionLabel label="Payment" />
+                  <Text style={styles.payTitle}>Pay with Apple Pay</Text>
+                  <Text style={styles.payBody}>
+                    Apple Pay keeps the final step native, quick, and separate from the rest of the form flow.
                   </Text>
                   <Button
                     label={
                       nativeApplePayPending
-                        ? "Opening Apple Pay..."
+                        ? "Opening Apple Pay…"
                         : checkoutMutation.isPending
-                          ? "Processing..."
+                          ? "Processing…"
                           : retryableOrder
                             ? "Retry Apple Pay"
                             : "Pay with Apple Pay"
                     }
                     disabled={nativeApplePayPending || checkoutMutation.isPending || !nativeApplePayAvailable}
                     onPress={handleNativeApplePayCheckout}
-                    style={{ marginTop: 14 }}
+                    style={{ marginTop: 16 }}
                     left={<Ionicons name="logo-apple" size={16} color={uiPalette.primaryText} />}
                   />
-                  <Text style={styles.checkoutHint}>
-                    {nativeApplePayAvailable
-                      ? "Available on supported iPhone builds with Apple Pay configured."
-                      : "Apple Pay is unavailable in this build right now."}
-                  </Text>
 
                   {showDevFallback ? (
-                    <View style={styles.devPanel}>
-                      <SectionLabel label="Developer Test Checkout" />
-                      <Text style={styles.devCopy}>
-                        Use a sandbox token only when validating checkout in development.
-                      </Text>
+                    <View style={styles.devSection}>
                       <TextInput
                         value={applePayToken}
                         onChangeText={setApplePayToken}
@@ -406,7 +366,7 @@ export default function CartModalScreen() {
                         placeholderTextColor={uiPalette.textMuted}
                         style={styles.tokenInput}
                       />
-                      <View style={styles.fallbackActions}>
+                      <View style={styles.devActions}>
                         <Button
                           label="Use Demo Token"
                           variant="secondary"
@@ -414,7 +374,7 @@ export default function CartModalScreen() {
                           style={{ flex: 1 }}
                         />
                         <Button
-                          label={checkoutMutation.isPending ? "Processing..." : retryableOrder ? "Retry Test Payment" : "Run Test Checkout"}
+                          label={checkoutMutation.isPending ? "Processing…" : "Run Test"}
                           variant="ghost"
                           disabled={checkoutMutation.isPending || nativeApplePayPending}
                           onPress={handleApplePayTokenCheckout}
@@ -425,16 +385,16 @@ export default function CartModalScreen() {
                   ) : null}
                 </GlassCard>
               ) : (
-                <Card>
-                  <SectionLabel label="Checkout" />
-                  <Text style={styles.sectionTitle}>Sign in before payment</Text>
-                  <Text style={styles.checkoutBody}>
-                    Signing in keeps order history, rewards, and pickup updates attached to your account.
+                <Card style={{ marginTop: 12 }}>
+                  <SectionLabel label="Sign in" />
+                  <Text style={styles.payTitle}>Sign in before payment.</Text>
+                  <Text style={styles.payBody}>
+                    Session, rewards, and order history stay attached to the right account when checkout begins from a signed-in state.
                   </Text>
                   <Button
                     label="Sign In to Checkout"
                     onPress={() => router.push({ pathname: "/auth", params: { returnTo: "cart" } })}
-                    style={{ marginTop: 14 }}
+                    style={{ marginTop: 16 }}
                     left={<Ionicons name="log-in-outline" size={16} color={uiPalette.primaryText} />}
                   />
                 </Card>
@@ -469,12 +429,11 @@ const styles = StyleSheet.create({
   },
   sheet: {
     flex: 1,
-    borderTopLeftRadius: 34,
-    borderTopRightRadius: 34,
-    backgroundColor: "rgba(246, 239, 230, 0.98)",
+    backgroundColor: "rgba(246, 247, 244, 0.98)",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
     borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.16)",
-    overflow: "hidden"
+    borderColor: uiPalette.border
   },
   handleWrap: {
     position: "absolute",
@@ -485,297 +444,301 @@ const styles = StyleSheet.create({
     zIndex: 10
   },
   modalHandle: {
-    width: 36,
+    width: 38,
     height: 5,
     borderRadius: 999,
-    backgroundColor: "rgba(153, 134, 117, 0.42)"
+    backgroundColor: "rgba(151, 160, 154, 0.52)"
   },
-  sheetHeader: {
+  header: {
     paddingHorizontal: 20,
     paddingTop: 24,
-    paddingBottom: 6,
-    flexDirection: "row",
-    alignItems: "center"
+    paddingBottom: 12
   },
-  sheetEyebrow: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: uiPalette.textMuted,
+  headerEyebrow: {
+    fontSize: 11,
+    lineHeight: 14,
     textTransform: "uppercase",
-    letterSpacing: 1
+    letterSpacing: 1.2,
+    color: uiPalette.textMuted,
+    fontWeight: "700"
   },
-  sheetTitle: {
+  headerTitle: {
     marginTop: 4,
-    fontSize: 28,
+    fontSize: 34,
+    lineHeight: 38,
     fontWeight: "700",
+    letterSpacing: -1,
     color: uiPalette.text,
-    letterSpacing: -0.8
-  },
-  sheetContent: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    gap: 12
-  },
-  emptyHeroHeader: {
-    marginTop: 8,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 16
-  },
-  heroIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(198, 156, 109, 0.18)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.24)"
+    fontFamily: uiTypography.displayFamily
   },
   emptyTitle: {
-    fontSize: 28,
-    lineHeight: 32,
+    marginTop: 10,
+    fontSize: 30,
+    lineHeight: 34,
     fontWeight: "700",
     letterSpacing: -0.8,
-    color: uiPalette.text
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily
   },
   emptyBody: {
-    marginTop: 8,
+    marginTop: 10,
     fontSize: 14,
     lineHeight: 22,
     color: uiPalette.textSecondary
   },
   heroTitle: {
-    marginTop: 8,
-    fontSize: 24,
-    lineHeight: 30,
+    marginTop: 10,
+    fontSize: 30,
+    lineHeight: 34,
     fontWeight: "700",
-    letterSpacing: -0.7,
-    color: uiPalette.text
+    letterSpacing: -0.8,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily
   },
-  heroCopy: {
-    marginTop: 8,
+  heroBody: {
+    marginTop: 10,
     fontSize: 14,
     lineHeight: 22,
     color: uiPalette.textSecondary
   },
-  detailRow: {
-    marginTop: 14,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8
-  },
-  detailPill: {
+  heroMeta: {
+    marginTop: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    backgroundColor: "rgba(255, 248, 240, 0.78)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.18)"
+    gap: 8
   },
-  detailPillText: {
-    fontSize: 12,
+  heroMetaText: {
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: "600",
     color: uiPalette.text
   },
-  itemCard: {
-    gap: 14
+  heroMetaDivider: {
+    color: uiPalette.textMuted
   },
-  itemTopRow: {
-    flexDirection: "row",
-    gap: 12,
-    alignItems: "flex-start"
-  },
-  itemIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(198, 156, 109, 0.18)",
+  banner: {
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: uiPalette.surfaceMuted,
     borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.22)"
+    borderColor: uiPalette.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10
   },
-  itemCopyWrap: {
+  bannerWarning: {
+    backgroundColor: "rgba(176, 122, 58, 0.08)",
+    borderColor: "rgba(176, 122, 58, 0.18)"
+  },
+  bannerText: {
     flex: 1,
-    minWidth: 0
+    fontSize: 13,
+    lineHeight: 19,
+    color: uiPalette.textSecondary
   },
-  itemName: {
-    fontSize: 16,
-    fontWeight: "700",
+  bannerTextWarning: {
     color: uiPalette.text
   },
-  itemMeta: {
+  stepHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12
+  },
+  stepBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: uiPalette.accentSoft
+  },
+  stepBadgeText: {
+    fontSize: 12,
+    lineHeight: 14,
+    fontWeight: "700",
+    color: uiPalette.accent
+  },
+  stepTitle: {
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: "600",
+    color: uiPalette.text
+  },
+  stepSubtitle: {
     marginTop: 4,
     fontSize: 13,
     lineHeight: 19,
     color: uiPalette.textSecondary
   },
-  itemMetaMuted: {
+  groupedList: {
+    marginTop: 16
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 14
+  },
+  itemIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: uiPalette.accentSoft
+  },
+  itemTitle: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: uiPalette.text
+  },
+  itemBody: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 19,
+    color: uiPalette.textSecondary
+  },
+  itemMeta: {
     marginTop: 4,
     fontSize: 12,
+    lineHeight: 16,
     color: uiPalette.textMuted
   },
-  pricePill: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: "rgba(255, 248, 240, 0.76)",
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.16)"
+  itemPrice: {
+    fontSize: 15,
+    lineHeight: 18,
+    fontWeight: "600",
+    color: uiPalette.text
   },
-  itemLinePrice: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: uiPalette.walnut
-  },
-  controlsRow: {
+  itemActions: {
+    marginTop: 12,
+    marginBottom: 12,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center"
   },
-  quantityControls: {
+  stepper: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8
+    gap: 12
   },
-  qtyButton: {
+  stepperButton: {
     width: 34,
     height: 34,
-    borderRadius: 12,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255, 248, 240, 0.72)",
     borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.16)"
+    borderColor: uiPalette.border,
+    backgroundColor: uiPalette.surfaceStrong
   },
-  qtyButtonSoft: {
-    backgroundColor: "rgba(243, 233, 221, 0.82)"
+  stepperButtonDisabled: {
+    opacity: 0.55
   },
-  qtyValueShell: {
-    minWidth: 38,
-    alignItems: "center"
-  },
-  qtyValue: {
-    fontSize: 15,
-    fontWeight: "700",
+  stepperValue: {
+    minWidth: 18,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: "600",
+    textAlign: "center",
     color: uiPalette.text
   },
-  removePill: {
+  removeButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8
+  },
+  removeButtonText: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: "600",
+    color: uiPalette.danger
+  },
+  divider: {
+    height: 1,
+    backgroundColor: uiPalette.border
+  },
+  pickupBody: {
+    marginTop: 16,
+    fontSize: 14,
+    lineHeight: 22,
+    color: uiPalette.textSecondary
+  },
+  pickupMeta: {
+    marginTop: 14,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  pickupPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: "rgba(255, 248, 240, 0.68)"
+    backgroundColor: uiPalette.surfaceStrong,
+    borderWidth: 1,
+    borderColor: uiPalette.border
   },
-  removePillText: {
+  pickupPillText: {
     fontSize: 12,
-    fontWeight: "700",
-    color: uiPalette.walnut
-  },
-  sectionTitle: {
-    marginTop: 7,
-    fontSize: 20,
-    fontWeight: "700",
+    lineHeight: 16,
+    fontWeight: "600",
     color: uiPalette.text
+  },
+  summaryWrap: {
+    marginTop: 16,
+    gap: 10
   },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center"
+    gap: 12
   },
-  summaryLabel: {
-    fontSize: 13,
+  summaryText: {
+    fontSize: 14,
+    lineHeight: 22,
     color: uiPalette.textSecondary
   },
   summaryStrong: {
     fontWeight: "700",
     color: uiPalette.text
   },
-  summaryDivider: {
-    height: 1,
-    backgroundColor: uiPalette.border
-  },
-  pickupBody: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 20,
-    color: uiPalette.textSecondary
-  },
-  checkoutBody: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 20,
-    color: uiPalette.textSecondary
-  },
-  checkoutHint: {
+  payTitle: {
     marginTop: 10,
-    fontSize: 12,
-    lineHeight: 18,
-    color: uiPalette.textMuted
+    fontSize: 22,
+    lineHeight: 26,
+    fontWeight: "700",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily
   },
-  devPanel: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: uiPalette.border
-  },
-  devCopy: {
+  payBody: {
     marginTop: 8,
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 22,
     color: uiPalette.textSecondary
+  },
+  devSection: {
+    marginTop: 16
   },
   tokenInput: {
-    marginTop: 12,
+    minHeight: 52,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: uiPalette.border,
-    backgroundColor: "rgba(255, 248, 240, 0.92)",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
+    backgroundColor: uiPalette.surfaceStrong,
+    paddingHorizontal: 14,
     color: uiPalette.text
   },
-  fallbackActions: {
-    marginTop: 12,
+  devActions: {
+    marginTop: 10,
     flexDirection: "row",
     gap: 10
   },
-  statusCard: {
-    borderColor: "rgba(198, 156, 109, 0.22)"
-  },
-  statusCardWarning: {
-    backgroundColor: "rgba(200, 137, 56, 0.12)"
-  },
-  statusRow: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center"
-  },
-  statusIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(198, 156, 109, 0.18)"
-  },
-  statusIconWrapWarning: {
-    backgroundColor: uiPalette.warning
-  },
-  checkoutStatus: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 19,
-    color: uiPalette.text
-  },
   footerActions: {
-    paddingTop: 4
+    marginTop: 12,
+    alignItems: "flex-start"
   }
 });

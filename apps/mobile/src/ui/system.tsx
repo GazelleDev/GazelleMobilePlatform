@@ -1,6 +1,8 @@
 import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
 import type { ReactNode } from "react";
 import {
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,33 +14,61 @@ import {
   type ViewStyle
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getTabBarBottomOffset } from "../navigation/tabBarMetrics";
 
 export const uiPalette = {
-  background: "#F6EFE6",
-  backgroundAlt: "#EDE1D1",
-  card: "rgba(255, 249, 241, 0.88)",
-  cardMuted: "rgba(243, 233, 221, 0.76)",
-  surfaceStrong: "#FFF8F0",
-  text: "#42210B",
-  textSecondary: "#736357",
-  textMuted: "#998675",
-  border: "rgba(115, 99, 87, 0.18)",
-  primary: "#603813",
-  primaryText: "#FFF8F0",
-  accent: "#A67C52",
-  accentSoft: "rgba(198, 156, 109, 0.18)",
-  brass: "#C69C6D",
-  walnut: "#754C24",
-  glow: "rgba(198, 156, 109, 0.24)",
-  warning: "#C88938",
-  danger: "#B75A46"
+  background: "#F7F4ED",
+  backgroundAlt: "#F0ECE4",
+  surfaceStrong: "#FFFDF8",
+  surfaceMuted: "#F3EFE7",
+  surfaceGlass: "rgba(255, 253, 248, 0.84)",
+  card: "#FFFDF8",
+  cardMuted: "#F7F2EA",
+  text: "#171513",
+  textSecondary: "#605B55",
+  textMuted: "#9B9389",
+  border: "rgba(23, 21, 19, 0.08)",
+  borderStrong: "rgba(23, 21, 19, 0.14)",
+  primary: "#1E1B18",
+  primaryText: "#FFFFFF",
+  accent: "#2D2823",
+  accentSoft: "rgba(30, 27, 24, 0.06)",
+  brass: "#8E7761",
+  walnut: "#31261F",
+  charcoal: "#1D1A17",
+  glow: "rgba(255, 255, 255, 0.56)",
+  warning: "#A46C2C",
+  danger: "#B45B4F",
+  success: "#4F7A63",
+  chromeText: "#171513",
+  chromeMuted: "#605B55"
+} as const;
+
+export const uiTypography = {
+  displayFamily: Platform.select({ ios: undefined, android: "sans-serif-medium", default: undefined }),
+  bodyFamily: Platform.select({ ios: undefined, android: "sans-serif", default: undefined }),
+  monoFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" })
+} as const;
+
+export const uiRadii = {
+  small: 16,
+  medium: 22,
+  large: 32,
+  pill: 999
 } as const;
 
 export const uiShadow = {
   card: {
-    shadowColor: "#603813",
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.12,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.05,
+    shadowRadius: 22,
+    elevation: 4
+  } as ViewStyle,
+  dock: {
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.08,
     shadowRadius: 28,
     elevation: 8
   } as ViewStyle
@@ -81,7 +111,7 @@ export function ScreenScroll({
         contentContainerStyle={[
           styles.screenContent,
           {
-            paddingTop: insets.top + 14,
+            paddingTop: insets.top + 18,
             paddingBottom: insets.bottom + bottomInset
           },
           contentContainerStyle
@@ -89,6 +119,7 @@ export function ScreenScroll({
       >
         {children}
       </ScrollView>
+      <TabBarDepthBackdrop />
     </View>
   );
 }
@@ -104,7 +135,8 @@ export function ScreenStatic({ children, style }: ScreenStaticProps) {
   return (
     <View style={styles.screen}>
       <ScreenBackdrop />
-      <View style={[styles.screenContent, { paddingTop: insets.top + 14 }, style]}>{children}</View>
+      <View style={[styles.screenContent, { paddingTop: insets.top + 18 }, style]}>{children}</View>
+      <TabBarDepthBackdrop />
     </View>
   );
 }
@@ -112,13 +144,31 @@ export function ScreenStatic({ children, style }: ScreenStaticProps) {
 export function ScreenBackdrop() {
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <View style={[StyleSheet.absoluteFill, styles.solidBackdrop]} />
-      <View style={styles.backdropGlowLarge} />
-      <View style={styles.backdropGlowSmall} />
-      <View style={styles.backdropCurve} />
-      <View style={styles.backdropLineOne} />
-      <View style={styles.backdropLineTwo} />
-      <View style={styles.backdropLineThree} />
+      <View style={[StyleSheet.absoluteFill, styles.backdropBase]} />
+    </View>
+  );
+}
+
+export function TabBarDepthBackdrop() {
+  const insets = useSafeAreaInsets();
+  const dockBottom = getTabBarBottomOffset(insets.bottom > 0);
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <View style={[styles.tabBarDepthBelowFade, { height: dockBottom + 10 }]}>
+        <LinearGradient
+          colors={[
+            "rgba(0, 0, 0, 0)",
+            "rgba(0, 0, 0, 0.008)",
+            "rgba(0, 0, 0, 0.03)",
+            "rgba(0, 0, 0, 0.065)"
+          ]}
+          locations={[0, 0.62, 0.86, 1]}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={styles.tabBarDepthGradient}
+        />
+      </View>
     </View>
   );
 }
@@ -132,11 +182,11 @@ type TitleBlockProps = {
 export function TitleBlock({ title, subtitle, action }: TitleBlockProps) {
   return (
     <View style={styles.titleWrap}>
-      <View style={{ flex: 1 }}>
+      <View style={styles.titleCopy}>
         <Text style={styles.titleText}>{title}</Text>
         {subtitle ? <Text style={styles.subtitleText}>{subtitle}</Text> : null}
       </View>
-      {action}
+      {action ? <View style={styles.titleAction}>{action}</View> : null}
     </View>
   );
 }
@@ -159,7 +209,7 @@ type GlassCardProps = {
 export function GlassCard({ children, style }: GlassCardProps) {
   return (
     <View style={[styles.cardShell, style]}>
-      <BlurView tint="light" intensity={70} style={styles.cardBlur}>
+      <BlurView tint="light" intensity={30} style={styles.cardBlur}>
         <View style={styles.cardBlurInner}>{children}</View>
       </BlurView>
     </View>
@@ -187,16 +237,13 @@ export function Button({
   left,
   right
 }: ButtonProps) {
-  const variantStyle = buttonVariantStyles[variant];
-  const variantText = buttonTextStyles[variant];
-
   return (
     <Pressable
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.buttonBase,
-        variantStyle,
+        buttonVariantStyles[variant],
         disabled ? styles.buttonDisabled : null,
         pressed && !disabled ? styles.buttonPressed : null,
         style
@@ -204,7 +251,7 @@ export function Button({
     >
       <View style={styles.buttonInner}>
         {left}
-        <Text style={[styles.buttonText, variantText, labelStyle]}>{label}</Text>
+        <Text style={[styles.buttonText, buttonTextStyles[variant], labelStyle]}>{label}</Text>
         {right}
       </View>
     </Pressable>
@@ -242,35 +289,24 @@ const buttonVariantStyles = StyleSheet.create({
   primary: {
     backgroundColor: uiPalette.primary,
     borderWidth: 1,
-    borderColor: "rgba(255, 248, 240, 0.18)",
-    shadowColor: uiPalette.primary,
-    shadowOpacity: 0.24,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 7
+    borderColor: "rgba(255,255,255,0.08)"
   },
   secondary: {
     backgroundColor: uiPalette.surfaceStrong,
     borderWidth: 1,
-    borderColor: uiPalette.border
+    borderColor: uiPalette.borderStrong
   },
   ghost: {
-    backgroundColor: "rgba(255, 248, 240, 0.4)",
+    backgroundColor: "rgba(255,255,255,0.4)",
     borderWidth: 1,
-    borderColor: "rgba(115, 99, 87, 0.22)"
+    borderColor: uiPalette.border
   }
 });
 
 const buttonTextStyles = StyleSheet.create({
-  primary: {
-    color: uiPalette.primaryText
-  },
-  secondary: {
-    color: uiPalette.text
-  },
-  ghost: {
-    color: uiPalette.text
-  }
+  primary: { color: uiPalette.primaryText },
+  secondary: { color: uiPalette.text },
+  ghost: { color: uiPalette.text }
 });
 
 const styles = StyleSheet.create({
@@ -281,118 +317,95 @@ const styles = StyleSheet.create({
   screenContent: {
     paddingHorizontal: 20
   },
-  solidBackdrop: {
-    backgroundColor: uiPalette.backgroundAlt
+  backdropBase: {
+    backgroundColor: uiPalette.background
   },
-  backdropGlowLarge: {
+  backdropGlow: {
     position: "absolute",
-    top: -70,
-    right: -110,
-    width: 320,
-    height: 320,
-    borderRadius: 999,
-    backgroundColor: uiPalette.glow,
-    opacity: 0.9
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 180,
+    backgroundColor: "rgba(255,255,255,0.22)"
   },
-  backdropGlowSmall: {
+  backdropWash: {
     position: "absolute",
-    bottom: 120,
-    left: -70,
-    width: 210,
-    height: 210,
-    borderRadius: 999,
-    backgroundColor: "rgba(255, 241, 220, 0.76)"
-  },
-  backdropCurve: {
-    position: "absolute",
-    top: 118,
-    right: -8,
-    width: 192,
-    height: 268,
-    borderTopLeftRadius: 128,
-    borderBottomLeftRadius: 128,
-    borderWidth: 1,
-    borderColor: "rgba(198, 156, 109, 0.22)",
-    backgroundColor: "rgba(255, 248, 240, 0.24)"
-  },
-  backdropLineOne: {
-    position: "absolute",
-    top: 86,
-    left: 24,
-    right: 42,
-    height: 2,
-    borderRadius: 999,
-    backgroundColor: "rgba(255, 248, 240, 0.9)"
-  },
-  backdropLineTwo: {
-    position: "absolute",
-    top: 114,
-    left: 120,
-    right: 24,
-    height: 2,
-    borderRadius: 999,
-    backgroundColor: "rgba(255, 248, 240, 0.7)"
-  },
-  backdropLineThree: {
-    position: "absolute",
-    top: 142,
-    left: 48,
-    right: 88,
+    top: 116,
+    left: 20,
+    right: 20,
     height: 1,
-    borderRadius: 999,
-    backgroundColor: "rgba(255, 248, 240, 0.55)"
+    backgroundColor: "rgba(23, 21, 19, 0.06)"
+  },
+  tabBarDepthBelowFade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0
+  },
+  tabBarDepthGradient: {
+    ...StyleSheet.absoluteFillObject
   },
   titleWrap: {
     flexDirection: "row",
-    gap: 12,
-    alignItems: "flex-start"
+    gap: 14,
+    alignItems: "flex-start",
+    justifyContent: "space-between"
+  },
+  titleCopy: {
+    flex: 1
+  },
+  titleAction: {
+    paddingTop: 4
   },
   titleText: {
     fontSize: 38,
+    lineHeight: 42,
     fontWeight: "700",
     letterSpacing: -1.2,
-    color: uiPalette.text
+    color: uiPalette.chromeText,
+    fontFamily: uiTypography.displayFamily
   },
   subtitleText: {
-    marginTop: 6,
+    marginTop: 8,
     fontSize: 15,
-    lineHeight: 22,
-    color: uiPalette.textSecondary
+    lineHeight: 23,
+    color: uiPalette.chromeMuted,
+    fontFamily: uiTypography.bodyFamily
   },
   card: {
-    borderRadius: 26,
+    borderRadius: uiRadii.large,
     backgroundColor: uiPalette.card,
     borderWidth: 1,
     borderColor: uiPalette.border,
-    padding: 18,
+    padding: 20,
     ...uiShadow.card
   },
   cardMuted: {
     backgroundColor: uiPalette.cardMuted
   },
   cardShell: {
-    borderRadius: 30,
+    borderRadius: uiRadii.large,
     overflow: "hidden",
     ...uiShadow.card
   },
   cardBlur: {
-    borderRadius: 30
+    borderRadius: uiRadii.large
   },
   cardBlurInner: {
-    borderRadius: 30,
-    backgroundColor: "rgba(255, 248, 240, 0.72)",
+    borderRadius: uiRadii.large,
+    backgroundColor: uiPalette.surfaceGlass,
     borderWidth: 1,
-    borderColor: "rgba(255, 248, 240, 0.56)",
-    padding: 18
+    borderColor: "rgba(255,255,255,0.72)",
+    padding: 20
   },
   buttonBase: {
-    minHeight: 54,
-    borderRadius: 18,
-    justifyContent: "center",
-    paddingHorizontal: 18
+    minHeight: 52,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    justifyContent: "center"
   },
   buttonDisabled: {
-    opacity: 0.48
+    opacity: 0.45
   },
   buttonPressed: {
     opacity: 0.92,
@@ -406,37 +419,43 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: 0.2
+    lineHeight: 20,
+    fontWeight: "600",
+    letterSpacing: 0.05,
+    fontFamily: uiTypography.bodyFamily
   },
   chip: {
     paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: "rgba(255, 248, 240, 0.88)",
+    paddingVertical: 10,
+    borderRadius: uiRadii.pill,
+    backgroundColor: uiPalette.surfaceStrong,
     borderWidth: 1,
-    borderColor: "rgba(115, 99, 87, 0.18)"
+    borderColor: uiPalette.border
   },
   chipActive: {
-    backgroundColor: uiPalette.walnut,
-    borderColor: uiPalette.walnut
+    backgroundColor: uiPalette.primary,
+    borderColor: uiPalette.primary
   },
   chipPressed: {
-    opacity: 0.8
+    opacity: 0.88
   },
   chipText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: uiPalette.textSecondary
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: "600",
+    color: uiPalette.text,
+    fontFamily: uiTypography.bodyFamily
   },
   chipTextActive: {
     color: uiPalette.primaryText
   },
   sectionLabel: {
-    fontSize: 12,
+    fontSize: 11,
+    lineHeight: 14,
     fontWeight: "700",
-    letterSpacing: 1.2,
-    color: uiPalette.accent,
-    textTransform: "uppercase"
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+    color: uiPalette.textSecondary,
+    fontFamily: uiTypography.bodyFamily
   }
 });
