@@ -176,6 +176,7 @@ export interface CatalogMenuItemTable {
   image_url: string | null;
   price_cents: number;
   badge_codes_json: unknown;
+  customization_groups_json: unknown;
   visible: boolean;
   sort_order: number;
   created_at: Generated<string>;
@@ -495,6 +496,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       image_url TEXT,
       price_cents INTEGER NOT NULL,
       badge_codes_json JSONB NOT NULL,
+      customization_groups_json JSONB NOT NULL DEFAULT '[]'::jsonb,
       visible BOOLEAN NOT NULL,
       sort_order INTEGER NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -507,6 +509,11 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
   await sql`
     ALTER TABLE catalog_menu_items
     ADD COLUMN IF NOT EXISTS image_url TEXT
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE catalog_menu_items
+    ADD COLUMN IF NOT EXISTS customization_groups_json JSONB NOT NULL DEFAULT '[]'::jsonb
   `.execute(trx);
 
   await sql`

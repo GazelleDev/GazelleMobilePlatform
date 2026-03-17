@@ -12,7 +12,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent
 } from "react-native";
-import Animated, { Extrapolation, interpolate, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import Animated, { Easing, Extrapolation, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../../src/cart/store";
 import { formatUsd, resolveMenuData, useMenuQuery, type MenuCategory, type MenuItem } from "../../src/menu/catalog";
@@ -31,6 +31,139 @@ const MENU_HEADER_COLLAPSED_HEIGHT = 52;
 const MENU_HEADER_SNAP_VELOCITY_THRESHOLD = 0.2;
 const MENU_HEADER_SNAP_EDGE_TOLERANCE = 2;
 const MENU_SECTION_HEADER_GAP = 30;
+
+function LoadingBlock({
+  width = "100%",
+  height,
+  radius = 12
+}: {
+  width?: number | `${number}%`;
+  height: number;
+  radius?: number;
+}) {
+  return (
+    <View
+      style={[
+        styles.loadingBlock,
+        {
+          width,
+          height,
+          borderRadius: radius
+        }
+      ]}
+    />
+  );
+}
+
+function LoadingMenuRow() {
+  return (
+    <View style={styles.menuRow}>
+      <View style={styles.menuRowMain}>
+        <View style={styles.menuImage} />
+        <View style={[styles.menuBodyWrap, styles.menuBodyWrapWithDivider]}>
+          <View style={styles.menuBodyContent}>
+            <View style={styles.menuCopy}>
+              <View style={styles.menuTitleRow}>
+                <LoadingBlock width="48%" height={18} radius={9} />
+                <LoadingBlock width={56} height={18} radius={9} />
+              </View>
+              <LoadingBlock width="82%" height={12} radius={6} />
+              <LoadingBlock width="58%" height={12} radius={6} />
+            </View>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function LoadingMenuState({
+  headerExpandedHeight,
+  contentBottomInset,
+  insets
+}: {
+  headerExpandedHeight: number;
+  contentBottomInset: number;
+  insets: ReturnType<typeof useSafeAreaInsets>;
+}) {
+  const pulse = useSharedValue(0);
+
+  useEffect(() => {
+    pulse.value = withRepeat(withTiming(1, { duration: 820, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [pulse]);
+
+  const pulseStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(pulse.value, [0, 1], [0.56, 1])
+  }));
+
+  return (
+    <View style={styles.screen}>
+      <ScreenBackdrop />
+
+      <ScrollView
+        bounces={false}
+        showsVerticalScrollIndicator={false}
+        scrollEnabled={false}
+        contentInsetAdjustmentBehavior="never"
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: headerExpandedHeight,
+            paddingBottom: contentBottomInset
+          }
+        ]}
+      >
+        <Animated.View style={pulseStyle}>
+          <View style={styles.sectionStickyHeader}>
+            <View style={styles.sectionHeader}>
+              <SectionLabel label="Featured" />
+              <Ionicons name="chevron-up-outline" size={16} color={uiPalette.textMuted} />
+            </View>
+          </View>
+          <View style={styles.sectionListBlock}>
+            <View style={styles.sectionList}>
+              <LoadingMenuRow />
+              <LoadingMenuRow />
+              <LoadingMenuRow />
+            </View>
+          </View>
+
+          <View style={styles.sectionStickyHeader}>
+            <View style={styles.sectionHeader}>
+              <SectionLabel label="Espresso Bar" />
+              <Ionicons name="chevron-up-outline" size={16} color={uiPalette.textMuted} />
+            </View>
+          </View>
+          <View style={styles.sectionListBlock}>
+            <View style={styles.sectionList}>
+              <LoadingMenuRow />
+              <LoadingMenuRow />
+            </View>
+          </View>
+        </Animated.View>
+      </ScrollView>
+
+      <View style={[styles.headerShell, { paddingTop: insets.top + MENU_HEADER_TOP_PADDING, height: headerExpandedHeight }]}>
+        <View style={styles.header}>
+          <View style={styles.headerCopy}>
+            <View style={styles.pickupMetaWrap}>
+              <Text style={styles.pickupMeta}>Estimated pick-up is 12 mins</Text>
+            </View>
+            <Text style={styles.locationText}>Ann Arbor, Mi.</Text>
+          </View>
+        </View>
+
+        <View style={styles.tabsWrap}>
+          <View style={styles.tabRow}>
+            <Text style={styles.activeTab}>Menu</Text>
+          </View>
+        </View>
+      </View>
+
+      <TabBarDepthBackdrop />
+    </View>
+  );
+}
 
 function MenuItemArtwork({ imageUrl }: { imageUrl?: string }) {
   const [imageFailed, setImageFailed] = useState(false);
@@ -99,7 +232,8 @@ export default function MenuScreen() {
   const insets = useSafeAreaInsets();
   const { itemCount, subtotalCents } = useCart();
   const menuQuery = useMenuQuery();
-  const menu = resolveMenuData(menuQuery.data);
+  const isInitialLoading = menuQuery.isLoading && !menuQuery.data;
+  const menu = isInitialLoading ? null : resolveMenuData(menuQuery.data);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const scrollY = useSharedValue(0);
   const dockBottom = getTabBarBottomOffset(insets.bottom > 0);
@@ -108,7 +242,7 @@ export default function MenuScreen() {
   const headerCollapsedHeight = insets.top + MENU_HEADER_COLLAPSED_HEIGHT;
   const headerCollapseDistance = headerExpandedHeight - headerCollapsedHeight;
 
-  const sections = useMemo(() => buildSections(menu.categories), [menu.categories]);
+  const sections = useMemo(() => buildSections(menu?.categories ?? []), [menu?.categories]);
 
   const setScrollViewRef = useCallback((node: ScrollView | null) => {
     scrollViewRef.current = node;
@@ -189,6 +323,10 @@ export default function MenuScreen() {
     },
     [snapHeader]
   );
+
+  if (isInitialLoading) {
+    return <LoadingMenuState headerExpandedHeight={headerExpandedHeight} contentBottomInset={contentBottomInset} insets={insets} />;
+  }
 
   return (
     <View style={styles.screen}>
@@ -389,6 +527,9 @@ const styles = StyleSheet.create({
   menuImagePhoto: {
     width: "100%",
     height: "100%"
+  },
+  loadingBlock: {
+    backgroundColor: "rgba(219, 216, 207, 0.92)"
   },
   menuBodyWrap: {
     flex: 1,

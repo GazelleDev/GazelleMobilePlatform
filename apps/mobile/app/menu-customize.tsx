@@ -1,19 +1,33 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
+import Animated, { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../src/cart/store";
 import {
+  buildDefaultCustomization,
+  describeCustomization,
   DEFAULT_CUSTOMIZATION,
   getCustomizationDeltaCents,
   getUnitPriceCents,
+  isCustomizationOptionSelected,
+  normalizeCustomization,
+  toCustomizationSelection,
   type CartCustomization
 } from "../src/cart/model";
-import { formatUsd, resolveMenuData, useMenuQuery, type MenuItem } from "../src/menu/catalog";
+import {
+  formatUsd,
+  resolveMenuData,
+  useMenuQuery,
+  type MenuItem,
+  type MenuItemCustomizationGroup,
+  type MenuItemCustomizationOption
+} from "../src/menu/catalog";
 import { Chip, uiPalette, uiTypography } from "../src/ui/system";
 
 const MAX_QUANTITY = 20;
+const FORCE_LOADING_PREVIEW = false;
 
 function resolveItemId(input: string | string[] | undefined): string | null {
   if (Array.isArray(input)) return resolveItemId(input[0]);
@@ -46,17 +60,190 @@ function OptionChip({
   );
 }
 
-function ProductImage({ imageUrl }: { imageUrl?: string }) {
+function updateCustomizationOption(
+  customization: CartCustomization,
+  group: MenuItemCustomizationGroup,
+  option: MenuItemCustomizationOption
+): CartCustomization {
+  const active = isCustomizationOptionSelected(customization, group.id, option.id);
+  const withoutGroup = customization.selectedOptions.filter((selection) => selection.groupId !== group.id);
+  const withoutOption = customization.selectedOptions.filter(
+    (selection) => !(selection.groupId === group.id && selection.optionId === option.id)
+  );
+
+  if (group.selectionType === "single") {
+    return normalizeCustomization({
+      ...customization,
+      selectedOptions: [...withoutGroup, toCustomizationSelection(group, option)]
+    });
+  }
+
+  if (group.selectionType === "boolean") {
+    return normalizeCustomization({
+      ...customization,
+      selectedOptions: active ? withoutGroup : [...withoutGroup, toCustomizationSelection(group, option)]
+    });
+  }
+
+  return normalizeCustomization({
+    ...customization,
+    selectedOptions: active
+      ? withoutOption
+      : [...customization.selectedOptions, toCustomizationSelection(group, option)]
+  });
+}
+
+function LoadingBlock({
+  width = "100%",
+  height,
+  radius = 14,
+  style
+}: {
+  width?: number | `${number}%`;
+  height: number;
+  radius?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View
+      style={[
+        styles.loadingBlock,
+        {
+          width,
+          height,
+          borderRadius: radius
+        },
+        style
+      ]}
+    />
+  );
+}
+
+function LoadingSheet() {
+  return (
+    <View style={styles.backdrop}>
+      <View style={styles.sheet}>
+        <LoadingSheetBody />
+      </View>
+    </View>
+  );
+}
+
+function LoadingSheetBody({
+  showHandle = true,
+  showHero = false
+}: {
+  showHandle?: boolean;
+  showHero?: boolean;
+}) {
+  const pulse = useSharedValue(0);
+
+  useEffect(() => {
+    pulse.value = withRepeat(withTiming(1, { duration: 820, easing: Easing.inOut(Easing.ease) }), -1, true);
+  }, [pulse]);
+
+  const pulseStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(pulse.value, [0, 1], [0.52, 1]),
+    transform: [{ scale: interpolate(pulse.value, [0, 1], [0.985, 1]) }]
+  }));
+
+  return (
+    <>
+      {showHandle ? (
+        <>
+          <View style={styles.handleWrap}>
+            <View style={styles.handle} />
+          </View>
+          <View pointerEvents="none" style={styles.topBand} />
+        </>
+      ) : null}
+
+      <ScrollView bounces={false} showsVerticalScrollIndicator={false} scrollEnabled={false}>
+        {showHero ? (
+          <View style={styles.heroWrap}>
+            <Animated.View style={pulseStyle}>
+              <View style={styles.loadingHero}>
+                <View style={styles.loadingCupGlow} />
+                <View style={styles.loadingCup} />
+              </View>
+            </Animated.View>
+          </View>
+        ) : (
+          <View style={styles.loadingTopSpacer} />
+        )}
+
+        <Animated.View style={[styles.content, pulseStyle]}>
+          <LoadingBlock width="68%" height={34} radius={10} />
+          <LoadingBlock width="46%" height={18} radius={9} style={styles.loadingMetaBlock} />
+          <LoadingBlock width={146} height={46} radius={0} style={styles.loadingButtonBlock} />
+
+          <View style={styles.loadingDescriptionGroup}>
+            <LoadingBlock width="88%" height={16} radius={8} />
+            <LoadingBlock width="64%" height={16} radius={8} />
+          </View>
+
+          <View style={styles.section}>
+            <LoadingBlock width={96} height={22} radius={10} />
+            <LoadingBlock width="58%" height={14} radius={7} style={styles.loadingSectionBody} />
+            <View style={styles.loadingChipRow}>
+              <LoadingBlock width={118} height={42} radius={21} />
+              <LoadingBlock width={104} height={42} radius={21} />
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <LoadingBlock width={84} height={22} radius={10} />
+            <LoadingBlock width="62%" height={14} radius={7} style={styles.loadingSectionBody} />
+            <View style={styles.loadingChipRow}>
+              <LoadingBlock width={92} height={42} radius={21} />
+              <LoadingBlock width={84} height={42} radius={21} />
+              <LoadingBlock width={110} height={42} radius={21} />
+            </View>
+          </View>
+        </Animated.View>
+      </ScrollView>
+
+      <Animated.View style={[styles.footer, styles.loadingFooter, pulseStyle]}>
+        <LoadingBlock width={0} height={0} style={styles.loadingFooterPrimary} />
+        <LoadingBlock width={0} height={0} style={styles.loadingFooterSecondary} />
+        <LoadingBlock width={0} height={0} style={styles.loadingFooterTertiary} />
+      </Animated.View>
+    </>
+  );
+}
+
+function ProductImage({
+  imageUrl,
+  onReady
+}: {
+  imageUrl?: string;
+  onReady: () => void;
+}) {
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     setImageFailed(false);
   }, [imageUrl]);
 
+  useEffect(() => {
+    if (!imageUrl) {
+      onReady();
+    }
+  }, [imageUrl, onReady]);
+
   return (
     <View style={styles.heroImage}>
       {imageUrl && !imageFailed ? (
-        <Image source={{ uri: imageUrl }} style={styles.heroImagePhoto} resizeMode="cover" onError={() => setImageFailed(true)} />
+        <Image
+          source={{ uri: imageUrl }}
+          style={styles.heroImagePhoto}
+          resizeMode="cover"
+          onLoadEnd={onReady}
+          onError={() => {
+            setImageFailed(true);
+            onReady();
+          }}
+        />
       ) : (
         <View style={styles.heroDrink}>
           <Ionicons name="cafe-outline" size={34} color={uiPalette.surfaceStrong} />
@@ -83,12 +270,21 @@ export default function MenuCustomizeModalScreen() {
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
   const [optionsOffset, setOptionsOffset] = useState(0);
+  const [sheetReady, setSheetReady] = useState(false);
+  const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(true);
+  const transitionProgress = useSharedValue(0);
 
   useEffect(() => {
-    setCustomization(DEFAULT_CUSTOMIZATION);
+    setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
     setQuantity(1);
     setNotes("");
-  }, [item?.id]);
+  }, [item]);
+
+  useEffect(() => {
+    setSheetReady(false);
+    setLoadingOverlayVisible(true);
+    transitionProgress.value = 0;
+  }, [item]);
 
   const mergedCustomization = useMemo(
     () => ({
@@ -101,7 +297,47 @@ export default function MenuCustomizeModalScreen() {
   const customizationDeltaCents = useMemo(() => getCustomizationDeltaCents(mergedCustomization), [mergedCustomization]);
   const selectedUnitPriceCents = item ? getUnitPriceCents(item.priceCents, mergedCustomization) : 0;
   const totalCents = selectedUnitPriceCents * quantity;
-  const metaLine = `${customization.size} • ${customization.milk} milk • ${formatUsd(selectedUnitPriceCents)}`;
+  const customizationPreview = useMemo(
+    () => describeCustomization(mergedCustomization, { includeNotes: false, fallback: "" }),
+    [mergedCustomization]
+  );
+  const metaLine = customizationPreview
+    ? `${customizationPreview} • ${formatUsd(selectedUnitPriceCents)}`
+    : formatUsd(selectedUnitPriceCents);
+
+  const handleHeroReady = useMemo(
+    () => () => {
+      requestAnimationFrame(() => {
+        setSheetReady(true);
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!sheetReady) {
+      return;
+    }
+
+    transitionProgress.value = withTiming(
+      1,
+      { duration: 240, easing: Easing.out(Easing.cubic) },
+      (finished) => {
+        if (finished) {
+          runOnJS(setLoadingOverlayVisible)(false);
+        }
+      }
+    );
+  }, [sheetReady, transitionProgress]);
+
+  const contentRevealStyle = useAnimatedStyle(() => ({
+    opacity: transitionProgress.value,
+    transform: [{ translateY: interpolate(transitionProgress.value, [0, 1], [10, 0]) }]
+  }));
+
+  const overlayFadeStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(transitionProgress.value, [0, 1], [1, 0])
+  }));
 
   function closeModal() {
     if (router.canGoBack()) {
@@ -129,176 +365,159 @@ export default function MenuCustomizeModalScreen() {
     scrollRef.current?.scrollTo({ y: Math.max(optionsOffset - 24, 0), animated: true });
   }
 
-  if (menuQuery.isLoading && !menuQuery.data) {
-    return (
-      <View style={[styles.screen, styles.centerState]}>
-        <ActivityIndicator color={uiPalette.primary} />
-        <Text style={styles.centerText}>Loading item details…</Text>
-      </View>
-    );
+  if (FORCE_LOADING_PREVIEW || (menuQuery.isLoading && !menuQuery.data)) {
+    return <LoadingSheet />;
   }
 
   if (!menuQuery.isLoading && !item) {
     return (
-      <View style={[styles.screen, styles.centerState]}>
-        <Text style={styles.centerTitle}>This item is unavailable.</Text>
-        <Text style={styles.centerText}>Return to the menu and choose another drink.</Text>
-        <Pressable onPress={closeModal} style={styles.inlinePrimary}>
-          <Text style={styles.inlinePrimaryText}>Back to Menu</Text>
-        </Pressable>
+      <View style={styles.backdrop}>
+        <View style={[styles.sheet, styles.centerState]}>
+          <View style={styles.handleWrap}>
+            <View style={styles.handle} />
+          </View>
+          <View pointerEvents="none" style={styles.topBand} />
+          <Text style={styles.centerTitle}>This item is unavailable.</Text>
+          <Text style={styles.centerText}>Return to the menu and choose another drink.</Text>
+          <Pressable onPress={closeModal} style={styles.inlinePrimary}>
+            <Text style={styles.inlinePrimaryText}>Back to Menu</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.screen}>
-      <ScrollView
-        ref={scrollRef}
-        bounces
-        showsVerticalScrollIndicator={false}
-        contentInsetAdjustmentBehavior="never"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 120 }}
-      >
-        <View style={[styles.heroWrap, { paddingTop: insets.top + 8 }]}>
-          <ProductImage imageUrl={item?.imageUrl} />
-          <Pressable onPress={closeModal} style={[styles.closeButton, { top: insets.top + 20 }]}>
-            <Ionicons name="close" size={22} color={uiPalette.surfaceStrong} />
-          </Pressable>
+    <View style={styles.backdrop}>
+      <View style={styles.sheet}>
+        <View style={styles.handleWrap}>
+          <View style={styles.handle} />
         </View>
+        <View pointerEvents="none" style={styles.topBand} />
 
-        {item ? (
-          <View style={styles.content}>
-            <Text style={styles.title}>{item.name}</Text>
-            <Text style={styles.meta}>{metaLine}</Text>
-            <Pressable onPress={scrollToOptions} style={styles.outlineAction}>
-              <Text style={styles.outlineActionText}>Customize</Text>
-            </Pressable>
-
-            <Text style={styles.description}>{item.description}</Text>
-
-            <View onLayout={(event) => setOptionsOffset(event.nativeEvent.layout.y)}>
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Size</Text>
-                <Text style={styles.sectionBody}>Choose the cup that fits the order.</Text>
-                <View style={styles.optionRow}>
-                  <OptionChip
-                    label="Regular"
-                    active={customization.size === "Regular"}
-                    onPress={() => setCustomization((prev) => ({ ...prev, size: "Regular" }))}
-                  />
-                  <OptionChip
-                    label="Large"
-                    active={customization.size === "Large"}
-                    priceDeltaCents={100}
-                    onPress={() => setCustomization((prev) => ({ ...prev, size: "Large" }))}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Milk</Text>
-                <Text style={styles.sectionBody}>Keep it classic or switch the texture.</Text>
-                <View style={styles.optionRow}>
-                  <OptionChip
-                    label="Whole"
-                    active={customization.milk === "Whole"}
-                    onPress={() => setCustomization((prev) => ({ ...prev, milk: "Whole" }))}
-                  />
-                  <OptionChip
-                    label="Oat"
-                    active={customization.milk === "Oat"}
-                    priceDeltaCents={75}
-                    onPress={() => setCustomization((prev) => ({ ...prev, milk: "Oat" }))}
-                  />
-                  <OptionChip
-                    label="Almond"
-                    active={customization.milk === "Almond"}
-                    priceDeltaCents={75}
-                    onPress={() => setCustomization((prev) => ({ ...prev, milk: "Almond" }))}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Extra shot</Text>
-                <Text style={styles.sectionBody}>Add an additional espresso pull when you want more structure.</Text>
-                <View style={styles.optionRow}>
-                  <OptionChip
-                    label="Add shot"
-                    active={customization.extraShot}
-                    priceDeltaCents={125}
-                    onPress={() => setCustomization((prev) => ({ ...prev, extraShot: !prev.extraShot }))}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Notes</Text>
-                <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
-                <TextInput
-                  value={notes}
-                  onChangeText={setNotes}
-                  placeholder="No foam, easy ice, half sweet…"
-                  placeholderTextColor={uiPalette.textMuted}
-                  style={styles.noteInput}
-                  multiline
-                />
-              </View>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Quantity</Text>
-                <Text style={styles.sectionBody}>Adjust the number before adding the item to your bag.</Text>
-                <View style={styles.quantityRow}>
-                  <Pressable
-                    style={[styles.stepperButton, quantity <= 1 ? styles.stepperButtonDisabled : null]}
-                    onPress={() => setQuantity((prev) => Math.max(prev - 1, 1))}
-                    disabled={quantity <= 1}
-                  >
-                    <Ionicons name="remove" size={18} color={quantity <= 1 ? uiPalette.textMuted : uiPalette.text} />
-                  </Pressable>
-                  <Text style={styles.quantityValue}>{quantity}</Text>
-                  <Pressable
-                    style={[styles.stepperButton, quantity >= MAX_QUANTITY ? styles.stepperButtonDisabled : null]}
-                    onPress={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
-                    disabled={quantity >= MAX_QUANTITY}
-                  >
-                    <Ionicons name="add" size={18} color={quantity >= MAX_QUANTITY ? uiPalette.textMuted : uiPalette.text} />
-                  </Pressable>
-                </View>
-              </View>
+        <Animated.View style={contentRevealStyle}>
+          <ScrollView
+            ref={scrollRef}
+            bounces
+            showsVerticalScrollIndicator={false}
+            contentInsetAdjustmentBehavior="never"
+            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 120 }}
+          >
+            <View style={styles.heroWrap}>
+              <ProductImage imageUrl={item?.imageUrl} onReady={handleHeroReady} />
             </View>
 
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Customization</Text>
-              <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total</Text>
-              <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
-            </View>
-          </View>
+            {item ? (
+              <View style={styles.content}>
+                <Text style={styles.title}>{item.name}</Text>
+                <Text style={styles.meta}>{metaLine}</Text>
+                <Text style={styles.description}>{item.description}</Text>
+
+                <View onLayout={(event) => setOptionsOffset(event.nativeEvent.layout.y)}>
+                  {item.customizationGroups.map((group) => (
+                    <View key={group.id} style={styles.section}>
+                      <Text style={styles.sectionTitle}>{group.label}</Text>
+                      {group.description ? <Text style={styles.sectionBody}>{group.description}</Text> : null}
+                      <View style={styles.optionRow}>
+                        {group.options.map((option) => (
+                          <OptionChip
+                            key={option.id}
+                            label={option.label}
+                            active={isCustomizationOptionSelected(customization, group.id, option.id)}
+                            priceDeltaCents={option.priceDeltaCents}
+                            onPress={() =>
+                              setCustomization((prev) => updateCustomizationOption(prev, group, option))
+                            }
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  ))}
+
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Notes</Text>
+                    <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
+                    <TextInput
+                      value={notes}
+                      onChangeText={setNotes}
+                      placeholder="No foam, easy ice, half sweet…"
+                      placeholderTextColor={uiPalette.textMuted}
+                      style={styles.noteInput}
+                      multiline
+                    />
+                  </View>
+
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Quantity</Text>
+                    <Text style={styles.sectionBody}>Adjust the number before adding the item to your bag.</Text>
+                    <View style={styles.quantityRow}>
+                      <Pressable
+                        style={[styles.stepperButton, quantity <= 1 ? styles.stepperButtonDisabled : null]}
+                        onPress={() => setQuantity((prev) => Math.max(prev - 1, 1))}
+                        disabled={quantity <= 1}
+                      >
+                        <Ionicons name="remove" size={18} color={quantity <= 1 ? uiPalette.textMuted : uiPalette.text} />
+                      </Pressable>
+                      <Text style={styles.quantityValue}>{quantity}</Text>
+                      <Pressable
+                        style={[styles.stepperButton, quantity >= MAX_QUANTITY ? styles.stepperButtonDisabled : null]}
+                        onPress={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
+                        disabled={quantity >= MAX_QUANTITY}
+                      >
+                        <Ionicons name="add" size={18} color={quantity >= MAX_QUANTITY ? uiPalette.textMuted : uiPalette.text} />
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Customization</Text>
+                  <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Total</Text>
+                  <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
+                </View>
+              </View>
+            ) : null}
+          </ScrollView>
+        </Animated.View>
+
+        <Animated.View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }, contentRevealStyle]}>
+          <Pressable onPress={addSelectedItem} style={styles.addButton}>
+            <Text style={styles.addButtonText}>{`Add ${formatUsd(totalCents)}`}</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push("/cart")} style={styles.footerDarkButton}>
+            <Text style={styles.footerDarkButtonText}>{itemCount > 0 ? `Bag ${itemCount}` : "Bag"}</Text>
+          </Pressable>
+          <Pressable onPress={scrollToOptions} style={styles.footerDarkButton}>
+            <Text style={styles.footerDarkButtonText}>{String(quantity)}</Text>
+          </Pressable>
+        </Animated.View>
+
+        {loadingOverlayVisible ? (
+          <Animated.View pointerEvents="auto" style={[styles.loadingOverlay, overlayFadeStyle]}>
+            <LoadingSheetBody showHandle={false} />
+          </Animated.View>
         ) : null}
-      </ScrollView>
-
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <Pressable onPress={addSelectedItem} style={styles.addButton}>
-          <Text style={styles.addButtonText}>{`Add ${formatUsd(totalCents)}`}</Text>
-        </Pressable>
-        <Pressable onPress={() => router.push("/cart")} style={styles.footerDarkButton}>
-          <Text style={styles.footerDarkButtonText}>{itemCount > 0 ? `Bag ${itemCount}` : "Bag"}</Text>
-        </Pressable>
-        <Pressable onPress={scrollToOptions} style={styles.footerDarkButton}>
-          <Text style={styles.footerDarkButtonText}>{String(quantity)}</Text>
-        </Pressable>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  backdrop: {
     flex: 1,
-    backgroundColor: uiPalette.background
+    backgroundColor: "transparent"
+  },
+  sheet: {
+    flex: 1,
+    backgroundColor: "rgba(246, 247, 244, 0.98)",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    overflow: "hidden"
   },
   centerState: {
     justifyContent: "center",
@@ -334,7 +553,84 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   },
   heroWrap: {
-    paddingHorizontal: 20
+    paddingHorizontal: 20,
+    paddingTop: 18
+  },
+  handleWrap: {
+    position: "absolute",
+    top: 16,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 10
+  },
+  topBand: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 36,
+    backgroundColor: "rgba(246, 247, 244, 0.98)",
+    zIndex: 5
+  },
+  loadingBlock: {
+    backgroundColor: "rgba(219, 216, 207, 0.9)"
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(246, 247, 244, 0.98)",
+    zIndex: 8
+  },
+  loadingHero: {
+    height: 420,
+    backgroundColor: "#F6D6C8",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden"
+  },
+  loadingCupGlow: {
+    position: "absolute",
+    width: 280,
+    height: 280,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.28)"
+  },
+  loadingCup: {
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: "rgba(255,255,255,0.75)"
+  },
+  loadingTopSpacer: {
+    height: 438
+  },
+  loadingMetaBlock: {
+    marginTop: 12
+  },
+  loadingButtonBlock: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: uiPalette.borderStrong,
+    backgroundColor: "rgba(255,255,255,0.72)"
+  },
+  loadingDescriptionGroup: {
+    marginTop: 28,
+    gap: 10
+  },
+  loadingSectionBody: {
+    marginTop: 10
+  },
+  loadingChipRow: {
+    marginTop: 18,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10
+  },
+  handle: {
+    width: 38,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "rgba(151, 160, 154, 0.52)"
   },
   heroImage: {
     height: 420,
@@ -357,15 +653,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.38)"
   },
-  closeButton: {
-    position: "absolute",
-    right: 32,
-    width: 54,
-    height: 54,
-    backgroundColor: "rgba(48, 49, 51, 0.82)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
   content: {
     paddingHorizontal: 20,
     paddingTop: 22
@@ -385,23 +672,8 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: uiPalette.textSecondary
   },
-  outlineAction: {
-    alignSelf: "flex-start",
-    marginTop: 18,
-    minHeight: 42,
-    paddingHorizontal: 18,
-    borderWidth: 1,
-    borderColor: uiPalette.borderStrong,
-    justifyContent: "center"
-  },
-  outlineActionText: {
-    fontSize: 15,
-    lineHeight: 20,
-    color: uiPalette.text,
-    fontWeight: "500"
-  },
   description: {
-    marginTop: 28,
+    marginTop: 22,
     fontSize: 15,
     lineHeight: 28,
     color: uiPalette.textSecondary
@@ -504,6 +776,26 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     backgroundColor: uiPalette.background
+  },
+  loadingFooter: {
+    zIndex: 3
+  },
+  loadingFooterPrimary: {
+    flex: 1,
+    minHeight: 56,
+    borderWidth: 1,
+    borderColor: uiPalette.borderStrong,
+    backgroundColor: "rgba(255,255,255,0.72)"
+  },
+  loadingFooterSecondary: {
+    width: 72,
+    minHeight: 56,
+    backgroundColor: "rgba(29, 26, 23, 0.9)"
+  },
+  loadingFooterTertiary: {
+    width: 72,
+    minHeight: 56,
+    backgroundColor: "rgba(29, 26, 23, 0.9)"
   },
   addButton: {
     flex: 1,

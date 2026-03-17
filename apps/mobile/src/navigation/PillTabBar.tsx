@@ -49,16 +49,6 @@ type LiquidGlassViewProps = {
 function hasNativeLiquidGlassModule() {
   if (Platform.OS !== "ios") return false;
 
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const TurboModuleRegistry = require("react-native/Libraries/TurboModule/TurboModuleRegistry");
-    if (typeof TurboModuleRegistry?.get === "function" && TurboModuleRegistry.get("NativeLiquidGlassModule")) {
-      return true;
-    }
-  } catch {
-    // Fall back below.
-  }
-
   return Boolean(NativeModules.NativeLiquidGlassModule);
 }
 

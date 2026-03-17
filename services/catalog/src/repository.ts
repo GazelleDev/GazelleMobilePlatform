@@ -1,9 +1,61 @@
 import type { FastifyBaseLogger } from "fastify";
-import { menuItemSchema, menuResponseSchema, storeConfigResponseSchema } from "@gazelle/contracts-catalog";
+import {
+  menuItemCustomizationGroupSchema,
+  menuItemSchema,
+  menuResponseSchema,
+  storeConfigResponseSchema
+} from "@gazelle/contracts-catalog";
 import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl, type PersistenceDb } from "@gazelle/persistence";
 import { z } from "zod";
 
 const defaultLocationId = "flagship-01";
+
+const espressoCustomizationGroups = [
+  {
+    id: "size",
+    label: "Size",
+    description: "Choose the cup that fits the order.",
+    selectionType: "single" as const,
+    required: true,
+    options: [
+      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
+      { id: "large", label: "Large", priceDeltaCents: 100 }
+    ]
+  },
+  {
+    id: "milk",
+    label: "Milk",
+    description: "Keep it classic or switch the texture.",
+    selectionType: "single" as const,
+    required: true,
+    options: [
+      { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true },
+      { id: "oat", label: "Oat milk", priceDeltaCents: 75 },
+      { id: "almond", label: "Almond milk", priceDeltaCents: 75 }
+    ]
+  },
+  {
+    id: "extra-shot",
+    label: "Extra shot",
+    description: "Add an additional espresso pull when you want more structure.",
+    selectionType: "boolean" as const,
+    options: [{ id: "extra-shot", label: "Add shot", priceDeltaCents: 125 }]
+  }
+];
+
+const coldBrewCustomizationGroups = [
+  {
+    id: "size",
+    label: "Size",
+    description: "Choose the pour size for this drink.",
+    selectionType: "single" as const,
+    required: true,
+    options: [
+      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
+      { id: "large", label: "Large", priceDeltaCents: 75 }
+    ]
+  }
+];
 
 const defaultMenuPayload = menuResponseSchema.parse({
   locationId: defaultLocationId,
@@ -19,7 +71,8 @@ const defaultMenuPayload = menuResponseSchema.parse({
           description: "Double espresso cut with steamed milk.",
           priceCents: 475,
           badgeCodes: ["new"],
-          visible: true
+          visible: true,
+          customizationGroups: espressoCustomizationGroups
         },
         {
           id: "flat-white",
@@ -27,7 +80,8 @@ const defaultMenuPayload = menuResponseSchema.parse({
           description: "Silky microfoam over ristretto shots.",
           priceCents: 525,
           badgeCodes: ["popular"],
-          visible: true
+          visible: true,
+          customizationGroups: espressoCustomizationGroups
         }
       ]
     },
@@ -41,7 +95,8 @@ const defaultMenuPayload = menuResponseSchema.parse({
           description: "Single-origin coffee brewed hot and chilled over ice.",
           priceCents: 495,
           badgeCodes: [],
-          visible: true
+          visible: true,
+          customizationGroups: coldBrewCustomizationGroups
         },
         {
           id: "seasonal-tonic",
@@ -74,9 +129,17 @@ type CatalogRepository = {
   close(): Promise<void>;
 };
 
-function toBadgeCodes(value: unknown) {
+function parseJsonValue<TSchema extends z.ZodTypeAny>(schema: TSchema, value: unknown): z.output<TSchema> {
   const parsedValue = typeof value === "string" ? JSON.parse(value) : value;
-  return z.array(z.string()).parse(parsedValue);
+  return schema.parse(parsedValue);
+}
+
+function toBadgeCodes(value: unknown) {
+  return parseJsonValue(z.array(z.string()), value);
+}
+
+function toCustomizationGroups(value: unknown) {
+  return parseJsonValue(z.array(menuItemCustomizationGroupSchema), value);
 }
 
 function createInMemoryRepository(): CatalogRepository {
@@ -129,6 +192,7 @@ async function seedCatalogDefaults(db: PersistenceDb) {
               image_url: item.imageUrl ?? null,
               price_cents: item.priceCents,
               badge_codes_json: JSON.stringify(item.badgeCodes),
+              customization_groups_json: JSON.stringify(item.customizationGroups ?? []),
               visible: item.visible,
               sort_order: index
             }))
@@ -188,7 +252,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
           imageUrl: item.image_url ?? undefined,
           priceCents: item.price_cents,
           badgeCodes: toBadgeCodes(item.badge_codes_json),
-          visible: item.visible
+          visible: item.visible,
+          customizationGroups: toCustomizationGroups(item.customization_groups_json)
         });
         itemsByCategory.set(item.category_id, existing);
       }

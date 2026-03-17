@@ -2,6 +2,22 @@ import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiClient } from "../api/client";
 
+const menuItemCustomizationOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  priceDeltaCents: z.number().int(),
+  default: z.boolean().optional()
+});
+
+const menuItemCustomizationGroupSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  selectionType: z.enum(["single", "multi", "boolean"]),
+  required: z.boolean().default(false),
+  options: z.array(menuItemCustomizationOptionSchema).min(1)
+});
+
 const menuItemSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -9,7 +25,8 @@ const menuItemSchema = z.object({
   imageUrl: z.string().min(1).optional(),
   priceCents: z.number().int().nonnegative(),
   badgeCodes: z.array(z.string()),
-  visible: z.boolean()
+  visible: z.boolean(),
+  customizationGroups: z.array(menuItemCustomizationGroupSchema).default([])
 });
 
 const menuCategorySchema = z.object({
@@ -32,9 +49,59 @@ const storeConfigResponseSchema = z.object({
 });
 
 export type MenuItem = z.output<typeof menuItemSchema>;
+export type MenuItemCustomizationGroup = z.output<typeof menuItemCustomizationGroupSchema>;
+export type MenuItemCustomizationOption = z.output<typeof menuItemCustomizationOptionSchema>;
 export type MenuCategory = z.output<typeof menuCategorySchema>;
 export type MenuResponse = z.output<typeof menuResponseSchema>;
 export type StoreConfigResponse = z.output<typeof storeConfigResponseSchema>;
+
+const espressoCustomizationGroups: MenuItemCustomizationGroup[] = [
+  {
+    id: "size",
+    label: "Size",
+    description: "Choose the cup that fits the order.",
+    selectionType: "single",
+    required: true,
+    options: [
+      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
+      { id: "large", label: "Large", priceDeltaCents: 100 }
+    ]
+  },
+  {
+    id: "milk",
+    label: "Milk",
+    description: "Keep it classic or switch the texture.",
+    selectionType: "single",
+    required: true,
+    options: [
+      { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true },
+      { id: "oat", label: "Oat milk", priceDeltaCents: 75 },
+      { id: "almond", label: "Almond milk", priceDeltaCents: 75 }
+    ]
+  },
+  {
+    id: "extra-shot",
+    label: "Extra shot",
+    description: "Add an additional espresso pull when you want more structure.",
+    selectionType: "boolean",
+    required: false,
+    options: [{ id: "extra-shot", label: "Add shot", priceDeltaCents: 125 }]
+  }
+];
+
+const coldBrewCustomizationGroups: MenuItemCustomizationGroup[] = [
+  {
+    id: "size",
+    label: "Size",
+    description: "Choose the pour size for this drink.",
+    selectionType: "single",
+    required: true,
+    options: [
+      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
+      { id: "large", label: "Large", priceDeltaCents: 75 }
+    ]
+  }
+];
 
 const fallbackMenu = menuResponseSchema.parse({
   locationId: "flagship-01",
@@ -50,7 +117,8 @@ const fallbackMenu = menuResponseSchema.parse({
           description: "Espresso with steamed oat milk and honey drizzle.",
           priceCents: 675,
           badgeCodes: ["popular"],
-          visible: true
+          visible: true,
+          customizationGroups: espressoCustomizationGroups
         },
         {
           id: "flat-white",
@@ -58,7 +126,8 @@ const fallbackMenu = menuResponseSchema.parse({
           description: "Velvety microfoam over ristretto espresso shots.",
           priceCents: 625,
           badgeCodes: [],
-          visible: true
+          visible: true,
+          customizationGroups: espressoCustomizationGroups
         }
       ]
     },
@@ -72,7 +141,8 @@ const fallbackMenu = menuResponseSchema.parse({
           description: "Twelve-hour steep with rotating single-origin beans.",
           priceCents: 550,
           badgeCodes: ["seasonal"],
-          visible: true
+          visible: true,
+          customizationGroups: coldBrewCustomizationGroups
         },
         {
           id: "matcha",
@@ -80,7 +150,8 @@ const fallbackMenu = menuResponseSchema.parse({
           description: "Stone-ground matcha whisked to order with milk of choice.",
           priceCents: 725,
           badgeCodes: ["new"],
-          visible: true
+          visible: true,
+          customizationGroups: espressoCustomizationGroups
         }
       ]
     },

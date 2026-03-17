@@ -1,23 +1,15 @@
-export const SIZE_PRICE_DELTA_CENTS = {
-  Regular: 0,
-  Large: 100
-} as const;
+import type { MenuItemCustomizationGroup, MenuItemCustomizationOption } from "../menu/catalog";
 
-export const MILK_PRICE_DELTA_CENTS = {
-  Whole: 0,
-  Oat: 75,
-  Almond: 75
-} as const;
-
-export const EXTRA_SHOT_PRICE_DELTA_CENTS = 125;
-
-export type CartDrinkSize = keyof typeof SIZE_PRICE_DELTA_CENTS;
-export type CartMilkOption = keyof typeof MILK_PRICE_DELTA_CENTS;
+export type CartCustomizationOptionSelection = {
+  groupId: string;
+  groupLabel: string;
+  optionId: string;
+  optionLabel: string;
+  priceDeltaCents: number;
+};
 
 export type CartCustomization = {
-  size: CartDrinkSize;
-  milk: CartMilkOption;
-  extraShot: boolean;
+  selectedOptions: CartCustomizationOptionSelection[];
   notes?: string;
 };
 
@@ -46,42 +38,125 @@ export type CartPricingSummary = {
 };
 
 export const DEFAULT_CUSTOMIZATION: CartCustomization = {
-  size: "Regular",
-  milk: "Whole",
-  extraShot: false,
+  selectedOptions: [],
   notes: ""
 };
 
+function compareSelections(a: CartCustomizationOptionSelection, b: CartCustomizationOptionSelection) {
+  return a.groupId.localeCompare(b.groupId) || a.optionId.localeCompare(b.optionId);
+}
+
 export function normalizeCustomization(input: CartCustomization): CartCustomization {
+  const uniqueSelections = new Map<string, CartCustomizationOptionSelection>();
+  for (const selection of input.selectedOptions) {
+    uniqueSelections.set(`${selection.groupId}:${selection.optionId}`, selection);
+  }
+
   return {
-    ...input,
+    selectedOptions: Array.from(uniqueSelections.values()).sort(compareSelections),
     notes: input.notes?.trim() ?? ""
   };
 }
 
-export function getCustomizationDeltaCents(customization: CartCustomization): number {
-  return (
-    SIZE_PRICE_DELTA_CENTS[customization.size] +
-    MILK_PRICE_DELTA_CENTS[customization.milk] +
-    (customization.extraShot ? EXTRA_SHOT_PRICE_DELTA_CENTS : 0)
+export function toCustomizationSelection(
+  group: Pick<MenuItemCustomizationGroup, "id" | "label">,
+  option: Pick<MenuItemCustomizationOption, "id" | "label" | "priceDeltaCents">
+): CartCustomizationOptionSelection {
+  return {
+    groupId: group.id,
+    groupLabel: group.label,
+    optionId: option.id,
+    optionLabel: option.label,
+    priceDeltaCents: option.priceDeltaCents
+  };
+}
+
+export function buildDefaultCustomization(groups: MenuItemCustomizationGroup[]): CartCustomization {
+  const selectedOptions = groups.flatMap((group) => {
+    const defaultOptions = group.options.filter((option) => option.default);
+
+    if (group.selectionType === "single") {
+      const option = defaultOptions[0] ?? (group.required ? group.options[0] : undefined);
+      return option ? [toCustomizationSelection(group, option)] : [];
+    }
+
+    if (group.selectionType === "boolean") {
+      const option = defaultOptions[0];
+      return option ? [toCustomizationSelection(group, option)] : [];
+    }
+
+    return defaultOptions.map((option) => toCustomizationSelection(group, option));
+  });
+
+  return normalizeCustomization({
+    selectedOptions,
+    notes: ""
+  });
+}
+
+export function isCustomizationOptionSelected(
+  customization: CartCustomization,
+  groupId: string,
+  optionId: string
+): boolean {
+  return customization.selectedOptions.some(
+    (selection) => selection.groupId === groupId && selection.optionId === optionId
   );
+}
+
+export function getCustomizationDeltaCents(customization: CartCustomization): number {
+  return customization.selectedOptions.reduce((sum, selection) => sum + selection.priceDeltaCents, 0);
 }
 
 export function getUnitPriceCents(basePriceCents: number, customization: CartCustomization): number {
   return basePriceCents + getCustomizationDeltaCents(customization);
 }
 
+type CustomizationDescribeOptions = {
+  includeNotes?: boolean;
+  fallback?: string;
+};
+
+export function describeCustomization(
+  customization: CartCustomization,
+  options: CustomizationDescribeOptions = {}
+): string {
+  const { includeNotes = true, fallback = "Standard" } = options;
+  const normalized = normalizeCustomization(customization);
+  const groupedSelections = new Map<string, { label: string; options: string[] }>();
+
+  for (const selection of normalized.selectedOptions) {
+    const existing = groupedSelections.get(selection.groupId);
+    if (existing) {
+      existing.options.push(selection.optionLabel);
+      continue;
+    }
+
+    groupedSelections.set(selection.groupId, {
+      label: selection.groupLabel,
+      options: [selection.optionLabel]
+    });
+  }
+
+  const parts = Array.from(groupedSelections.values()).map((group) => group.options.join(", "));
+  if (includeNotes && normalized.notes) {
+    parts.push(`note: ${normalized.notes}`);
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : fallback;
+}
+
 export function toCartLineId(input: CartItemInput): string {
   const customization = normalizeCustomization(input.customization);
+  const optionMarker =
+    customization.selectedOptions.length > 0
+      ? customization.selectedOptions
+          .map((selection) => `${selection.groupId}:${selection.optionId}`)
+          .join(",")
+      : "-";
   const noteMarker = customization.notes && customization.notes.length > 0 ? customization.notes : "-";
 
-  return [
-    input.menuItemId,
-    customization.size,
-    customization.milk,
-    customization.extraShot ? "extra-shot" : "no-extra-shot",
-    noteMarker
-  ].join("|");
+  return [input.menuItemId, optionMarker, noteMarker].join("|");
 }
 
 export function createCartItem(input: CartItemInput): CartItem {
@@ -143,17 +218,4 @@ export function buildPricingSummary(subtotalCents: number, taxRateBasisPoints: n
     taxCents,
     totalCents: subtotalCents + taxCents
   };
-}
-
-export function describeCustomization(customization: CartCustomization): string {
-  const parts = [`${customization.size}`, `${customization.milk} milk`];
-  if (customization.extraShot) {
-    parts.push("extra shot");
-  }
-
-  if (customization.notes && customization.notes.length > 0) {
-    parts.push(`note: ${customization.notes}`);
-  }
-
-  return parts.join(" · ");
 }

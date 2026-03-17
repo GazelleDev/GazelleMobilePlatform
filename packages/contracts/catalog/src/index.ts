@@ -1,5 +1,21 @@
 import { z } from "zod";
 
+export const menuItemCustomizationOptionSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  priceDeltaCents: z.number().int(),
+  default: z.boolean().optional()
+});
+
+export const menuItemCustomizationGroupSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+  selectionType: z.enum(["single", "multi", "boolean"]),
+  required: z.boolean().default(false),
+  options: z.array(menuItemCustomizationOptionSchema).min(1)
+});
+
 export const menuItemSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -7,7 +23,8 @@ export const menuItemSchema = z.object({
   imageUrl: z.string().min(1).optional(),
   priceCents: z.number().int().nonnegative(),
   badgeCodes: z.array(z.string()),
-  visible: z.boolean()
+  visible: z.boolean(),
+  customizationGroups: z.array(menuItemCustomizationGroupSchema).default([])
 });
 
 export const menuCategorySchema = z.object({
