@@ -36,6 +36,7 @@ import {
   type MenuItemCustomizationGroup,
   type MenuItemCustomizationOption
 } from "../src/menu/catalog";
+import { CustomizeModalLoadingSheet } from "../src/menu/CustomizeModalLoadingSheet";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../src/navigation/tabBarMetrics";
 import { Chip, uiPalette, uiTypography } from "../src/ui/system";
 
@@ -145,12 +146,96 @@ function FooterPill({
   );
 }
 
-function ProductImage({ imageUrl }: { imageUrl?: string }) {
+function FooterQuantityPill({
+  quantity,
+  onDecrease,
+  onIncrease,
+  canDecrease,
+  canIncrease,
+  style
+}: {
+  quantity: number;
+  onDecrease: () => void;
+  onIncrease: () => void;
+  canDecrease: boolean;
+  canIncrease: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const useLiquidGlass = canUseLiquidGlassFooter();
+
+  return (
+    <View style={[styles.footerQuantityShell, style]}>
+      <View pointerEvents="box-none" style={styles.footerQuantityMergeLayer}>
+        {useLiquidGlass ? (
+          <>
+            <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.footerQuantityBaseGlass}>
+              <View style={styles.footerQuantityBaseGlassInner} />
+            </GlassView>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassLeft]}>
+              <GlassView glassEffectStyle="clear" colorScheme="auto" isInteractive style={styles.footerQuantityOrbGlassView} />
+            </View>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassRight]}>
+              <GlassView glassEffectStyle="clear" colorScheme="auto" isInteractive style={styles.footerQuantityOrbGlassView} />
+            </View>
+          </>
+        ) : (
+          <>
+            <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerQuantityBaseGlass}>
+              <View style={styles.footerQuantityBaseFallbackInner} />
+            </BlurView>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassLeft]}>
+              <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerQuantityOrbGlassView}>
+                <View style={styles.footerMiniPillFallbackSurface} />
+              </BlurView>
+            </View>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassRight]}>
+              <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerQuantityOrbGlassView}>
+                <View style={styles.footerMiniPillFallbackSurface} />
+              </BlurView>
+            </View>
+          </>
+        )}
+      </View>
+
+      <View pointerEvents="box-none" style={styles.footerQuantityContentLayer}>
+        <Text style={styles.footerQuantityValue}>{quantity}</Text>
+        <Pressable
+          style={[styles.footerOrbButton, styles.footerQuantityOrbControlLeft, !canDecrease ? styles.footerStepperButtonDisabled : null]}
+          onPress={onDecrease}
+          disabled={!canDecrease}
+        >
+          <Ionicons name="remove" size={18} color={!canDecrease ? uiPalette.textMuted : uiPalette.text} />
+        </Pressable>
+        <Pressable
+          style={[styles.footerOrbButton, styles.footerQuantityOrbControlRight, !canIncrease ? styles.footerStepperButtonDisabled : null]}
+          onPress={onIncrease}
+          disabled={!canIncrease}
+        >
+          <Ionicons name="add" size={18} color={!canIncrease ? uiPalette.textMuted : uiPalette.text} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function ProductImage({
+  imageUrl,
+  onReady
+}: {
+  imageUrl?: string;
+  onReady?: () => void;
+}) {
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     setImageFailed(false);
   }, [imageUrl]);
+
+  useEffect(() => {
+    if (!imageUrl) {
+      onReady?.();
+    }
+  }, [imageUrl, onReady]);
 
   return (
     <View style={styles.heroImage}>
@@ -159,7 +244,11 @@ function ProductImage({ imageUrl }: { imageUrl?: string }) {
           source={{ uri: imageUrl }}
           style={styles.heroImagePhoto}
           resizeMode="cover"
-          onError={() => setImageFailed(true)}
+          onLoadEnd={onReady}
+          onError={() => {
+            setImageFailed(true);
+            onReady?.();
+          }}
         />
       ) : (
         <View style={styles.heroDrink}>
@@ -216,10 +305,20 @@ export default function MenuCustomizeModalScreen() {
   const [customization, setCustomization] = useState<CartCustomization>(DEFAULT_CUSTOMIZATION);
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
+  const [heroReady, setHeroReady] = useState(true);
   useEffect(() => {
     setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
     setQuantity(1);
     setNotes("");
+  }, [item]);
+
+  useEffect(() => {
+    if (!item) {
+      setHeroReady(true);
+      return;
+    }
+
+    setHeroReady(!item.imageUrl);
   }, [item]);
 
   const mergedCustomization = useMemo(
@@ -237,9 +336,18 @@ export default function MenuCustomizeModalScreen() {
     () => describeCustomization(mergedCustomization, { includeNotes: false, fallback: "" }),
     [mergedCustomization]
   );
-  const metaLine = customizationPreview
-    ? `${customizationPreview} • ${formatUsd(selectedUnitPriceCents)}`
-    : formatUsd(selectedUnitPriceCents);
+  const priceLine = formatUsd(selectedUnitPriceCents);
+  const metaLine = customizationPreview;
+  const handleHeroReady = useMemo(
+    () => () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setHeroReady(true);
+        });
+      });
+    },
+    []
+  );
 
   function closeModal() {
     if (router.canGoBack()) {
@@ -264,7 +372,7 @@ export default function MenuCustomizeModalScreen() {
   }
 
   if (menuQuery.isLoading && !menuQuery.data) {
-    return <SimpleModalState title="Loading item..." body="Preparing the customize sheet." />;
+    return <CustomizeModalLoadingSheet />;
   }
 
   if (!item) {
@@ -292,12 +400,15 @@ export default function MenuCustomizeModalScreen() {
           contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
         >
           <View style={styles.heroWrap}>
-            <ProductImage imageUrl={item.imageUrl} />
+            <ProductImage imageUrl={item.imageUrl} onReady={handleHeroReady} />
           </View>
 
           <View style={styles.content}>
-            <Text style={styles.title}>{item.name}</Text>
-            <Text style={styles.meta}>{metaLine}</Text>
+            <View style={styles.titleRow}>
+              <Text style={[styles.title, styles.titleText]}>{item.name}</Text>
+              <Text style={styles.price}>{priceLine}</Text>
+            </View>
+            {metaLine ? <Text style={styles.meta}>{metaLine}</Text> : null}
             <Text style={styles.description}>{item.description}</Text>
 
             <View>
@@ -331,28 +442,6 @@ export default function MenuCustomizeModalScreen() {
                   multiline
                 />
               </View>
-
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Quantity</Text>
-                <Text style={styles.sectionBody}>Adjust the number before adding the item to your bag.</Text>
-                <View style={styles.quantityRow}>
-                  <Pressable
-                    style={[styles.stepperButton, quantity <= 1 ? styles.stepperButtonDisabled : null]}
-                    onPress={() => setQuantity((prev) => Math.max(prev - 1, 1))}
-                    disabled={quantity <= 1}
-                  >
-                    <Ionicons name="remove" size={18} color={quantity <= 1 ? uiPalette.textMuted : uiPalette.text} />
-                  </Pressable>
-                  <Text style={styles.quantityValue}>{quantity}</Text>
-                  <Pressable
-                    style={[styles.stepperButton, quantity >= MAX_QUANTITY ? styles.stepperButtonDisabled : null]}
-                    onPress={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
-                    disabled={quantity >= MAX_QUANTITY}
-                  >
-                    <Ionicons name="add" size={18} color={quantity >= MAX_QUANTITY ? uiPalette.textMuted : uiPalette.text} />
-                  </Pressable>
-                </View>
-              </View>
             </View>
 
             <View style={styles.summarySection}>
@@ -374,15 +463,21 @@ export default function MenuCustomizeModalScreen() {
               <Text style={styles.footerPrimaryText}>Add to Cart</Text>
             </Pressable>
           </FooterPill>
-          <FooterPill style={styles.footerCompactPill}>
-            <Pressable onPress={() => router.push("/cart")} style={[styles.footerButton, styles.footerCompactButton]}>
-              <View style={styles.footerQuantityIconWrap}>
-                <Ionicons name="cart-outline" size={28} color={uiPalette.text} />
-              </View>
-            </Pressable>
-          </FooterPill>
+          <FooterQuantityPill
+            style={styles.footerQuantityPill}
+            quantity={quantity}
+            canDecrease={quantity > 1}
+            canIncrease={quantity < MAX_QUANTITY}
+            onDecrease={() => setQuantity((prev) => Math.max(prev - 1, 1))}
+            onIncrease={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
+          />
         </View>
       </View>
+      {!heroReady ? (
+        <View style={styles.loadingOverlay}>
+          <CustomizeModalLoadingSheet />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -480,6 +575,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 22
   },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16
+  },
   title: {
     fontSize: 22,
     lineHeight: 30,
@@ -488,6 +589,17 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     fontFamily: uiTypography.displayFamily,
     fontWeight: "600"
+  },
+  titleText: {
+    flex: 1
+  },
+  price: {
+    marginTop: 4,
+    fontSize: 15,
+    lineHeight: 24,
+    color: uiPalette.textSecondary,
+    fontFamily: uiTypography.bodyFamily,
+    fontWeight: "400"
   },
   meta: {
     marginTop: 10,
@@ -538,35 +650,15 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     textAlignVertical: "top"
   },
-  quantityRow: {
-    marginTop: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 18
-  },
-  stepperButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.56)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
   stepperButtonDisabled: {
     opacity: 0.55
   },
-  quantityValue: {
-    minWidth: 26,
-    textAlign: "center",
-    fontSize: 20,
-    lineHeight: 24,
-    color: uiPalette.text,
-    fontWeight: "600"
-  },
   summarySection: {
     marginBottom: 24
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20
   },
   summaryRow: {
     paddingVertical: 16,
@@ -633,10 +725,11 @@ const styles = StyleSheet.create({
     borderColor: "rgba(230, 221, 208, 0.94)"
   },
   footerPrimaryPill: {
-    flex: 1
+    flex: 1.9
   },
-  footerCompactPill: {
-    width: 84
+  footerQuantityPill: {
+    flex: 0.34,
+    minWidth: 118
   },
   footerButton: {
     minHeight: 52,
@@ -649,25 +742,110 @@ const styles = StyleSheet.create({
   footerPrimaryButton: {
     flex: 1
   },
-  footerCompactButton: {
-    width: "100%"
-  },
   footerPrimaryText: {
     fontSize: 17,
     lineHeight: 22,
     color: uiPalette.text,
     fontWeight: "600"
   },
-  footerCompactText: {
-    fontSize: 17,
+  footerQuantityShell: {
+    minHeight: 56,
+    borderRadius: 999,
+    overflow: "visible",
+    shadowColor: "#000000",
+    shadowOpacity: 0.09,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6
+  },
+  footerQuantityMergeLayer: {
+    ...StyleSheet.absoluteFillObject
+  },
+  footerQuantityBaseGlass: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  footerQuantityBaseGlassInner: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.003)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.11)"
+  },
+  footerQuantityBaseFallbackInner: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(248, 244, 236, 0.98)",
+    borderWidth: 1,
+    borderColor: "rgba(230, 221, 208, 0.94)"
+  },
+  footerQuantityOrbGlassShell: {
+    position: "absolute",
+    top: 7,
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    overflow: "visible",
+    shadowColor: "#000000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4
+  },
+  footerQuantityOrbGlassLeft: {
+    left: 6
+  },
+  footerQuantityOrbGlassRight: {
+    right: 6
+  },
+  footerQuantityOrbGlassView: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  footerMiniPillFallbackSurface: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(248, 244, 236, 0.98)",
+    borderWidth: 1,
+    borderColor: "rgba(230, 221, 208, 0.94)",
+    padding: 2,
+    justifyContent: "center"
+  },
+  footerQuantityContentLayer: {
+    minHeight: 56,
+    width: "100%",
+    borderRadius: 999,
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  footerOrbButton: {
+    position: "absolute",
+    top: 7,
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  footerQuantityOrbControlLeft: {
+    left: 6
+  },
+  footerQuantityOrbControlRight: {
+    right: 6
+  },
+  footerStepperButtonDisabled: {
+    opacity: 0.5
+  },
+  footerQuantityValue: {
+    minWidth: 28,
+    textAlign: "center",
+    fontSize: 18,
     lineHeight: 22,
     color: uiPalette.text,
     fontWeight: "600"
-  },
-  footerQuantityIconWrap: {
-    width: 34,
-    height: 34,
-    alignItems: "center",
-    justifyContent: "center"
   }
 });
