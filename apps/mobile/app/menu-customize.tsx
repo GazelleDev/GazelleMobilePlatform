@@ -1,8 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
+import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from "react-native";
-import Animated, { Easing, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type StyleProp,
+  type ViewStyle
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../src/cart/store";
 import {
@@ -24,10 +36,10 @@ import {
   type MenuItemCustomizationGroup,
   type MenuItemCustomizationOption
 } from "../src/menu/catalog";
+import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../src/navigation/tabBarMetrics";
 import { Chip, uiPalette, uiTypography } from "../src/ui/system";
 
 const MAX_QUANTITY = 20;
-const FORCE_LOADING_PREVIEW = false;
 
 function resolveItemId(input: string | string[] | undefined): string | null {
   if (Array.isArray(input)) return resolveItemId(input[0]);
@@ -38,6 +50,16 @@ function resolveItemId(input: string | string[] | undefined): string | null {
 function findMenuItemById(itemId: string | null, items: MenuItem[]): MenuItem | null {
   if (!itemId) return null;
   return items.find((item) => item.id === itemId) ?? null;
+}
+
+function canUseLiquidGlassFooter() {
+  if (Platform.OS !== "ios") return false;
+
+  try {
+    return isLiquidGlassAvailable();
+  } catch {
+    return false;
+  }
 }
 
 function OptionChip({
@@ -93,143 +115,42 @@ function updateCustomizationOption(
   });
 }
 
-function LoadingBlock({
-  width = "100%",
-  height,
-  radius = 14,
+function FooterPill({
+  children,
   style
 }: {
-  width?: number | `${number}%`;
-  height: number;
-  radius?: number;
+  children: ReactNode;
   style?: StyleProp<ViewStyle>;
 }) {
-  return (
-    <View
-      style={[
-        styles.loadingBlock,
-        {
-          width,
-          height,
-          borderRadius: radius
-        },
-        style
-      ]}
-    />
-  );
-}
+  const useLiquidGlass = canUseLiquidGlassFooter();
 
-function LoadingSheet() {
+  const content = (
+    <View style={[styles.footerPillInner, useLiquidGlass ? styles.footerPillInnerGlass : styles.footerPillInnerFallback]}>
+      {children}
+    </View>
+  );
+
   return (
-    <View style={styles.backdrop}>
-      <View style={styles.sheet}>
-        <LoadingSheetBody />
-      </View>
+    <View style={[styles.footerPillShell, style]}>
+      {useLiquidGlass ? (
+        <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.footerPillFrame}>
+          {content}
+        </GlassView>
+      ) : (
+        <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerPillFrame}>
+          {content}
+        </BlurView>
+      )}
     </View>
   );
 }
 
-function LoadingSheetBody({
-  showHandle = true,
-  showHero = false
-}: {
-  showHandle?: boolean;
-  showHero?: boolean;
-}) {
-  const pulse = useSharedValue(0);
-
-  useEffect(() => {
-    pulse.value = withRepeat(withTiming(1, { duration: 820, easing: Easing.inOut(Easing.ease) }), -1, true);
-  }, [pulse]);
-
-  const pulseStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(pulse.value, [0, 1], [0.52, 1]),
-    transform: [{ scale: interpolate(pulse.value, [0, 1], [0.985, 1]) }]
-  }));
-
-  return (
-    <>
-      {showHandle ? (
-        <>
-          <View style={styles.handleWrap}>
-            <View style={styles.handle} />
-          </View>
-          <View pointerEvents="none" style={styles.topBand} />
-        </>
-      ) : null}
-
-      <ScrollView bounces={false} showsVerticalScrollIndicator={false} scrollEnabled={false}>
-        {showHero ? (
-          <View style={styles.heroWrap}>
-            <Animated.View style={pulseStyle}>
-              <View style={styles.loadingHero}>
-                <View style={styles.loadingCupGlow} />
-                <View style={styles.loadingCup} />
-              </View>
-            </Animated.View>
-          </View>
-        ) : (
-          <View style={styles.loadingTopSpacer} />
-        )}
-
-        <Animated.View style={[styles.content, pulseStyle]}>
-          <LoadingBlock width="68%" height={34} radius={10} />
-          <LoadingBlock width="46%" height={18} radius={9} style={styles.loadingMetaBlock} />
-          <LoadingBlock width={146} height={46} radius={0} style={styles.loadingButtonBlock} />
-
-          <View style={styles.loadingDescriptionGroup}>
-            <LoadingBlock width="88%" height={16} radius={8} />
-            <LoadingBlock width="64%" height={16} radius={8} />
-          </View>
-
-          <View style={styles.section}>
-            <LoadingBlock width={96} height={22} radius={10} />
-            <LoadingBlock width="58%" height={14} radius={7} style={styles.loadingSectionBody} />
-            <View style={styles.loadingChipRow}>
-              <LoadingBlock width={118} height={42} radius={21} />
-              <LoadingBlock width={104} height={42} radius={21} />
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <LoadingBlock width={84} height={22} radius={10} />
-            <LoadingBlock width="62%" height={14} radius={7} style={styles.loadingSectionBody} />
-            <View style={styles.loadingChipRow}>
-              <LoadingBlock width={92} height={42} radius={21} />
-              <LoadingBlock width={84} height={42} radius={21} />
-              <LoadingBlock width={110} height={42} radius={21} />
-            </View>
-          </View>
-        </Animated.View>
-      </ScrollView>
-
-      <Animated.View style={[styles.footer, styles.loadingFooter, pulseStyle]}>
-        <LoadingBlock width={0} height={0} style={styles.loadingFooterPrimary} />
-        <LoadingBlock width={0} height={0} style={styles.loadingFooterSecondary} />
-        <LoadingBlock width={0} height={0} style={styles.loadingFooterTertiary} />
-      </Animated.View>
-    </>
-  );
-}
-
-function ProductImage({
-  imageUrl,
-  onReady
-}: {
-  imageUrl?: string;
-  onReady: () => void;
-}) {
+function ProductImage({ imageUrl }: { imageUrl?: string }) {
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     setImageFailed(false);
   }, [imageUrl]);
-
-  useEffect(() => {
-    if (!imageUrl) {
-      onReady();
-    }
-  }, [imageUrl, onReady]);
 
   return (
     <View style={styles.heroImage}>
@@ -238,11 +159,7 @@ function ProductImage({
           source={{ uri: imageUrl }}
           style={styles.heroImagePhoto}
           resizeMode="cover"
-          onLoadEnd={onReady}
-          onError={() => {
-            setImageFailed(true);
-            onReady();
-          }}
+          onError={() => setImageFailed(true)}
         />
       ) : (
         <View style={styles.heroDrink}>
@@ -253,14 +170,44 @@ function ProductImage({
   );
 }
 
+function SimpleModalState({
+  title,
+  body,
+  actionLabel,
+  onAction
+}: {
+  title: string;
+  body: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <View style={styles.backdrop}>
+      <View style={[styles.sheet, styles.centerState]}>
+        <View style={styles.handleWrap}>
+          <View style={styles.handle} />
+        </View>
+        <Text style={styles.centerTitle}>{title}</Text>
+        <Text style={styles.centerText}>{body}</Text>
+        {actionLabel && onAction ? (
+          <Pressable onPress={onAction} style={styles.inlinePrimary}>
+            <Text style={styles.inlinePrimaryText}>{actionLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 export default function MenuCustomizeModalScreen() {
   const insets = useSafeAreaInsets();
+  const footerBottom = getTabBarBottomOffset(insets.bottom > 0);
+  const footerClearance = footerBottom + TAB_BAR_HEIGHT + 16;
   const router = useRouter();
-  const scrollRef = useRef<ScrollView>(null);
   const params = useLocalSearchParams<{ itemId?: string | string[] }>();
   const itemId = useMemo(() => resolveItemId(params.itemId), [params.itemId]);
 
-  const { addItem, itemCount } = useCart();
+  const { addItem } = useCart();
   const menuQuery = useMenuQuery();
   const menu = resolveMenuData(menuQuery.data);
   const items = useMemo(() => menu.categories.flatMap((category) => category.items), [menu.categories]);
@@ -269,21 +216,10 @@ export default function MenuCustomizeModalScreen() {
   const [customization, setCustomization] = useState<CartCustomization>(DEFAULT_CUSTOMIZATION);
   const [quantity, setQuantity] = useState(1);
   const [notes, setNotes] = useState("");
-  const [optionsOffset, setOptionsOffset] = useState(0);
-  const [sheetReady, setSheetReady] = useState(false);
-  const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(true);
-  const transitionProgress = useSharedValue(0);
-
   useEffect(() => {
     setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
     setQuantity(1);
     setNotes("");
-  }, [item]);
-
-  useEffect(() => {
-    setSheetReady(false);
-    setLoadingOverlayVisible(true);
-    transitionProgress.value = 0;
   }, [item]);
 
   const mergedCustomization = useMemo(
@@ -304,40 +240,6 @@ export default function MenuCustomizeModalScreen() {
   const metaLine = customizationPreview
     ? `${customizationPreview} • ${formatUsd(selectedUnitPriceCents)}`
     : formatUsd(selectedUnitPriceCents);
-
-  const handleHeroReady = useMemo(
-    () => () => {
-      requestAnimationFrame(() => {
-        setSheetReady(true);
-      });
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (!sheetReady) {
-      return;
-    }
-
-    transitionProgress.value = withTiming(
-      1,
-      { duration: 240, easing: Easing.out(Easing.cubic) },
-      (finished) => {
-        if (finished) {
-          runOnJS(setLoadingOverlayVisible)(false);
-        }
-      }
-    );
-  }, [sheetReady, transitionProgress]);
-
-  const contentRevealStyle = useAnimatedStyle(() => ({
-    opacity: transitionProgress.value,
-    transform: [{ translateY: interpolate(transitionProgress.value, [0, 1], [10, 0]) }]
-  }));
-
-  const overlayFadeStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(transitionProgress.value, [0, 1], [1, 0])
-  }));
 
   function closeModal() {
     if (router.canGoBack()) {
@@ -361,29 +263,18 @@ export default function MenuCustomizeModalScreen() {
     closeModal();
   }
 
-  function scrollToOptions() {
-    scrollRef.current?.scrollTo({ y: Math.max(optionsOffset - 24, 0), animated: true });
+  if (menuQuery.isLoading && !menuQuery.data) {
+    return <SimpleModalState title="Loading item..." body="Preparing the customize sheet." />;
   }
 
-  if (FORCE_LOADING_PREVIEW || (menuQuery.isLoading && !menuQuery.data)) {
-    return <LoadingSheet />;
-  }
-
-  if (!menuQuery.isLoading && !item) {
+  if (!item) {
     return (
-      <View style={styles.backdrop}>
-        <View style={[styles.sheet, styles.centerState]}>
-          <View style={styles.handleWrap}>
-            <View style={styles.handle} />
-          </View>
-          <View pointerEvents="none" style={styles.topBand} />
-          <Text style={styles.centerTitle}>This item is unavailable.</Text>
-          <Text style={styles.centerText}>Return to the menu and choose another drink.</Text>
-          <Pressable onPress={closeModal} style={styles.inlinePrimary}>
-            <Text style={styles.inlinePrimaryText}>Back to Menu</Text>
-          </Pressable>
-        </View>
-      </View>
+      <SimpleModalState
+        title="This item is unavailable."
+        body="Return to the menu and choose another drink."
+        actionLabel="Back to Menu"
+        onAction={closeModal}
+      />
     );
   }
 
@@ -393,113 +284,104 @@ export default function MenuCustomizeModalScreen() {
         <View style={styles.handleWrap}>
           <View style={styles.handle} />
         </View>
-        <View pointerEvents="none" style={styles.topBand} />
 
-        <Animated.View style={contentRevealStyle}>
-          <ScrollView
-            ref={scrollRef}
-            bounces
-            showsVerticalScrollIndicator={false}
-            contentInsetAdjustmentBehavior="never"
-            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 120 }}
-          >
-            <View style={styles.heroWrap}>
-              <ProductImage imageUrl={item?.imageUrl} onReady={handleHeroReady} />
-            </View>
+        <ScrollView
+          bounces
+          showsVerticalScrollIndicator={false}
+          contentInsetAdjustmentBehavior="never"
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
+        >
+          <View style={styles.heroWrap}>
+            <ProductImage imageUrl={item.imageUrl} />
+          </View>
 
-            {item ? (
-              <View style={styles.content}>
-                <Text style={styles.title}>{item.name}</Text>
-                <Text style={styles.meta}>{metaLine}</Text>
-                <Text style={styles.description}>{item.description}</Text>
+          <View style={styles.content}>
+            <Text style={styles.title}>{item.name}</Text>
+            <Text style={styles.meta}>{metaLine}</Text>
+            <Text style={styles.description}>{item.description}</Text>
 
-                <View onLayout={(event) => setOptionsOffset(event.nativeEvent.layout.y)}>
-                  {item.customizationGroups.map((group) => (
-                    <View key={group.id} style={styles.section}>
-                      <Text style={styles.sectionTitle}>{group.label}</Text>
-                      {group.description ? <Text style={styles.sectionBody}>{group.description}</Text> : null}
-                      <View style={styles.optionRow}>
-                        {group.options.map((option) => (
-                          <OptionChip
-                            key={option.id}
-                            label={option.label}
-                            active={isCustomizationOptionSelected(customization, group.id, option.id)}
-                            priceDeltaCents={option.priceDeltaCents}
-                            onPress={() =>
-                              setCustomization((prev) => updateCustomizationOption(prev, group, option))
-                            }
-                          />
-                        ))}
-                      </View>
-                    </View>
-                  ))}
-
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Notes</Text>
-                    <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
-                    <TextInput
-                      value={notes}
-                      onChangeText={setNotes}
-                      placeholder="No foam, easy ice, half sweet…"
-                      placeholderTextColor={uiPalette.textMuted}
-                      style={styles.noteInput}
-                      multiline
-                    />
-                  </View>
-
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Quantity</Text>
-                    <Text style={styles.sectionBody}>Adjust the number before adding the item to your bag.</Text>
-                    <View style={styles.quantityRow}>
-                      <Pressable
-                        style={[styles.stepperButton, quantity <= 1 ? styles.stepperButtonDisabled : null]}
-                        onPress={() => setQuantity((prev) => Math.max(prev - 1, 1))}
-                        disabled={quantity <= 1}
-                      >
-                        <Ionicons name="remove" size={18} color={quantity <= 1 ? uiPalette.textMuted : uiPalette.text} />
-                      </Pressable>
-                      <Text style={styles.quantityValue}>{quantity}</Text>
-                      <Pressable
-                        style={[styles.stepperButton, quantity >= MAX_QUANTITY ? styles.stepperButtonDisabled : null]}
-                        onPress={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
-                        disabled={quantity >= MAX_QUANTITY}
-                      >
-                        <Ionicons name="add" size={18} color={quantity >= MAX_QUANTITY ? uiPalette.textMuted : uiPalette.text} />
-                      </Pressable>
-                    </View>
+            <View>
+              {item.customizationGroups.map((group) => (
+                <View key={group.id} style={styles.section}>
+                  <Text style={styles.sectionTitle}>{group.label}</Text>
+                  {group.description ? <Text style={styles.sectionBody}>{group.description}</Text> : null}
+                  <View style={styles.optionRow}>
+                    {group.options.map((option) => (
+                      <OptionChip
+                        key={option.id}
+                        label={option.label}
+                        active={isCustomizationOptionSelected(customization, group.id, option.id)}
+                        priceDeltaCents={option.priceDeltaCents}
+                        onPress={() => setCustomization((prev) => updateCustomizationOption(prev, group, option))}
+                      />
+                    ))}
                   </View>
                 </View>
+              ))}
 
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Customization</Text>
-                  <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
-                </View>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Total</Text>
-                  <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Notes</Text>
+                <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
+                <TextInput
+                  value={notes}
+                  onChangeText={setNotes}
+                  placeholder="No foam, easy ice, half sweet..."
+                  placeholderTextColor={uiPalette.textMuted}
+                  style={styles.noteInput}
+                  multiline
+                />
+              </View>
+
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Quantity</Text>
+                <Text style={styles.sectionBody}>Adjust the number before adding the item to your bag.</Text>
+                <View style={styles.quantityRow}>
+                  <Pressable
+                    style={[styles.stepperButton, quantity <= 1 ? styles.stepperButtonDisabled : null]}
+                    onPress={() => setQuantity((prev) => Math.max(prev - 1, 1))}
+                    disabled={quantity <= 1}
+                  >
+                    <Ionicons name="remove" size={18} color={quantity <= 1 ? uiPalette.textMuted : uiPalette.text} />
+                  </Pressable>
+                  <Text style={styles.quantityValue}>{quantity}</Text>
+                  <Pressable
+                    style={[styles.stepperButton, quantity >= MAX_QUANTITY ? styles.stepperButtonDisabled : null]}
+                    onPress={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
+                    disabled={quantity >= MAX_QUANTITY}
+                  >
+                    <Ionicons name="add" size={18} color={quantity >= MAX_QUANTITY ? uiPalette.textMuted : uiPalette.text} />
+                  </Pressable>
                 </View>
               </View>
-            ) : null}
-          </ScrollView>
-        </Animated.View>
+            </View>
 
-        <Animated.View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }, contentRevealStyle]}>
-          <Pressable onPress={addSelectedItem} style={styles.addButton}>
-            <Text style={styles.addButtonText}>{`Add ${formatUsd(totalCents)}`}</Text>
-          </Pressable>
-          <Pressable onPress={() => router.push("/cart")} style={styles.footerDarkButton}>
-            <Text style={styles.footerDarkButtonText}>{itemCount > 0 ? `Bag ${itemCount}` : "Bag"}</Text>
-          </Pressable>
-          <Pressable onPress={scrollToOptions} style={styles.footerDarkButton}>
-            <Text style={styles.footerDarkButtonText}>{String(quantity)}</Text>
-          </Pressable>
-        </Animated.View>
+            <View style={styles.summarySection}>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Customization</Text>
+                <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Total</Text>
+                <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
 
-        {loadingOverlayVisible ? (
-          <Animated.View pointerEvents="auto" style={[styles.loadingOverlay, overlayFadeStyle]}>
-            <LoadingSheetBody showHandle={false} />
-          </Animated.View>
-        ) : null}
+        <View pointerEvents="box-none" style={[styles.footerRow, { bottom: footerBottom }]}>
+          <FooterPill style={styles.footerPrimaryPill}>
+            <Pressable onPress={addSelectedItem} style={[styles.footerButton, styles.footerPrimaryButton]}>
+              <Text style={styles.footerPrimaryText}>Add to Cart</Text>
+            </Pressable>
+          </FooterPill>
+          <FooterPill style={styles.footerCompactPill}>
+            <Pressable onPress={() => router.push("/cart")} style={[styles.footerButton, styles.footerCompactButton]}>
+              <View style={styles.footerQuantityIconWrap}>
+                <Ionicons name="cart-outline" size={28} color={uiPalette.text} />
+              </View>
+            </Pressable>
+          </FooterPill>
+        </View>
       </View>
     </View>
   );
@@ -518,6 +400,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: uiPalette.border,
     overflow: "hidden"
+  },
+  scrollContent: {
+    paddingBottom: 0
+  },
+  handleWrap: {
+    position: "absolute",
+    top: 16,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 10
+  },
+  handle: {
+    width: 38,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "rgba(151, 160, 154, 0.52)"
   },
   centerState: {
     justifyContent: "center",
@@ -554,83 +453,7 @@ const styles = StyleSheet.create({
   },
   heroWrap: {
     paddingHorizontal: 20,
-    paddingTop: 18
-  },
-  handleWrap: {
-    position: "absolute",
-    top: 16,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    zIndex: 10
-  },
-  topBand: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 36,
-    backgroundColor: "rgba(246, 247, 244, 0.98)",
-    zIndex: 5
-  },
-  loadingBlock: {
-    backgroundColor: "rgba(219, 216, 207, 0.9)"
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(246, 247, 244, 0.98)",
-    zIndex: 8
-  },
-  loadingHero: {
-    height: 420,
-    backgroundColor: "#F6D6C8",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden"
-  },
-  loadingCupGlow: {
-    position: "absolute",
-    width: 280,
-    height: 280,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.28)"
-  },
-  loadingCup: {
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: "rgba(255,255,255,0.75)"
-  },
-  loadingTopSpacer: {
-    height: 438
-  },
-  loadingMetaBlock: {
-    marginTop: 12
-  },
-  loadingButtonBlock: {
-    marginTop: 18,
-    borderWidth: 1,
-    borderColor: uiPalette.borderStrong,
-    backgroundColor: "rgba(255,255,255,0.72)"
-  },
-  loadingDescriptionGroup: {
-    marginTop: 28,
-    gap: 10
-  },
-  loadingSectionBody: {
-    marginTop: 10
-  },
-  loadingChipRow: {
-    marginTop: 18,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10
-  },
-  handle: {
-    width: 38,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: "rgba(151, 160, 154, 0.52)"
+    paddingTop: 36
   },
   heroImage: {
     height: 420,
@@ -742,6 +565,9 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     fontWeight: "600"
   },
+  summarySection: {
+    marginBottom: 24
+  },
   summaryRow: {
     paddingVertical: 16,
     borderTopWidth: 1,
@@ -767,62 +593,81 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     fontWeight: "700"
   },
-  footer: {
+  footerRow: {
     position: "absolute",
-    left: 20,
-    right: 20,
-    bottom: 0,
-    paddingTop: 12,
+    left: 18,
+    right: 18,
     flexDirection: "row",
-    gap: 10,
-    backgroundColor: uiPalette.background
+    gap: 8
   },
-  loadingFooter: {
-    zIndex: 3
-  },
-  loadingFooterPrimary: {
-    flex: 1,
+  footerPillShell: {
+    borderRadius: 999,
+    overflow: "visible",
     minHeight: 56,
-    borderWidth: 1,
-    borderColor: uiPalette.borderStrong,
-    backgroundColor: "rgba(255,255,255,0.72)"
+    shadowColor: "#000000",
+    shadowOpacity: 0.09,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6
   },
-  loadingFooterSecondary: {
-    width: 72,
+  footerPillFrame: {
     minHeight: 56,
-    backgroundColor: "rgba(29, 26, 23, 0.9)"
+    borderRadius: 999,
+    overflow: "hidden"
   },
-  loadingFooterTertiary: {
-    width: 72,
+  footerPillInner: {
     minHeight: 56,
-    backgroundColor: "rgba(29, 26, 23, 0.9)"
-  },
-  addButton: {
-    flex: 1,
-    minHeight: 56,
-    borderWidth: 1,
-    borderColor: uiPalette.borderStrong,
-    backgroundColor: uiPalette.surfaceStrong,
-    alignItems: "center",
+    borderRadius: 999,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
     justifyContent: "center"
   },
-  addButtonText: {
+  footerPillInnerGlass: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.3)"
+  },
+  footerPillInnerFallback: {
+    backgroundColor: "rgba(248, 244, 236, 0.98)",
+    borderWidth: 1,
+    borderColor: "rgba(230, 221, 208, 0.94)"
+  },
+  footerPrimaryPill: {
+    flex: 1
+  },
+  footerCompactPill: {
+    width: 84
+  },
+  footerButton: {
+    minHeight: 52,
+    width: "100%",
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14
+  },
+  footerPrimaryButton: {
+    flex: 1
+  },
+  footerCompactButton: {
+    width: "100%"
+  },
+  footerPrimaryText: {
     fontSize: 17,
     lineHeight: 22,
     color: uiPalette.text,
     fontWeight: "600"
   },
-  footerDarkButton: {
-    minWidth: 72,
-    minHeight: 56,
-    backgroundColor: uiPalette.primary,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  footerDarkButtonText: {
+  footerCompactText: {
     fontSize: 17,
     lineHeight: 22,
-    color: uiPalette.primaryText,
+    color: uiPalette.text,
     fontWeight: "600"
+  },
+  footerQuantityIconWrap: {
+    width: 34,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center"
   }
 });
