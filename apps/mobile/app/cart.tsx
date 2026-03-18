@@ -265,14 +265,14 @@ export default function CartModalScreen() {
                     <View key={item.lineId}>
                       <View style={styles.itemRow}>
                         <View style={styles.itemIcon}>
-                          <Ionicons name={resolveItemIcon(item.name)} size={18} color={uiPalette.accent} />
+                          <Ionicons name={resolveItemIcon(item.itemName)} size={18} color={uiPalette.accent} />
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.itemTitle}>{item.name}</Text>
-                          <Text style={styles.itemBody}>{describeCustomization(item.customization)}</Text>
+                          <Text style={styles.itemTitle}>{item.itemName}</Text>
+                          <Text style={styles.itemBody}>{describeCustomization(item)}</Text>
                           <Text style={styles.itemMeta}>{formatUsd(item.unitPriceCents)} each</Text>
                         </View>
-                        <Text style={styles.itemPrice}>{formatUsd(item.unitPriceCents * item.quantity)}</Text>
+                        <Text style={styles.itemPrice}>{formatUsd(item.lineTotalCents)}</Text>
                       </View>
 
                       <View style={styles.itemActions}>

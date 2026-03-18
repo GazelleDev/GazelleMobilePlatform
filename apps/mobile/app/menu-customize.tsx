@@ -4,6 +4,11 @@ import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  describeCustomizationSelection,
+  priceMenuItemCustomization,
+  type CustomizationValidationIssue
+} from "@gazelle/contracts-catalog";
+import {
   Image,
   Platform,
   Pressable,
@@ -19,13 +24,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../src/cart/store";
 import {
   buildDefaultCustomization,
-  describeCustomization,
   DEFAULT_CUSTOMIZATION,
-  getCustomizationDeltaCents,
-  getUnitPriceCents,
   isCustomizationOptionSelected,
   normalizeCustomization,
-  toCustomizationSelection,
+  resolveCartCustomization,
   type CartCustomization
 } from "../src/cart/model";
 import {
@@ -89,31 +91,44 @@ function updateCustomizationOption(
   option: MenuItemCustomizationOption
 ): CartCustomization {
   const active = isCustomizationOptionSelected(customization, group.id, option.id);
-  const withoutGroup = customization.selectedOptions.filter((selection) => selection.groupId !== group.id);
-  const withoutOption = customization.selectedOptions.filter(
-    (selection) => !(selection.groupId === group.id && selection.optionId === option.id)
-  );
+  const otherSelections = customization.selectedOptions.filter((selection) => selection.groupId !== group.id);
+  const groupSelections = customization.selectedOptions.filter((selection) => selection.groupId === group.id);
 
   if (group.selectionType === "single") {
     return normalizeCustomization({
       ...customization,
-      selectedOptions: [...withoutGroup, toCustomizationSelection(group, option)]
+      selectedOptions: [...otherSelections, { groupId: group.id, optionId: option.id }]
     });
   }
 
-  if (group.selectionType === "boolean") {
+  if (active) {
     return normalizeCustomization({
       ...customization,
-      selectedOptions: active ? withoutGroup : [...withoutGroup, toCustomizationSelection(group, option)]
+      selectedOptions: customization.selectedOptions.filter(
+        (selection) => !(selection.groupId === group.id && selection.optionId === option.id)
+      )
     });
+  }
+
+  if (groupSelections.length >= group.maxSelections) {
+    if (group.maxSelections === 1) {
+      return normalizeCustomization({
+        ...customization,
+        selectedOptions: [...otherSelections, { groupId: group.id, optionId: option.id }]
+      });
+    }
+
+    return customization;
   }
 
   return normalizeCustomization({
     ...customization,
-    selectedOptions: active
-      ? withoutOption
-      : [...customization.selectedOptions, toCustomizationSelection(group, option)]
+    selectedOptions: [...customization.selectedOptions, { groupId: group.id, optionId: option.id }]
   });
+}
+
+function findGroupIssue(issues: CustomizationValidationIssue[], groupId: string) {
+  return issues.find((issue) => issue.groupId === groupId);
 }
 
 function FooterPill({
@@ -304,12 +319,12 @@ export default function MenuCustomizeModalScreen() {
 
   const [customization, setCustomization] = useState<CartCustomization>(DEFAULT_CUSTOMIZATION);
   const [quantity, setQuantity] = useState(1);
-  const [notes, setNotes] = useState("");
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [heroReady, setHeroReady] = useState(true);
   useEffect(() => {
     setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
     setQuantity(1);
-    setNotes("");
+    setShowValidationErrors(false);
   }, [item]);
 
   useEffect(() => {
@@ -321,20 +336,34 @@ export default function MenuCustomizeModalScreen() {
     setHeroReady(!item.imageUrl);
   }, [item]);
 
-  const mergedCustomization = useMemo(
-    () => ({
-      ...customization,
-      notes
-    }),
-    [customization, notes]
+  const resolvedCustomization = useMemo(
+    () => (item ? resolveCartCustomization(item.customizationGroups, customization) : resolveCartCustomization([], customization)),
+    [customization, item]
   );
-
-  const customizationDeltaCents = useMemo(() => getCustomizationDeltaCents(mergedCustomization), [mergedCustomization]);
-  const selectedUnitPriceCents = item ? getUnitPriceCents(item.priceCents, mergedCustomization) : 0;
-  const totalCents = selectedUnitPriceCents * quantity;
+  const pricedCustomization = useMemo(
+    () =>
+      item
+        ? priceMenuItemCustomization({
+            basePriceCents: item.priceCents,
+            quantity,
+            groups: item.customizationGroups,
+            selection: customization
+          })
+        : undefined,
+    [customization, item, quantity]
+  );
+  const customizationDeltaCents = pricedCustomization?.customizationDeltaCents ?? 0;
+  const selectedUnitPriceCents = pricedCustomization?.unitPriceCents ?? 0;
+  const totalCents = pricedCustomization?.lineTotalCents ?? 0;
   const customizationPreview = useMemo(
-    () => describeCustomization(mergedCustomization, { includeNotes: false, fallback: "" }),
-    [mergedCustomization]
+    () =>
+      describeCustomizationSelection({
+        selection: customization,
+        groupSelections: resolvedCustomization.groupSelections,
+        includeNotes: false,
+        fallback: ""
+      }),
+    [customization, resolvedCustomization.groupSelections]
   );
   const priceLine = formatUsd(selectedUnitPriceCents);
   const metaLine = customizationPreview;
@@ -359,12 +388,17 @@ export default function MenuCustomizeModalScreen() {
 
   function addSelectedItem() {
     if (!item) return;
+    if (!pricedCustomization?.valid) {
+      setShowValidationErrors(true);
+      return;
+    }
 
     addItem({
       menuItemId: item.id,
-      name: item.name,
+      itemName: item.name,
       basePriceCents: item.priceCents,
-      customization: mergedCustomization,
+      customizationGroups: item.customizationGroups,
+      customization,
       quantity
     });
 
@@ -414,10 +448,15 @@ export default function MenuCustomizeModalScreen() {
             <View>
               {item.customizationGroups.map((group) => (
                 <View key={group.id} style={styles.section}>
-                  <Text style={styles.sectionTitle}>{group.label}</Text>
+                  <View style={styles.sectionTitleRow}>
+                    <Text style={styles.sectionTitle}>{group.label}</Text>
+                    {group.required ? <Text style={styles.sectionRequired}>Required</Text> : null}
+                  </View>
                   {group.description ? <Text style={styles.sectionBody}>{group.description}</Text> : null}
                   <View style={styles.optionRow}>
-                    {group.options.map((option) => (
+                    {group.options
+                      .filter((option) => option.available)
+                      .map((option) => (
                       <OptionChip
                         key={option.id}
                         label={option.label}
@@ -425,8 +464,11 @@ export default function MenuCustomizeModalScreen() {
                         priceDeltaCents={option.priceDeltaCents}
                         onPress={() => setCustomization((prev) => updateCustomizationOption(prev, group, option))}
                       />
-                    ))}
+                      ))}
                   </View>
+                  {showValidationErrors && findGroupIssue(resolvedCustomization.issues, group.id) ? (
+                    <Text style={styles.sectionError}>{findGroupIssue(resolvedCustomization.issues, group.id)?.message}</Text>
+                  ) : null}
                 </View>
               ))}
 
@@ -434,8 +476,15 @@ export default function MenuCustomizeModalScreen() {
                 <Text style={styles.sectionTitle}>Notes</Text>
                 <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
                 <TextInput
-                  value={notes}
-                  onChangeText={setNotes}
+                  value={customization.notes}
+                  onChangeText={(value) =>
+                    setCustomization((prev) =>
+                      normalizeCustomization({
+                        ...prev,
+                        notes: value
+                      })
+                    )
+                  }
                   placeholder="No foam, easy ice, half sweet..."
                   placeholderTextColor={uiPalette.textMuted}
                   style={styles.noteInput}
@@ -449,6 +498,9 @@ export default function MenuCustomizeModalScreen() {
                 <Text style={styles.summaryLabel}>Customization</Text>
                 <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
               </View>
+              {showValidationErrors && !resolvedCustomization.valid ? (
+                <Text style={styles.summaryError}>{resolvedCustomization.issues[0]?.message ?? "Please finish the required selections."}</Text>
+              ) : null}
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Total</Text>
                 <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
@@ -619,11 +671,24 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: uiPalette.border
   },
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
   sectionTitle: {
     fontSize: 18,
     lineHeight: 24,
     color: uiPalette.text,
     fontWeight: "600"
+  },
+  sectionRequired: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: uiPalette.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.8
   },
   sectionBody: {
     marginTop: 8,
@@ -649,6 +714,12 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: uiPalette.text,
     textAlignVertical: "top"
+  },
+  sectionError: {
+    marginTop: 12,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#A55B3F"
   },
   stepperButtonDisabled: {
     opacity: 0.55
@@ -684,6 +755,12 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: uiPalette.text,
     fontWeight: "700"
+  },
+  summaryError: {
+    marginTop: 10,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#A55B3F"
   },
   footerRow: {
     position: "absolute",

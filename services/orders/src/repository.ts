@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
+import { normalizeCustomizationGroups, type MenuItemCustomizationGroup } from "@gazelle/contracts-catalog";
 import { orderQuoteSchema, orderSchema } from "@gazelle/contracts-orders";
 import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
 import { z } from "zod";
@@ -31,6 +32,13 @@ type PersistedQuoteRow = {
   quote_json: unknown;
 };
 
+export type QuoteCatalogItem = {
+  itemId: string;
+  itemName: string;
+  basePriceCents: number;
+  customizationGroups: MenuItemCustomizationGroup[];
+};
+
 export type OrdersRepository = {
   backend: "memory" | "postgres";
   saveQuote(quote: OrderQuote): Promise<void>;
@@ -52,6 +60,7 @@ export type OrdersRepository = {
   setSuccessfulRefund(orderId: string, payload: unknown): Promise<void>;
   getSuccessfulRefund(orderId: string): Promise<unknown | undefined>;
   updateOrder(orderId: string, order: Order): Promise<Order>;
+  getCatalogItemsForQuote(locationId: string, itemIds: string[]): Promise<Map<string, QuoteCatalogItem>>;
   close(): Promise<void>;
 };
 
@@ -62,6 +71,119 @@ function sortOrdersDescendingByCreatedAt(orders: Order[]) {
     return rightCreatedAt - leftCreatedAt;
   });
 }
+
+const fallbackCatalogItems = new Map<string, QuoteCatalogItem>([
+  [
+    "latte",
+    {
+      itemId: "latte",
+      itemName: "Honey Oat Latte",
+      basePriceCents: 675,
+      customizationGroups: normalizeCustomizationGroups([
+        {
+          id: "size",
+          sourceGroupId: "core:size",
+          label: "Size",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 0,
+          options: [
+            { id: "regular", label: "Regular", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "large", label: "Large", priceDeltaCents: 100, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "milk",
+          sourceGroupId: "core:milk",
+          label: "Milk",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 1,
+          options: [
+            { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "oat", label: "Oat milk", priceDeltaCents: 75, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "extras",
+          label: "Extras",
+          selectionType: "multiple",
+          required: false,
+          minSelections: 0,
+          maxSelections: 2,
+          sortOrder: 2,
+          options: [{ id: "extra-shot", label: "Extra shot", priceDeltaCents: 125, sortOrder: 0, available: true }]
+        }
+      ])
+    }
+  ],
+  [
+    "matcha",
+    {
+      itemId: "matcha",
+      itemName: "Ceremonial Matcha",
+      basePriceCents: 725,
+      customizationGroups: normalizeCustomizationGroups([
+        {
+          id: "size",
+          sourceGroupId: "core:size",
+          label: "Size",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 0,
+          options: [
+            { id: "regular", label: "Regular", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "large", label: "Large", priceDeltaCents: 100, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "milk",
+          sourceGroupId: "core:milk",
+          label: "Milk",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 1,
+          options: [
+            { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "oat", label: "Oat milk", priceDeltaCents: 75, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "sweetness",
+          sourceGroupId: "core:sweetness",
+          label: "Sweetness",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 2,
+          options: [
+            { id: "full", label: "Full sweet", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "half", label: "Half sweet", priceDeltaCents: 0, sortOrder: 1, available: true },
+            { id: "unsweetened", label: "Unsweetened", priceDeltaCents: 0, sortOrder: 2, available: true }
+          ]
+        }
+      ])
+    }
+  ],
+  [
+    "croissant",
+    {
+      itemId: "croissant",
+      itemName: "Butter Croissant",
+      basePriceCents: 425,
+      customizationGroups: []
+    }
+  ]
+]);
 
 function createInMemoryRepository(): OrdersRepository {
   const quotesById = new Map<string, OrderQuote>();
@@ -181,6 +303,16 @@ function createInMemoryRepository(): OrdersRepository {
       });
       return order;
     },
+    async getCatalogItemsForQuote(_locationId, itemIds) {
+      const items = new Map<string, QuoteCatalogItem>();
+      for (const itemId of itemIds) {
+        const item = fallbackCatalogItems.get(itemId);
+        if (item) {
+          items.set(itemId, item);
+        }
+      }
+      return items;
+    },
     async close() {
       // no-op
     }
@@ -202,6 +334,10 @@ async function createPostgresRepository(connectionString: string): Promise<Order
 
   function parseQuote(payload: unknown): OrderQuote {
     return orderQuoteSchema.parse(payload);
+  }
+
+  function parseCustomizationGroups(payload: unknown) {
+    return normalizeCustomizationGroups(typeof payload === "string" ? JSON.parse(payload) : payload);
   }
 
   async function getQuoteById(quoteId: string): Promise<OrderQuote | undefined> {
@@ -398,6 +534,31 @@ async function createPostgresRepository(connectionString: string): Promise<Order
       }
 
       return order;
+    },
+    async getCatalogItemsForQuote(locationId, itemIds) {
+      if (itemIds.length === 0) {
+        return new Map<string, QuoteCatalogItem>();
+      }
+
+      const rows = await db
+        .selectFrom("catalog_menu_items")
+        .select(["item_id", "name", "price_cents", "customization_groups_json", "visible"])
+        .where("location_id", "=", locationId)
+        .where("item_id", "in", itemIds)
+        .where("visible", "=", true)
+        .execute();
+
+      const items = new Map<string, QuoteCatalogItem>();
+      for (const row of rows) {
+        items.set(row.item_id, {
+          itemId: row.item_id,
+          itemName: row.name,
+          basePriceCents: row.price_cents,
+          customizationGroups: parseCustomizationGroups(row.customization_groups_json)
+        });
+      }
+
+      return items;
     },
     async close() {
       await db.destroy();

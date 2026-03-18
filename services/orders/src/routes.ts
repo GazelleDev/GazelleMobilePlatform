@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
+  priceMenuItemCustomization,
+  type CustomizationGroupSelectionSnapshot
+} from "@gazelle/contracts-catalog";
+import {
   applePayWalletSchema,
   createOrderRequestSchema,
   ordersPaymentReconciliationResultSchema,
@@ -11,7 +15,7 @@ import {
   quoteRequestSchema
 } from "@gazelle/contracts-orders";
 import { z } from "zod";
-import { createOrdersRepository, type OrdersRepository } from "./repository.js";
+import { createOrdersRepository, type OrdersRepository, type QuoteCatalogItem } from "./repository.js";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
@@ -180,14 +184,6 @@ const loyaltyMutationResponseSchema = z.object({
   balance: loyaltyBalanceSchema
 });
 
-const unitPriceByItemId: Record<string, number> = {
-  latte: 675,
-  "cold-brew": 550,
-  croissant: 425,
-  matcha: 725
-};
-
-const fallbackUnitPriceCents = 500;
 const taxRateBasisPoints = 600;
 const defaultRateLimitWindowMs = 60_000;
 const defaultOrdersWriteRateLimitMax = 120;
@@ -195,6 +191,7 @@ const defaultOrdersInternalReconcileRateLimitMax = 180;
 
 type OrderQuote = z.output<typeof orderQuoteSchema>;
 type Order = z.output<typeof orderSchema>;
+type QuoteRequest = z.output<typeof quoteRequestSchema>;
 
 const defaultLoyaltyUserId = "123e4567-e89b-12d3-a456-426614174000";
 
@@ -468,14 +465,30 @@ async function resolveStoredOrderUserId(params: {
 
 function buildQuoteHash(input: {
   locationId: string;
-  items: Array<{ itemId: string; quantity: number; unitPriceCents: number }>;
+  items: Array<{
+    itemId: string;
+    quantity: number;
+    unitPriceCents: number;
+    lineTotalCents?: number;
+    customization?: {
+      notes: string;
+      selectedOptions: Array<{
+        groupId: string;
+        optionId: string;
+      }>;
+    };
+  }>;
   pointsToRedeem: number;
   subtotalCents: number;
   discountCents: number;
   taxCents: number;
   totalCents: number;
 }) {
-  const sortedItems = [...input.items].sort((left, right) => left.itemId.localeCompare(right.itemId));
+  const sortedItems = [...input.items].sort((left, right) => {
+    const leftKey = `${left.itemId}:${left.quantity}:${left.unitPriceCents}:${JSON.stringify(left.customization ?? {})}`;
+    const rightKey = `${right.itemId}:${right.quantity}:${right.unitPriceCents}:${JSON.stringify(right.customization ?? {})}`;
+    return leftKey.localeCompare(rightKey);
+  });
   const hashPayload = JSON.stringify({
     locationId: input.locationId,
     pointsToRedeem: input.pointsToRedeem,
@@ -489,16 +502,90 @@ function buildQuoteHash(input: {
   return createHash("sha256").update(hashPayload).digest("hex");
 }
 
-function getItemUnitPriceCents(itemId: string) {
-  return unitPriceByItemId[itemId] ?? fallbackUnitPriceCents;
+class QuotePreparationError extends Error {
+  readonly statusCode: number;
+  readonly code: string;
+  readonly details?: Record<string, unknown>;
+
+  constructor(input: {
+    statusCode: number;
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  }) {
+    super(input.message);
+    this.name = "QuotePreparationError";
+    this.statusCode = input.statusCode;
+    this.code = input.code;
+    this.details = input.details;
+  }
 }
 
-function createQuote(input: z.output<typeof quoteRequestSchema>): OrderQuote {
-  const quotedItems = input.items.map((item) => ({
-    itemId: item.itemId,
+function flattenCustomizationSnapshots(groupSelections: CustomizationGroupSelectionSnapshot[]) {
+  return groupSelections.flatMap((group) =>
+    group.selectedOptions.map((option) => ({
+      groupId: group.groupId,
+      groupLabel: group.groupLabel,
+      optionId: option.optionId,
+      optionLabel: option.optionLabel,
+      priceDeltaCents: option.priceDeltaCents
+    }))
+  );
+}
+
+function buildQuotedItem(item: QuoteRequest["items"][number], catalogItem: QuoteCatalogItem) {
+  const priced = priceMenuItemCustomization({
+    basePriceCents: catalogItem.basePriceCents,
     quantity: item.quantity,
-    unitPriceCents: getItemUnitPriceCents(item.itemId)
-  }));
+    groups: catalogItem.customizationGroups,
+    selection: item.customization
+  });
+
+  if (!priced.valid) {
+    throw new QuotePreparationError({
+      statusCode: 400,
+      code: "INVALID_CUSTOMIZATION",
+      message: `Customization for "${catalogItem.itemName}" is invalid.`,
+      details: {
+        itemId: item.itemId,
+        issues: priced.issues
+      }
+    });
+  }
+
+  return {
+    itemId: item.itemId,
+    itemName: catalogItem.itemName,
+    quantity: item.quantity,
+    unitPriceCents: priced.unitPriceCents,
+    lineTotalCents: priced.lineTotalCents,
+    customization: {
+      notes: priced.input.notes,
+      selectedOptions: flattenCustomizationSnapshots(priced.groupSelections)
+    }
+  };
+}
+
+async function createQuote(input: QuoteRequest, repository: OrdersRepository): Promise<OrderQuote> {
+  const uniqueItemIds = [...new Set(input.items.map((item) => item.itemId))];
+  const catalogItems = await repository.getCatalogItemsForQuote(input.locationId, uniqueItemIds);
+  const quotedItems = input.items.map((item) => {
+    const catalogItem = catalogItems.get(item.itemId);
+    if (!catalogItem) {
+      throw new QuotePreparationError({
+        statusCode: 404,
+        code: "MENU_ITEM_NOT_FOUND",
+        message: `Menu item "${item.itemId}" is unavailable for quoting.`,
+        details: {
+          itemId: item.itemId,
+          locationId: input.locationId
+        }
+      });
+    }
+
+    return buildQuotedItem(item, catalogItem);
+  });
+
   const subtotalCents = quotedItems.reduce((sum, item) => sum + item.unitPriceCents * item.quantity, 0);
   const appliedPoints = Math.min(input.pointsToRedeem, subtotalCents);
   const taxBaseCents = subtotalCents - appliedPoints;
@@ -850,7 +937,21 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       const input = quoteRequestSchema.parse(request.body);
-      const quote = createQuote(input);
+      let quote: OrderQuote;
+      try {
+        quote = await createQuote(input, repository);
+      } catch (error) {
+        if (error instanceof QuotePreparationError) {
+          return sendError(reply, {
+            statusCode: error.statusCode,
+            code: error.code,
+            message: error.message,
+            requestId: request.id,
+            details: error.details
+          });
+        }
+        throw error;
+      }
 
       await repository.saveQuote(quote);
       return quote;

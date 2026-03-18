@@ -9,7 +9,17 @@ import { buildApp as buildPaymentsApp } from "../../payments/src/app.js";
 const sampleQuotePayload = {
   locationId: "flagship-01",
   items: [
-    { itemId: "latte", quantity: 1 },
+    {
+      itemId: "latte",
+      quantity: 1,
+      customization: {
+        selectedOptions: [
+          { groupId: "size", optionId: "regular" },
+          { groupId: "milk", optionId: "whole" }
+        ],
+        notes: ""
+      }
+    },
     { itemId: "croissant", quantity: 1 }
   ],
   pointsToRedeem: 0

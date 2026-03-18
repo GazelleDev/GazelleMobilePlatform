@@ -6,7 +6,17 @@ import { buildApp } from "../src/app.js";
 const sampleQuotePayload = {
   locationId: "flagship-01",
   items: [
-    { itemId: "latte", quantity: 2 },
+    {
+      itemId: "latte",
+      quantity: 2,
+      customization: {
+        selectedOptions: [
+          { groupId: "size", optionId: "regular" },
+          { groupId: "milk", optionId: "whole" }
+        ],
+        notes: ""
+      }
+    },
     { itemId: "croissant", quantity: 1 }
   ],
   pointsToRedeem: 125
@@ -253,6 +263,16 @@ describe("orders service", () => {
     expect(quoteResponse.statusCode).toBe(200);
     const quote = orderQuoteSchema.parse(quoteResponse.json());
     expect(quote.total.amountCents).toBeGreaterThan(0);
+    expect(quote.items[0]).toMatchObject({
+      itemId: "latte",
+      itemName: "Honey Oat Latte",
+      customization: {
+        selectedOptions: expect.arrayContaining([
+          expect.objectContaining({ groupId: "size", optionId: "regular" }),
+          expect.objectContaining({ groupId: "milk", optionId: "whole" })
+        ])
+      }
+    });
 
     const createResponse = await app.inject({
       method: "POST",
@@ -281,6 +301,36 @@ describe("orders service", () => {
     expect(listResponse.statusCode).toBe(200);
     const listed = listResponse.json() as Array<{ id: string }>;
     expect(listed.some((entry) => entry.id === order.id)).toBe(true);
+
+    await app.close();
+  });
+
+  it("rejects quote requests with missing required customization groups", async () => {
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: {
+        locationId: "flagship-01",
+        items: [
+          {
+            itemId: "latte",
+            quantity: 1,
+            customization: {
+              selectedOptions: [{ groupId: "size", optionId: "regular" }],
+              notes: ""
+            }
+          }
+        ],
+        pointsToRedeem: 0
+      }
+    });
+
+    expect(quoteResponse.statusCode).toBe(400);
+    expect(quoteResponse.json()).toMatchObject({
+      code: "INVALID_CUSTOMIZATION"
+    });
 
     await app.close();
   });

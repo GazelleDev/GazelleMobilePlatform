@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "../api/client";
 import type { CartItem } from "../cart/model";
+import { quoteRequestItemSchema } from "@gazelle/contracts-orders";
 import { z } from "zod";
 
 type PayOrderInput = Parameters<(typeof apiClient)["payOrder"]>[1];
@@ -16,7 +17,7 @@ const checkoutOrderSchema = z.object({
   })
 });
 
-export type QuoteItem = { itemId: string; quantity: number };
+export type QuoteItem = z.input<typeof quoteRequestItemSchema>;
 export type CheckoutOrderSnapshot = z.output<typeof checkoutOrderSchema> & {
   quoteItems: QuoteItem[];
 };
@@ -46,14 +47,11 @@ export class CheckoutSubmissionError extends Error {
 }
 
 export function toQuoteItems(items: CartItem[]): QuoteItem[] {
-  const quantityByItemId = new Map<string, number>();
-
-  for (const item of items) {
-    const currentQuantity = quantityByItemId.get(item.menuItemId) ?? 0;
-    quantityByItemId.set(item.menuItemId, currentQuantity + item.quantity);
-  }
-
-  return [...quantityByItemId.entries()].map(([itemId, quantity]) => ({ itemId, quantity }));
+  return items.map((item) => ({
+    itemId: item.menuItemId,
+    quantity: item.quantity,
+    customization: item.customization
+  }));
 }
 
 export function createCheckoutIdempotencyKey() {
@@ -69,7 +67,19 @@ export function quoteItemsEqual(left: QuoteItem[], right: QuoteItem[]) {
     return false;
   }
 
-  return left.every((item, index) => item.itemId === right[index]?.itemId && item.quantity === right[index]?.quantity);
+  return left.every((item, index) => {
+    const other = right[index];
+    if (!other) {
+      return false;
+    }
+
+    return (
+      item.itemId === other.itemId &&
+      item.quantity === other.quantity &&
+      JSON.stringify(item.customization ?? { selectedOptions: [], notes: "" }) ===
+        JSON.stringify(other.customization ?? { selectedOptions: [], notes: "" })
+    );
+  });
 }
 
 export function useApplePayCheckoutMutation() {

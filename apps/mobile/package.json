@@ -16,6 +16,8 @@
     "@callstack/liquid-glass": "^0.7.0",
     "@expo/metro-runtime": "~6.1.2",
     "@expo/vector-icons": "^15.1.1",
+    "@gazelle/contracts-catalog": "workspace:*",
+    "@gazelle/contracts-orders": "workspace:*",
     "@gazelle/design-tokens": "workspace:*",
     "@gazelle/sdk-mobile": "workspace:*",
     "@tanstack/react-query": "^5.66.11",

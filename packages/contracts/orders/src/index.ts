@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { moneySchema } from "@gazelle/contracts-core";
+import { menuItemCustomizationInputSchema } from "@gazelle/contracts-catalog";
 
 export const orderStatusSchema = z.enum([
   "PENDING_PAYMENT",
@@ -10,10 +11,26 @@ export const orderStatusSchema = z.enum([
   "CANCELED"
 ]);
 
+export const orderItemCustomizationSelectionSnapshotSchema = z.object({
+  groupId: z.string(),
+  groupLabel: z.string(),
+  optionId: z.string(),
+  optionLabel: z.string(),
+  priceDeltaCents: z.number().int()
+});
+
+export const orderItemCustomizationSnapshotSchema = z.object({
+  notes: z.string().default(""),
+  selectedOptions: z.array(orderItemCustomizationSelectionSnapshotSchema).default([])
+});
+
 export const orderItemSchema = z.object({
   itemId: z.string(),
+  itemName: z.string().min(1).optional(),
   quantity: z.number().int().positive(),
-  unitPriceCents: z.number().int().nonnegative()
+  unitPriceCents: z.number().int().nonnegative(),
+  lineTotalCents: z.number().int().nonnegative().optional(),
+  customization: orderItemCustomizationSnapshotSchema.optional()
 });
 
 export const orderQuoteSchema = z.object({
@@ -44,9 +61,18 @@ export const orderSchema = z.object({
   timeline: z.array(orderTimelineEntrySchema)
 });
 
+export const quoteRequestItemSchema = z.object({
+  itemId: z.string(),
+  quantity: z.number().int().positive(),
+  customization: menuItemCustomizationInputSchema.default({
+    selectedOptions: [],
+    notes: ""
+  })
+});
+
 export const quoteRequestSchema = z.object({
   locationId: z.string(),
-  items: z.array(z.object({ itemId: z.string(), quantity: z.number().int().positive() })),
+  items: z.array(quoteRequestItemSchema),
   pointsToRedeem: z.number().int().nonnegative().default(0)
 });
 

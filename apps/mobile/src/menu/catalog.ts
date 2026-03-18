@@ -1,107 +1,190 @@
 import { useQuery } from "@tanstack/react-query";
-import { z } from "zod";
+import {
+  menuItemCustomizationGroupSchema,
+  menuResponseSchema,
+  storeConfigResponseSchema,
+  type MenuCategory,
+  type MenuItem,
+  type MenuItemCustomizationGroup,
+  type MenuItemCustomizationInput,
+  type MenuItemCustomizationOption,
+  type MenuResponse,
+  type StoreConfigResponse
+} from "@gazelle/contracts-catalog";
 import { apiClient } from "../api/client";
 
-const menuItemCustomizationOptionSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  priceDeltaCents: z.number().int(),
-  default: z.boolean().optional()
+const sizeGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "size",
+  sourceGroupId: "core:size",
+  label: "Size",
+  description: "Choose the pour size for this drink.",
+  selectionType: "single",
+  required: true,
+  minSelections: 1,
+  maxSelections: 1,
+  sortOrder: 0,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "regular",
+      label: "Regular",
+      priceDeltaCents: 0,
+      default: true,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "large",
+      label: "Large",
+      priceDeltaCents: 100,
+      default: false,
+      sortOrder: 1,
+      available: true
+    }
+  ]
 });
 
-const menuItemCustomizationGroupSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  selectionType: z.enum(["single", "multi", "boolean"]),
-  required: z.boolean().default(false),
-  options: z.array(menuItemCustomizationOptionSchema).min(1)
+const milkGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "milk",
+  sourceGroupId: "core:milk",
+  label: "Milk",
+  description: "Pick the texture and finish you want.",
+  selectionType: "single",
+  required: true,
+  minSelections: 1,
+  maxSelections: 1,
+  sortOrder: 1,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "whole",
+      label: "Whole milk",
+      priceDeltaCents: 0,
+      default: true,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "oat",
+      label: "Oat milk",
+      priceDeltaCents: 75,
+      default: false,
+      sortOrder: 1,
+      available: true
+    },
+    {
+      id: "almond",
+      label: "Almond milk",
+      priceDeltaCents: 75,
+      default: false,
+      sortOrder: 2,
+      available: true
+    }
+  ]
 });
 
-const menuItemSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  imageUrl: z.string().min(1).optional(),
-  priceCents: z.number().int().nonnegative(),
-  badgeCodes: z.array(z.string()),
-  visible: z.boolean(),
-  customizationGroups: z.array(menuItemCustomizationGroupSchema).default([])
+const sweetnessGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "sweetness",
+  sourceGroupId: "core:sweetness",
+  label: "Sweetness",
+  description: "Control how much sweetness is whisked in.",
+  selectionType: "single",
+  required: true,
+  minSelections: 1,
+  maxSelections: 1,
+  sortOrder: 2,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "full",
+      label: "Full sweet",
+      priceDeltaCents: 0,
+      default: true,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "half",
+      label: "Half sweet",
+      priceDeltaCents: 0,
+      default: false,
+      sortOrder: 1,
+      available: true
+    },
+    {
+      id: "unsweetened",
+      label: "Unsweetened",
+      priceDeltaCents: 0,
+      default: false,
+      sortOrder: 2,
+      available: true
+    }
+  ]
 });
 
-const menuCategorySchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  items: z.array(menuItemSchema)
+const espressoExtrasGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "espresso-extras",
+  label: "Extras",
+  description: "Add a little more structure or finish.",
+  selectionType: "multiple",
+  required: false,
+  minSelections: 0,
+  maxSelections: 2,
+  sortOrder: 3,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "extra-shot",
+      label: "Extra shot",
+      priceDeltaCents: 125,
+      default: false,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "vanilla",
+      label: "Vanilla",
+      priceDeltaCents: 75,
+      default: false,
+      sortOrder: 1,
+      available: true
+    }
+  ]
 });
 
-const menuResponseSchema = z.object({
-  locationId: z.string(),
-  currency: z.literal("USD"),
-  categories: z.array(menuCategorySchema)
+const matchaFinishGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "matcha-finish",
+  label: "Finish",
+  description: "Choose the final matcha texture.",
+  selectionType: "multiple",
+  required: false,
+  minSelections: 0,
+  maxSelections: 1,
+  sortOrder: 3,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "strawberry-cold-foam",
+      label: "Strawberry cold foam",
+      priceDeltaCents: 150,
+      default: false,
+      sortOrder: 0,
+      available: true
+    }
+  ]
 });
 
-const storeConfigResponseSchema = z.object({
-  locationId: z.string(),
-  prepEtaMinutes: z.number().int().positive(),
-  taxRateBasisPoints: z.number().int().min(0).max(10000),
-  pickupInstructions: z.string()
-});
+export const reusableCustomizationGroups = {
+  size: sizeGroup,
+  milk: milkGroup,
+  sweetness: sweetnessGroup
+} as const;
 
-export type MenuItem = z.output<typeof menuItemSchema>;
-export type MenuItemCustomizationGroup = z.output<typeof menuItemCustomizationGroupSchema>;
-export type MenuItemCustomizationOption = z.output<typeof menuItemCustomizationOptionSchema>;
-export type MenuCategory = z.output<typeof menuCategorySchema>;
-export type MenuResponse = z.output<typeof menuResponseSchema>;
-export type StoreConfigResponse = z.output<typeof storeConfigResponseSchema>;
-
-const espressoCustomizationGroups: MenuItemCustomizationGroup[] = [
-  {
-    id: "size",
-    label: "Size",
-    description: "Choose the cup that fits the order.",
-    selectionType: "single",
-    required: true,
-    options: [
-      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
-      { id: "large", label: "Large", priceDeltaCents: 100 }
-    ]
-  },
-  {
-    id: "milk",
-    label: "Milk",
-    description: "Keep it classic or switch the texture.",
-    selectionType: "single",
-    required: true,
-    options: [
-      { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true },
-      { id: "oat", label: "Oat milk", priceDeltaCents: 75 },
-      { id: "almond", label: "Almond milk", priceDeltaCents: 75 }
-    ]
-  },
-  {
-    id: "extra-shot",
-    label: "Extra shot",
-    description: "Add an additional espresso pull when you want more structure.",
-    selectionType: "boolean",
-    required: false,
-    options: [{ id: "extra-shot", label: "Add shot", priceDeltaCents: 125 }]
-  }
-];
-
-const coldBrewCustomizationGroups: MenuItemCustomizationGroup[] = [
-  {
-    id: "size",
-    label: "Size",
-    description: "Choose the pour size for this drink.",
-    selectionType: "single",
-    required: true,
-    options: [
-      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
-      { id: "large", label: "Large", priceDeltaCents: 75 }
-    ]
-  }
-];
+export const exampleCustomizationByItemId: Record<string, MenuItemCustomizationGroup[]> = {
+  latte: [sizeGroup, milkGroup, espressoExtrasGroup],
+  matcha: [sizeGroup, milkGroup, sweetnessGroup, matchaFinishGroup],
+  croissant: []
+};
 
 const fallbackMenu = menuResponseSchema.parse({
   locationId: "flagship-01",
@@ -114,44 +197,26 @@ const fallbackMenu = menuResponseSchema.parse({
         {
           id: "latte",
           name: "Honey Oat Latte",
-          description: "Espresso with steamed oat milk and honey drizzle.",
+          description: "Espresso with steamed oat milk and a warm honey finish.",
           priceCents: 675,
           badgeCodes: ["popular"],
           visible: true,
-          customizationGroups: espressoCustomizationGroups
-        },
-        {
-          id: "flat-white",
-          name: "Flat White",
-          description: "Velvety microfoam over ristretto espresso shots.",
-          priceCents: 625,
-          badgeCodes: [],
-          visible: true,
-          customizationGroups: espressoCustomizationGroups
+          customizationGroups: exampleCustomizationByItemId.latte
         }
       ]
     },
     {
-      id: "cold",
-      title: "Cold Drinks",
+      id: "matcha",
+      title: "Matcha",
       items: [
-        {
-          id: "cold-brew",
-          name: "Single-Origin Cold Brew",
-          description: "Twelve-hour steep with rotating single-origin beans.",
-          priceCents: 550,
-          badgeCodes: ["seasonal"],
-          visible: true,
-          customizationGroups: coldBrewCustomizationGroups
-        },
         {
           id: "matcha",
           name: "Ceremonial Matcha",
-          description: "Stone-ground matcha whisked to order with milk of choice.",
+          description: "Stone-ground matcha whisked to order with milk of your choice.",
           priceCents: 725,
           badgeCodes: ["new"],
           visible: true,
-          customizationGroups: espressoCustomizationGroups
+          customizationGroups: exampleCustomizationByItemId.matcha
         }
       ]
     },
@@ -162,10 +227,11 @@ const fallbackMenu = menuResponseSchema.parse({
         {
           id: "croissant",
           name: "Butter Croissant",
-          description: "Flaky and laminated daily in-house.",
+          description: "Flaky, laminated, and baked fresh each morning.",
           priceCents: 425,
           badgeCodes: [],
-          visible: true
+          visible: true,
+          customizationGroups: exampleCustomizationByItemId.croissant
         }
       ]
     }
@@ -223,6 +289,13 @@ export function resolveStoreConfigData(config: StoreConfigResponse | undefined):
   return config ?? fallbackStoreConfig;
 }
 
+export function createEmptyCustomizationInput(): MenuItemCustomizationInput {
+  return {
+    selectedOptions: [],
+    notes: ""
+  };
+}
+
 export function formatUsd(amountCents: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -236,3 +309,5 @@ export function toCategoryById(categories: MenuCategory[]): Record<string, MenuC
     return acc;
   }, {});
 }
+
+export type { MenuCategory, MenuItem, MenuItemCustomizationGroup, MenuItemCustomizationInput, MenuItemCustomizationOption };

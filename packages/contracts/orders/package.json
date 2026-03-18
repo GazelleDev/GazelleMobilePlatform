@@ -13,6 +13,7 @@
     "openapi": "echo 'orders contracts are included via gateway openapi generation'"
   },
   "dependencies": {
+    "@gazelle/contracts-catalog": "workspace:*",
     "@gazelle/contracts-core": "workspace:*",
     "zod": "^3.24.2"
   },

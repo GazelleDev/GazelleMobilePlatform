@@ -13,46 +13,117 @@ const defaultLocationId = "flagship-01";
 const espressoCustomizationGroups = [
   {
     id: "size",
+    sourceGroupId: "core:size",
     label: "Size",
     description: "Choose the cup that fits the order.",
     selectionType: "single" as const,
     required: true,
+    minSelections: 1,
+    maxSelections: 1,
+    sortOrder: 0,
+    displayStyle: "chips" as const,
     options: [
-      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
-      { id: "large", label: "Large", priceDeltaCents: 100 }
+      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+      { id: "large", label: "Large", priceDeltaCents: 100, sortOrder: 1, available: true }
     ]
   },
   {
     id: "milk",
+    sourceGroupId: "core:milk",
     label: "Milk",
     description: "Keep it classic or switch the texture.",
     selectionType: "single" as const,
     required: true,
+    minSelections: 1,
+    maxSelections: 1,
+    sortOrder: 1,
+    displayStyle: "chips" as const,
     options: [
-      { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true },
-      { id: "oat", label: "Oat milk", priceDeltaCents: 75 },
-      { id: "almond", label: "Almond milk", priceDeltaCents: 75 }
+      { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+      { id: "oat", label: "Oat milk", priceDeltaCents: 75, sortOrder: 1, available: true },
+      { id: "almond", label: "Almond milk", priceDeltaCents: 75, sortOrder: 2, available: true }
     ]
   },
   {
-    id: "extra-shot",
-    label: "Extra shot",
-    description: "Add an additional espresso pull when you want more structure.",
-    selectionType: "boolean" as const,
-    options: [{ id: "extra-shot", label: "Add shot", priceDeltaCents: 125 }]
+    id: "espresso-extras",
+    label: "Extras",
+    description: "Add a little more structure or finish.",
+    selectionType: "multiple" as const,
+    required: false,
+    minSelections: 0,
+    maxSelections: 2,
+    sortOrder: 2,
+    displayStyle: "chips" as const,
+    options: [
+      { id: "extra-shot", label: "Extra shot", priceDeltaCents: 125, sortOrder: 0, available: true },
+      { id: "vanilla", label: "Vanilla", priceDeltaCents: 75, sortOrder: 1, available: true }
+    ]
   }
 ];
 
-const coldBrewCustomizationGroups = [
+const matchaCustomizationGroups = [
   {
     id: "size",
+    sourceGroupId: "core:size",
     label: "Size",
     description: "Choose the pour size for this drink.",
     selectionType: "single" as const,
     required: true,
+    minSelections: 1,
+    maxSelections: 1,
+    sortOrder: 0,
+    displayStyle: "chips" as const,
     options: [
-      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
-      { id: "large", label: "Large", priceDeltaCents: 75 }
+      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+      { id: "large", label: "Large", priceDeltaCents: 100, sortOrder: 1, available: true }
+    ]
+  },
+  {
+    id: "milk",
+    sourceGroupId: "core:milk",
+    label: "Milk",
+    description: "Choose the milk that will be whisked into the matcha.",
+    selectionType: "single" as const,
+    required: true,
+    minSelections: 1,
+    maxSelections: 1,
+    sortOrder: 1,
+    displayStyle: "chips" as const,
+    options: [
+      { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+      { id: "oat", label: "Oat milk", priceDeltaCents: 75, sortOrder: 1, available: true },
+      { id: "almond", label: "Almond milk", priceDeltaCents: 75, sortOrder: 2, available: true }
+    ]
+  },
+  {
+    id: "sweetness",
+    sourceGroupId: "core:sweetness",
+    label: "Sweetness",
+    description: "Control how much sweetness is whisked in.",
+    selectionType: "single" as const,
+    required: true,
+    minSelections: 1,
+    maxSelections: 1,
+    sortOrder: 2,
+    displayStyle: "chips" as const,
+    options: [
+      { id: "full", label: "Full sweet", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+      { id: "half", label: "Half sweet", priceDeltaCents: 0, sortOrder: 1, available: true },
+      { id: "unsweetened", label: "Unsweetened", priceDeltaCents: 0, sortOrder: 2, available: true }
+    ]
+  },
+  {
+    id: "matcha-finish",
+    label: "Finish",
+    description: "Choose the final matcha texture.",
+    selectionType: "multiple" as const,
+    required: false,
+    minSelections: 0,
+    maxSelections: 1,
+    sortOrder: 3,
+    displayStyle: "chips" as const,
+    options: [
+      { id: "strawberry-cold-foam", label: "Strawberry cold foam", priceDeltaCents: 150, sortOrder: 0, available: true }
     ]
   }
 ];
@@ -66,19 +137,10 @@ const defaultMenuPayload = menuResponseSchema.parse({
       title: "Espresso Bar",
       items: [
         {
-          id: "cortado",
-          name: "Cortado",
-          description: "Double espresso cut with steamed milk.",
-          priceCents: 475,
-          badgeCodes: ["new"],
-          visible: true,
-          customizationGroups: espressoCustomizationGroups
-        },
-        {
-          id: "flat-white",
-          name: "Flat White",
-          description: "Silky microfoam over ristretto shots.",
-          priceCents: 525,
+          id: "latte",
+          name: "Honey Oat Latte",
+          description: "Espresso with steamed oat milk and a warm honey finish.",
+          priceCents: 675,
           badgeCodes: ["popular"],
           visible: true,
           customizationGroups: espressoCustomizationGroups
@@ -86,25 +148,32 @@ const defaultMenuPayload = menuResponseSchema.parse({
       ]
     },
     {
-      id: "cold",
-      title: "Cold Drinks",
+      id: "matcha",
+      title: "Matcha",
       items: [
         {
-          id: "flash-brew",
-          name: "Flash Brew",
-          description: "Single-origin coffee brewed hot and chilled over ice.",
-          priceCents: 495,
+          id: "matcha",
+          name: "Ceremonial Matcha",
+          description: "Stone-ground matcha whisked to order with milk of your choice.",
+          priceCents: 725,
+          badgeCodes: ["new"],
+          visible: true,
+          customizationGroups: matchaCustomizationGroups
+        }
+      ]
+    },
+    {
+      id: "pastry",
+      title: "Pastries",
+      items: [
+        {
+          id: "croissant",
+          name: "Butter Croissant",
+          description: "Flaky, laminated, and baked fresh each morning.",
+          priceCents: 425,
           badgeCodes: [],
           visible: true,
-          customizationGroups: coldBrewCustomizationGroups
-        },
-        {
-          id: "seasonal-tonic",
-          name: "Seasonal Espresso Tonic",
-          description: "House tonic with citrus and espresso.",
-          priceCents: 575,
-          badgeCodes: ["seasonal"],
-          visible: false
+          customizationGroups: []
         }
       ]
     }
