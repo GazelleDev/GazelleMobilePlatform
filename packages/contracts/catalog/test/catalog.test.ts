@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDefaultCustomizationInput,
+  describeCustomizationSelection,
   menuResponseSchema,
   priceMenuItemCustomization,
   resolveMenuItemCustomization,
@@ -13,6 +14,7 @@ const espressoGroups = [
     label: "Size",
     selectionType: "single" as const,
     required: true,
+    sortOrder: 0,
     options: [
       { id: "regular", label: "Regular", priceDeltaCents: 0, default: true },
       { id: "large", label: "Large", priceDeltaCents: 100 }
@@ -23,6 +25,7 @@ const espressoGroups = [
     label: "Milk",
     selectionType: "single" as const,
     required: true,
+    sortOrder: 1,
     options: [
       { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true },
       { id: "oat", label: "Oat milk", priceDeltaCents: 75 }
@@ -34,6 +37,7 @@ const espressoGroups = [
     selectionType: "multiple" as const,
     minSelections: 0,
     maxSelections: 2,
+    sortOrder: 2,
     options: [
       { id: "cinnamon", label: "Cinnamon", priceDeltaCents: 25 },
       { id: "cold-foam", label: "Cold foam", priceDeltaCents: 150 }
@@ -199,5 +203,30 @@ describe("contracts-catalog", () => {
     expect(resolved.groupSelections).toEqual([]);
     expect(resolved.customizationDeltaCents).toBe(0);
     expect(resolved.input.notes).toBe("warm it up");
+  });
+
+  it("describes selections in customization group order", () => {
+    const selection = {
+      selectedOptions: [
+        { groupId: "milk", optionId: "oat" },
+        { groupId: "size", optionId: "large" },
+        { groupId: "toppings", optionId: "cold-foam" },
+        { groupId: "toppings", optionId: "cinnamon" }
+      ],
+      notes: ""
+    };
+    const resolved = resolveMenuItemCustomization({
+      groups: espressoGroups,
+      selection
+    });
+
+    expect(
+      describeCustomizationSelection({
+        selection,
+        groupSelections: resolved.groupSelections,
+        groupOrder: ["size", "milk", "toppings"],
+        includeNotes: false
+      })
+    ).toBe("Large · Oat milk · Cinnamon, Cold foam");
   });
 });

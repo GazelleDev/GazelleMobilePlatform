@@ -30,6 +30,7 @@ import {
   resolveCartCustomization,
   type CartCustomization
 } from "../src/cart/model";
+import { CustomizationGroupSection } from "../src/menu/CustomizationGroupSection";
 import {
   formatUsd,
   resolveMenuData,
@@ -40,7 +41,7 @@ import {
 } from "../src/menu/catalog";
 import { CustomizeModalLoadingSheet } from "../src/menu/CustomizeModalLoadingSheet";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../src/navigation/tabBarMetrics";
-import { Chip, uiPalette, uiTypography } from "../src/ui/system";
+import { uiPalette, uiTypography } from "../src/ui/system";
 
 const MAX_QUANTITY = 20;
 
@@ -63,26 +64,6 @@ function canUseLiquidGlassFooter() {
   } catch {
     return false;
   }
-}
-
-function OptionChip({
-  label,
-  active,
-  onPress,
-  priceDeltaCents
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-  priceDeltaCents?: number;
-}) {
-  return (
-    <Chip
-      label={priceDeltaCents && priceDeltaCents > 0 ? `${label} +${formatUsd(priceDeltaCents)}` : label}
-      active={active}
-      onPress={onPress}
-    />
-  );
 }
 
 function updateCustomizationOption(
@@ -355,15 +336,25 @@ export default function MenuCustomizeModalScreen() {
   const customizationDeltaCents = pricedCustomization?.customizationDeltaCents ?? 0;
   const selectedUnitPriceCents = pricedCustomization?.unitPriceCents ?? 0;
   const totalCents = pricedCustomization?.lineTotalCents ?? 0;
+  const orderedGroupSelections = useMemo(() => {
+    if (!item) {
+      return resolvedCustomization.groupSelections;
+    }
+
+    const rankByGroupId = new Map(item.customizationGroups.map((group, index) => [group.id, index] as const));
+    return [...resolvedCustomization.groupSelections].sort(
+      (left, right) => (rankByGroupId.get(left.groupId) ?? Number.MAX_SAFE_INTEGER) - (rankByGroupId.get(right.groupId) ?? Number.MAX_SAFE_INTEGER)
+    );
+  }, [item, resolvedCustomization.groupSelections]);
   const customizationPreview = useMemo(
     () =>
       describeCustomizationSelection({
         selection: customization,
-        groupSelections: resolvedCustomization.groupSelections,
+        groupSelections: orderedGroupSelections,
         includeNotes: false,
         fallback: ""
       }),
-    [customization, resolvedCustomization.groupSelections]
+    [customization, orderedGroupSelections]
   );
   const priceLine = formatUsd(selectedUnitPriceCents);
   const metaLine = customizationPreview;
@@ -446,31 +437,17 @@ export default function MenuCustomizeModalScreen() {
             <Text style={styles.description}>{item.description}</Text>
 
             <View>
-              {item.customizationGroups.map((group) => (
-                <View key={group.id} style={styles.section}>
-                  <View style={styles.sectionTitleRow}>
-                    <Text style={styles.sectionTitle}>{group.label}</Text>
-                    {group.required ? <Text style={styles.sectionRequired}>Required</Text> : null}
-                  </View>
-                  {group.description ? <Text style={styles.sectionBody}>{group.description}</Text> : null}
-                  <View style={styles.optionRow}>
-                    {group.options
-                      .filter((option) => option.available)
-                      .map((option) => (
-                      <OptionChip
-                        key={option.id}
-                        label={option.label}
-                        active={isCustomizationOptionSelected(customization, group.id, option.id)}
-                        priceDeltaCents={option.priceDeltaCents}
-                        onPress={() => setCustomization((prev) => updateCustomizationOption(prev, group, option))}
-                      />
-                      ))}
-                  </View>
-                  {showValidationErrors && findGroupIssue(resolvedCustomization.issues, group.id) ? (
-                    <Text style={styles.sectionError}>{findGroupIssue(resolvedCustomization.issues, group.id)?.message}</Text>
-                  ) : null}
-                </View>
-              ))}
+              <View style={styles.customizationSectionsWrap}>
+                {item.customizationGroups.map((group) => (
+                  <CustomizationGroupSection
+                    key={group.id}
+                    group={group}
+                    customization={customization}
+                    validationMessage={showValidationErrors ? findGroupIssue(resolvedCustomization.issues, group.id)?.message : undefined}
+                    onSelectOption={(option) => setCustomization((prev) => updateCustomizationOption(prev, group, option))}
+                  />
+                ))}
+              </View>
 
               <View style={styles.section}>
                 <Text style={styles.sectionTitle}>Notes</Text>
@@ -665,17 +642,14 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     color: uiPalette.textSecondary
   },
+  customizationSectionsWrap: {
+    marginBottom: 18
+  },
   section: {
     paddingTop: 24,
     paddingBottom: 26,
     borderTopWidth: 1,
     borderTopColor: uiPalette.border
-  },
-  sectionTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12
   },
   sectionTitle: {
     fontSize: 18,
@@ -683,24 +657,11 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     fontWeight: "600"
   },
-  sectionRequired: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: uiPalette.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.8
-  },
   sectionBody: {
     marginTop: 8,
     fontSize: 14,
     lineHeight: 22,
     color: uiPalette.textSecondary
-  },
-  optionRow: {
-    marginTop: 16,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10
   },
   noteInput: {
     marginTop: 14,
@@ -714,12 +675,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: uiPalette.text,
     textAlignVertical: "top"
-  },
-  sectionError: {
-    marginTop: 12,
-    fontSize: 13,
-    lineHeight: 18,
-    color: "#A55B3F"
   },
   stepperButtonDisabled: {
     opacity: 0.55

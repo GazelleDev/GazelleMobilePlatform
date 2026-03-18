@@ -503,10 +503,23 @@ export function priceMenuItemCustomization(input: {
 export function describeCustomizationSelection(input: {
   selection: Pick<MenuItemCustomizationInput, "notes">;
   groupSelections: CustomizationGroupSelectionSnapshot[];
+  groupOrder?: readonly string[];
   includeNotes?: boolean;
   fallback?: string;
 }) {
-  const parts = input.groupSelections
+  const groupRank = new Map((input.groupOrder ?? []).map((groupId, index) => [groupId, index] as const));
+  const orderedGroups = [...input.groupSelections].sort((left, right) => {
+    const leftRank = groupRank.get(left.groupId);
+    const rightRank = groupRank.get(right.groupId);
+
+    if (typeof leftRank === "number" || typeof rightRank === "number") {
+      return (leftRank ?? Number.MAX_SAFE_INTEGER) - (rightRank ?? Number.MAX_SAFE_INTEGER);
+    }
+
+    return 0;
+  });
+
+  const parts = orderedGroups
     .filter((group) => group.selectedOptions.length > 0)
     .map((group) => group.selectedOptions.map((option) => option.optionLabel).join(", "));
 
