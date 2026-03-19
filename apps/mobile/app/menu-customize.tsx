@@ -727,7 +727,7 @@ const styles = StyleSheet.create({
   footerPillShell: {
     borderRadius: 999,
     overflow: "visible",
-    minHeight: 56,
+    minHeight: 60,
     shadowColor: "#000000",
     shadowOpacity: 0.09,
     shadowRadius: 18,
@@ -735,12 +735,12 @@ const styles = StyleSheet.create({
     elevation: 6
   },
   footerPillFrame: {
-    minHeight: 56,
+    minHeight: 60,
     borderRadius: 999,
     overflow: "hidden"
   },
   footerPillInner: {
-    minHeight: 56,
+    minHeight: 60,
     borderRadius: 999,
     paddingHorizontal: 4,
     paddingVertical: 2,
@@ -764,7 +764,7 @@ const styles = StyleSheet.create({
     minWidth: 118
   },
   footerButton: {
-    minHeight: 52,
+    minHeight: 56,
     width: "100%",
     borderRadius: 999,
     alignItems: "center",
@@ -781,7 +781,7 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   },
   footerQuantityShell: {
-    minHeight: 56,
+    minHeight: 60,
     borderRadius: 999,
     overflow: "visible",
     shadowColor: "#000000",
@@ -814,7 +814,7 @@ const styles = StyleSheet.create({
   },
   footerQuantityOrbGlassShell: {
     position: "absolute",
-    top: 7,
+    top: 9,
     width: 42,
     height: 42,
     borderRadius: 999,
@@ -847,7 +847,7 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   footerQuantityContentLayer: {
-    minHeight: 56,
+    minHeight: 60,
     width: "100%",
     borderRadius: 999,
     position: "relative",
@@ -856,7 +856,7 @@ const styles = StyleSheet.create({
   },
   footerOrbButton: {
     position: "absolute",
-    top: 7,
+    top: 9,
     width: 42,
     height: 42,
     borderRadius: 999,

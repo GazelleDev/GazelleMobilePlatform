@@ -9,8 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { findActiveOrder, useOrderHistoryQuery } from "../account/data";
 import { useAuthSession } from "../auth/session";
 import { useCart } from "../cart/store";
-import { formatUsd } from "../menu/catalog";
-import { uiPalette, uiShadow, uiTypography } from "../ui/system";
+import { uiPalette, uiTypography } from "../ui/system";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "./tabBarMetrics";
 import { iconMap, iconSizeMap, labelMap, type PillTabBarProps } from "./pillTabBarShared";
 
@@ -28,7 +27,7 @@ export function LiquidGlassPillTabBar({ state, descriptors, navigation }: PillTa
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { itemCount, subtotalCents } = useCart();
+  const { itemCount } = useCart();
   const { isAuthenticated } = useAuthSession();
   const ordersQuery = useOrderHistoryQuery(isAuthenticated);
   const activeOrder = findActiveOrder(ordersQuery.data ?? []);
@@ -50,7 +49,6 @@ export function LiquidGlassPillTabBar({ state, descriptors, navigation }: PillTa
   const dockWidth = Math.min(width - 36, 492);
   const dockLeft = Math.max((width - dockWidth) / 2, 18);
   const dockBottom = getTabBarBottomOffset(insets.bottom > 0);
-  const cartBottom = dockBottom + 66;
   const activeIndex = dragTargetIndex ?? state.index;
 
   const getTranslateXForIndex = (index: number) => {
@@ -302,109 +300,107 @@ export function LiquidGlassPillTabBar({ state, descriptors, navigation }: PillTa
 
   return (
     <View pointerEvents="box-none" style={[styles.shell, { left: dockLeft, bottom: dockBottom, width: dockWidth }]}>
-      {itemCount > 0 ? (
-        <Pressable style={[styles.cartShortcut, { bottom: cartBottom }]} onPress={() => router.push("/cart")}>
-          <View style={styles.cartIconWrap}>
-            <Ionicons name="bag-handle-outline" size={15} color={uiPalette.text} />
-          </View>
-          <View style={styles.cartText}>
-            <Text style={styles.cartEyebrow}>Continue order</Text>
-            <Text style={styles.cartLabel}>{`${itemCount} item${itemCount === 1 ? "" : "s"} • ${formatUsd(subtotalCents)}`}</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={16} color={uiPalette.text} />
-        </Pressable>
-      ) : null}
-
-      <Animated.View style={[styles.container, styles.containerGlass, dockMotionStyle]}>
-        <View
-          style={styles.tabRow}
-          onLayout={(event) => {
-            setTabRowWidth(event.nativeEvent.layout.width);
-          }}
-        >
-          <View pointerEvents="none" style={styles.glassMergeLayer}>
-            <GlassView
-              glassEffectStyle="regular"
-              colorScheme="auto"
-              style={styles.glassBase}
+      <View style={styles.row}>
+        <View style={styles.dockWrap}>
+          <Animated.View style={[styles.container, styles.containerGlass, dockMotionStyle]}>
+            <View
+              style={styles.tabRow}
+              onLayout={(event) => {
+                setTabRowWidth(event.nativeEvent.layout.width);
+              }}
             >
-              <View style={styles.dockInnerGlass} />
-            </GlassView>
-            {indicatorWidth > 0 ? (
-              <Animated.View pointerEvents="none" style={[styles.activeIndicator, styles.activeIndicatorGlassShell, indicatorStyle]}>
-                <GlassView
-                  glassEffectStyle="clear"
-                  colorScheme="auto"
-                  isInteractive
-                  style={styles.activeIndicatorGlassView}
-                >
-                  <View style={styles.activeIndicatorGlassPill} />
+              <View pointerEvents="none" style={styles.glassMergeLayer}>
+                <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.glassBase}>
+                  <View style={styles.dockInnerGlass} />
                 </GlassView>
-              </Animated.View>
-            ) : null}
-          </View>
-
-          <View pointerEvents="none" style={styles.baseIconRow}>
-            {renderIconSlots(false)}
-          </View>
-          {indicatorWidth > 0 ? (
-            <Animated.View pointerEvents="none" style={[styles.activeIconWindow, activeIconWindowStyle]}>
-              <Animated.View style={[styles.activeIconTrack, activeIconTrackStyle]}>{renderIconSlots(true)}</Animated.View>
-            </Animated.View>
-          ) : null}
-          {indicatorWidth > 0 ? (
-            <GestureDetector gesture={selectorGesture}>
-              <Animated.View style={[styles.dragHandle, dragHandleStyle]} />
-            </GestureDetector>
-          ) : null}
-
-          {state.routes.map((route, index) => {
-            const descriptor = descriptors[route.key];
-            const isFocused = activeIndex === index;
-            const label =
-              typeof descriptor.options.title === "string"
-                ? descriptor.options.title
-                : labelMap[route.name] ?? route.name;
-
-            const onPress = () => {
-              const event = navigation.emit({
-                type: "tabPress",
-                target: route.key,
-                canPreventDefault: true
-              });
-
-              if (!isFocused && !event.defaultPrevented) {
-                navigation.navigate(route.name, route.params);
-              }
-            };
-
-            return (
-              <View key={route.key} style={styles.tabSlot}>
-                <Pressable
-                  onPress={onPress}
-                  style={({ pressed }) => [styles.tabButton, pressed ? styles.tabPressed : null]}
-                  hitSlop={{ top: 2, bottom: 2, left: 14, right: 14 }}
-                  accessibilityRole="tab"
-                  accessibilityState={isFocused ? { selected: true } : {}}
-                  accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
-                >
-                  <View style={styles.tabContent}>
-                    <View style={styles.tabIconBox} />
-                    <Text numberOfLines={1} style={[styles.tabLabel, styles.tabLabelPlaceholder]}>
-                      {label}
-                    </Text>
-                  </View>
-                  {route.name === "orders" && activeOrder ? (
-                    <View style={[styles.activityDot, isFocused ? styles.activityDotActive : null]}>
-                      <View style={[styles.activityDotInner, isFocused ? styles.activityDotInnerActive : null]} />
-                    </View>
-                  ) : null}
-                </Pressable>
+                {indicatorWidth > 0 ? (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[styles.activeIndicator, styles.activeIndicatorGlassShell, indicatorStyle]}
+                  >
+                    <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.activeIndicatorGlassView}>
+                      <View style={styles.activeIndicatorGlassPill} />
+                    </GlassView>
+                  </Animated.View>
+                ) : null}
               </View>
-            );
-          })}
+
+              <View pointerEvents="none" style={styles.baseIconRow}>
+                {renderIconSlots(false)}
+              </View>
+              {indicatorWidth > 0 ? (
+                <Animated.View pointerEvents="none" style={[styles.activeIconWindow, activeIconWindowStyle]}>
+                  <Animated.View style={[styles.activeIconTrack, activeIconTrackStyle]}>{renderIconSlots(true)}</Animated.View>
+                </Animated.View>
+              ) : null}
+              {indicatorWidth > 0 ? (
+                <GestureDetector gesture={selectorGesture}>
+                  <Animated.View style={[styles.dragHandle, dragHandleStyle]} />
+                </GestureDetector>
+              ) : null}
+
+              {state.routes.map((route, index) => {
+                const descriptor = descriptors[route.key];
+                const isFocused = activeIndex === index;
+                const label =
+                  typeof descriptor.options.title === "string"
+                    ? descriptor.options.title
+                    : labelMap[route.name] ?? route.name;
+
+                const onPress = () => {
+                  const event = navigation.emit({
+                    type: "tabPress",
+                    target: route.key,
+                    canPreventDefault: true
+                  });
+
+                  if (!isFocused && !event.defaultPrevented) {
+                    navigation.navigate(route.name, route.params);
+                  }
+                };
+
+                return (
+                  <View key={route.key} style={styles.tabSlot}>
+                    <Pressable
+                      onPress={onPress}
+                      style={({ pressed }) => [styles.tabButton, pressed ? styles.tabPressed : null]}
+                      hitSlop={{ top: 2, bottom: 2, left: 14, right: 14 }}
+                      accessibilityRole="tab"
+                      accessibilityState={isFocused ? { selected: true } : {}}
+                      accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
+                    >
+                      <View style={styles.tabContent}>
+                        <View style={styles.tabIconBox} />
+                        <Text numberOfLines={1} style={[styles.tabLabel, styles.tabLabelPlaceholder]}>
+                          {label}
+                        </Text>
+                      </View>
+                      {route.name === "orders" && activeOrder ? (
+                        <View style={[styles.activityDot, isFocused ? styles.activityDotActive : null]}>
+                          <View style={[styles.activityDotInner, isFocused ? styles.activityDotInnerActive : null]} />
+                        </View>
+                      ) : null}
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+          </Animated.View>
         </View>
-      </Animated.View>
+
+        {itemCount > 0 ? (
+          <Pressable accessibilityLabel="Open cart" style={styles.cartPillPressable} onPress={() => router.push("/cart")}>
+            <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.cartGlassPill}>
+              <View style={styles.cartGlassInner}>
+                <Ionicons name="bag-handle-outline" size={21} color={uiPalette.text} />
+                <View style={styles.cartCountBadge}>
+                  <Text style={styles.cartCountLabel}>{itemCount > 99 ? "99+" : String(itemCount)}</Text>
+                </View>
+              </View>
+            </GlassView>
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -414,48 +410,52 @@ const styles = StyleSheet.create({
     position: "absolute",
     overflow: "visible"
   },
-  cartShortcut: {
-    position: "absolute",
-    left: 18,
-    right: 18,
-    minHeight: 58,
-    borderRadius: 20,
-    backgroundColor: "rgba(255, 253, 248, 0.94)",
-    borderWidth: 1,
-    borderColor: "rgba(23,21,19,0.08)",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+  row: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    ...uiShadow.dock
   },
-  cartIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(23,21,19,0.06)"
-  },
-  cartText: {
+  dockWrap: {
     flex: 1
   },
-  cartEyebrow: {
-    fontSize: 10,
-    lineHeight: 12,
-    letterSpacing: 1.1,
-    textTransform: "uppercase",
-    color: uiPalette.textMuted,
-    fontWeight: "700",
-    fontFamily: uiTypography.bodyFamily
+  cartPillPressable: {
+    width: 58,
+    minWidth: 58,
+    height: 58,
+    borderRadius: 999
   },
-  cartLabel: {
-    marginTop: 2,
-    fontSize: 15,
-    lineHeight: 18,
-    color: uiPalette.text,
-    fontWeight: "600",
+  cartGlassPill: {
+    flex: 1,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  cartGlassInner: {
+    flex: 1,
+    borderRadius: 999,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.004)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.11)"
+  },
+  cartCountBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(23, 21, 19, 0.92)"
+  },
+  cartCountLabel: {
+    fontSize: 10,
+    lineHeight: 10,
+    color: "#FFFFFF",
+    fontWeight: "700",
     fontFamily: uiTypography.bodyFamily
   },
   container: {

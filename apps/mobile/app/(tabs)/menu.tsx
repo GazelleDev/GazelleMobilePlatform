@@ -14,7 +14,6 @@ import {
 } from "react-native";
 import Animated, { Easing, Extrapolation, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useCart } from "../../src/cart/store";
 import { formatUsd, resolveMenuData, useMenuQuery, type MenuCategory, type MenuItem } from "../../src/menu/catalog";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../../src/navigation/tabBarMetrics";
 import { ScreenBackdrop, SectionLabel, TabBarDepthBackdrop, uiPalette, uiTypography } from "../../src/ui/system";
@@ -230,7 +229,6 @@ function buildSections(categories: MenuCategory[]): MenuSection[] {
 export default function MenuScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { itemCount, subtotalCents } = useCart();
   const menuQuery = useMenuQuery();
   const isInitialLoading = menuQuery.isLoading && !menuQuery.data;
   const menu = isInitialLoading ? null : resolveMenuData(menuQuery.data);
@@ -388,13 +386,6 @@ export default function MenuScreen() {
             </Animated.View>
             <Animated.Text style={[styles.locationText, locationStyle]}>Ann Arbor, Mi.</Animated.Text>
           </View>
-
-          {itemCount > 0 ? (
-            <Pressable onPress={() => router.push("/cart")} style={styles.bagButton}>
-              <Text style={styles.bagLabel}>{`Bag ${itemCount}`}</Text>
-              <Text style={styles.bagMeta}>{formatUsd(subtotalCents)}</Text>
-            </Pressable>
-          ) : null}
         </View>
 
         <Animated.View style={[styles.tabsWrap, tabsStyle]}>
@@ -453,28 +444,6 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     color: uiPalette.text,
     fontFamily: uiTypography.displayFamily,
-    fontWeight: "600"
-  },
-  bagMeta: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: uiPalette.textMuted,
-    fontWeight: "600"
-  },
-  bagButton: {
-    minHeight: 42,
-    paddingHorizontal: 14,
-    borderRadius: 21,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.52)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  bagLabel: {
-    fontSize: 13,
-    lineHeight: 16,
-    color: uiPalette.text,
     fontWeight: "600"
   },
   tabsWrap: {

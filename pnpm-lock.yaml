@@ -41,6 +41,9 @@ importers:
       '@callstack/liquid-glass':
         specifier: ^0.7.0
         version: 0.7.0(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
+      '@devvie/bottom-sheet':
+        specifier: 0.4.3
+        version: 0.4.3(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
       '@expo/metro-runtime':
         specifier: ~6.1.2
         version: 6.1.2(expo@54.0.33)(react-dom@18.3.1(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
@@ -1398,6 +1401,12 @@ packages:
 
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
+
+  '@devvie/bottom-sheet@0.4.3':
+    resolution: {integrity: sha512-wCXLI3PxYpLTonPMspKUK/+LBVCydgxWcc/zER7eN6ZzFdM3Ql4W/4wvwEJUrMIAO+jHNkkgMB/Mv1qzTsUkRg==}
+    peerDependencies:
+      react: '*'
+      react-native: '*'
 
   '@egjs/hammerjs@2.0.17':
     resolution: {integrity: sha512-XQsZgjm2EcVUiZQf11UBJQfmZeEmOW8DpI1gsFeln6w0ae0ii4dMQEQ0kjl6DspdWX1aGY1/loyXnP0JS06e/A==}
@@ -6365,6 +6374,11 @@ snapshots:
       fs-extra: 7.0.1
       human-id: 4.1.3
       prettier: 2.8.8
+
+  '@devvie/bottom-sheet@0.4.3(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)':
+    dependencies:
+      react: 19.1.0
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
 
   '@egjs/hammerjs@2.0.17':
     dependencies:
