@@ -21,6 +21,7 @@
     "@gazelle/contracts-orders": "workspace:*",
     "@gazelle/design-tokens": "workspace:*",
     "@gazelle/sdk-mobile": "workspace:*",
+    "@gorhom/bottom-sheet": "^5.2.8",
     "@tanstack/react-query": "^5.66.11",
     "expo": "^54.0.33",
     "expo-apple-authentication": "^8.0.8",

@@ -67,31 +67,34 @@ export function CustomizeModalLoadingSheet() {
           contentInsetAdjustmentBehavior="never"
           contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
         >
-          <View style={styles.topSpacer} />
+          <Animated.View style={[styles.heroWrap, pulseStyle]}>
+            <LoadingBlock height={420} radius={0} style={styles.heroImageBlock} />
+          </Animated.View>
 
           <Animated.View style={[styles.content, pulseStyle]}>
             <View style={styles.titleRow}>
-              <LoadingBlock width="58%" height={34} radius={10} />
+              <LoadingBlock width="62%" height={30} radius={10} />
               <LoadingBlock width={68} height={24} radius={8} style={styles.priceBlock} />
             </View>
-            <LoadingBlock width="44%" height={18} radius={9} style={styles.metaBlock} />
+            <LoadingBlock width="42%" height={24} radius={9} style={styles.metaBlock} />
 
             <View style={styles.descriptionGroup}>
-              <LoadingBlock width="88%" height={16} radius={8} />
-              <LoadingBlock width="74%" height={16} radius={8} />
+              <LoadingBlock width="92%" height={16} radius={8} />
+              <LoadingBlock width="76%" height={16} radius={8} />
             </View>
 
             <View style={styles.section}>
-              <LoadingBlock width={104} height={22} radius={10} />
-              <LoadingBlock width="54%" height={14} radius={7} style={styles.sectionBodyBlock} />
+              <LoadingBlock width={116} height={24} radius={10} />
+              <LoadingBlock width="56%" height={14} radius={7} style={styles.sectionBodyBlock} />
               <View style={styles.chipRow}>
                 <LoadingBlock width={118} height={42} radius={21} />
                 <LoadingBlock width={104} height={42} radius={21} />
+                <LoadingBlock width={92} height={42} radius={21} />
               </View>
             </View>
 
             <View style={styles.section}>
-              <LoadingBlock width={84} height={22} radius={10} />
+              <LoadingBlock width={94} height={24} radius={10} />
               <LoadingBlock width="62%" height={14} radius={7} style={styles.sectionBodyBlock} />
               <View style={styles.chipRow}>
                 <LoadingBlock width={92} height={42} radius={21} />
@@ -101,7 +104,7 @@ export function CustomizeModalLoadingSheet() {
             </View>
 
             <View style={styles.section}>
-              <LoadingBlock width={72} height={22} radius={10} />
+              <LoadingBlock width={78} height={24} radius={10} />
               <LoadingBlock width="58%" height={14} radius={7} style={styles.sectionBodyBlock} />
               <LoadingBlock width="100%" height={112} radius={0} style={styles.notesBlock} />
             </View>
@@ -120,8 +123,12 @@ export function CustomizeModalLoadingSheet() {
         </ScrollView>
 
         <Animated.View pointerEvents="none" style={[styles.footerRow, { bottom: footerBottom }, pulseStyle]}>
-          <LoadingBlock width={0} height={0} style={styles.footerPrimary} />
-          <LoadingBlock width={0} height={0} style={styles.footerQuantity} />
+          <View style={styles.footerPrimary}>
+            <LoadingBlock width="100%" height={60} radius={999} style={styles.footerPillBlock} />
+          </View>
+          <View style={styles.footerQuantity}>
+            <LoadingBlock width="100%" height={60} radius={999} style={styles.footerPillBlock} />
+          </View>
         </Animated.View>
       </View>
     </View>
@@ -159,8 +166,12 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 0
   },
-  topSpacer: {
-    height: 478
+  heroWrap: {
+    paddingHorizontal: 20,
+    paddingTop: 36
+  },
+  heroImageBlock: {
+    backgroundColor: "#D5D4CE"
   },
   content: {
     paddingHorizontal: 20,
@@ -226,15 +237,15 @@ const styles = StyleSheet.create({
   },
   footerPrimary: {
     flex: 1.9,
-    minHeight: 56,
-    borderWidth: 1,
-    borderColor: uiPalette.borderStrong,
-    backgroundColor: "rgba(255,255,255,0.72)"
+    minHeight: 60
   },
   footerQuantity: {
     flex: 0.34,
     minWidth: 118,
-    minHeight: 56,
+    minHeight: 60
+  },
+  footerPillBlock: {
+    minHeight: 60,
     borderWidth: 1,
     borderColor: uiPalette.borderStrong,
     backgroundColor: "rgba(255,255,255,0.72)"

@@ -1,14 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
-import BottomSheet, { type BottomSheetMethods } from "@devvie/bottom-sheet";
 import { useQueryClient } from "@tanstack/react-query";
 import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthSession } from "../src/auth/session";
+import { ClearCartSheet } from "../src/cart/ClearCartSheet";
 import { buildPricingSummary, describeCustomization } from "../src/cart/model";
+import { RemoveItemSheet } from "../src/cart/RemoveItemSheet";
 import { useCart } from "../src/cart/store";
 import { formatUsd, resolveMenuData, resolveStoreConfigData, useMenuQuery, useStoreConfigQuery } from "../src/menu/catalog";
 import { canAttemptNativeApplePay, requestNativeApplePayWallet, type ApplePayWalletPayload } from "../src/orders/applePay";
@@ -122,6 +123,39 @@ function StickyActionPill({
         </GlassView>
       ) : (
         <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.stickyPillFrame}>
+          {content}
+        </BlurView>
+      )}
+    </Pressable>
+  );
+}
+
+function HeaderActionChip({
+  label,
+  icon,
+  onPress
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+}) {
+  const useLiquidGlass = canUseLiquidGlassSheets();
+
+  const content = (
+    <View style={[styles.headerActionChipInner, useLiquidGlass ? styles.headerActionChipInnerGlass : styles.headerActionChipInnerFallback]}>
+      <Ionicons name={icon} size={13} color={uiPalette.textSecondary} />
+      <Text style={styles.headerActionChipText}>{label}</Text>
+    </View>
+  );
+
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.headerActionChipShell, pressed ? styles.headerActionChipPressed : null]}>
+      {useLiquidGlass ? (
+        <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.headerActionChipFrame}>
+          {content}
+        </GlassView>
+      ) : (
+        <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.headerActionChipFrame}>
           {content}
         </BlurView>
       )}
@@ -244,7 +278,6 @@ export default function CartModalScreen() {
   const stickyFooterBottom = getTabBarBottomOffset(insets.bottom > 0);
   const stickyFooterClearance = stickyFooterBottom + TAB_BAR_HEIGHT + 16;
   const { isAuthenticated } = useAuthSession();
-  const removeSheetRef = useRef<BottomSheetMethods>(null);
   const { items, itemCount, subtotalCents, setQuantity, removeItem, clear } = useCart();
   const { retryOrder, clearRetryOrder, clearFailure, setConfirmation, setFailure } = useCheckoutFlow();
   const menuQuery = useMenuQuery();
@@ -266,6 +299,7 @@ export default function CartModalScreen() {
     () => items.find((item) => item.lineId === pendingRemovalLineId) ?? null,
     [items, pendingRemovalLineId]
   );
+  const [clearSheetOpen, setClearSheetOpen] = useState(false);
 
   const [applePayToken, setApplePayToken] = useState("");
   const [nativeApplePayPending, setNativeApplePayPending] = useState(false);
@@ -291,14 +325,7 @@ export default function CartModalScreen() {
   }, [clearRetryOrder, quoteItems, retryOrder]);
 
   useEffect(() => {
-    if (pendingRemovalLineId && pendingRemovalItem) {
-      removeSheetRef.current?.open();
-    }
-  }, [pendingRemovalItem, pendingRemovalLineId]);
-
-  useEffect(() => {
     if (pendingRemovalLineId && !pendingRemovalItem) {
-      removeSheetRef.current?.close();
       setPendingRemovalLineId(null);
     }
   }, [pendingRemovalItem, pendingRemovalLineId]);
@@ -308,7 +335,7 @@ export default function CartModalScreen() {
   }
 
   function resetCartState() {
-    removeSheetRef.current?.close();
+    setClearSheetOpen(false);
     setPendingRemovalLineId(null);
     clear();
     clearFailure();
@@ -460,9 +487,7 @@ export default function CartModalScreen() {
                   eyebrow="Bag"
                   title="Items"
                   action={
-                    <Pressable style={styles.clearChip} onPress={resetCartState}>
-                      <Text style={styles.clearChipText}>Clear</Text>
-                    </Pressable>
+                    <HeaderActionChip label="Clear" icon="close-outline" onPress={() => setClearSheetOpen(true)} />
                   }
                 />
 
@@ -521,86 +546,76 @@ export default function CartModalScreen() {
               {statusMessage ? <StatusBanner message={statusMessage} tone={retryableOrder ? "warning" : "info"} /> : null}
 
               <View style={styles.checkoutDeck}>
+                <View style={styles.pickupMethodBlock}>
+                  <Text style={styles.pickupMethodLabel}>Pickup method</Text>
+                  <View style={styles.pickupMethodRow}>
+                    <Text style={styles.pickupMethodName}>Counter pickup</Text>
+                    <Text style={styles.pickupMethodEta}>{`${storeConfig.prepEtaMinutes} min`}</Text>
+                  </View>
+                  <Text style={styles.pickupMethodBody}>{storeConfig.pickupInstructions}</Text>
+                </View>
+
                 <SectionHeading eyebrow="Checkout" title="Pay" />
+                <View style={styles.checkoutContent}>
+                  <View style={styles.deckDivider} />
 
-                <View style={styles.pickupHeaderRow}>
-                  <View style={styles.pickupTitleRow}>
-                    <Ionicons name="storefront-outline" size={17} color={uiPalette.accent} />
-                    <Text style={styles.pickupPanelTitle}>Counter pickup</Text>
+                  <View style={styles.summaryWrap}>
+                    <SummaryRow label={`Items (${itemCount})`} value={formatUsd(pricingSummary.subtotalCents)} />
+                    <SummaryRow
+                      label={`Tax (${(storeConfig.taxRateBasisPoints / 100).toFixed(2)}%)`}
+                      value={formatUsd(pricingSummary.taxCents)}
+                    />
+                    <View style={styles.summaryDivider} />
+                    <SummaryRow label="Total due today" value={formatUsd(pricingSummary.totalCents)} emphasized />
                   </View>
-                  <Text style={styles.pickupEtaText}>{`${storeConfig.prepEtaMinutes} min`}</Text>
-                </View>
-                <Text style={styles.pickupBody}>{storeConfig.pickupInstructions}</Text>
-                <View style={styles.pickupMeta}>
-                  <View style={styles.pickupPill}>
-                    <Ionicons name="time-outline" size={14} color={uiPalette.accent} />
-                    <Text style={styles.pickupPillText}>{storeConfig.prepEtaMinutes} min average</Text>
-                  </View>
-                  <View style={styles.pickupPill}>
-                    <Ionicons name="bag-check-outline" size={14} color={uiPalette.accent} />
-                    <Text style={styles.pickupPillText}>Ready when called</Text>
-                  </View>
-                </View>
 
-                <View style={styles.deckDivider} />
+                  {isAuthenticated ? (
+                    <>
+                      <View style={styles.deckDivider} />
 
-                <View style={styles.summaryWrap}>
-                  <SummaryRow label={`Items (${itemCount})`} value={formatUsd(pricingSummary.subtotalCents)} />
-                  <SummaryRow
-                    label={`Tax (${(storeConfig.taxRateBasisPoints / 100).toFixed(2)}%)`}
-                    value={formatUsd(pricingSummary.taxCents)}
-                  />
-                  <View style={styles.summaryDivider} />
-                  <SummaryRow label="Total due today" value={formatUsd(pricingSummary.totalCents)} emphasized />
-                </View>
-
-                <View style={styles.deckDivider} />
-
-                {isAuthenticated ? (
-                  <View>
-                    <Text style={styles.payTitle}>Apple Pay</Text>
-                    <Text style={styles.payBody}>
-                      Keep payment native, fast, and separated from the rest of the checkout review.
-                    </Text>
-                    {showDevFallback ? (
-                      <View style={styles.devSection}>
-                        <Text style={styles.devEyebrow}>Development fallback</Text>
-                        <TextInput
-                          value={applePayToken}
-                          onChangeText={setApplePayToken}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          secureTextEntry
-                          placeholder="Test Apple Pay token"
-                          placeholderTextColor={uiPalette.textMuted}
-                          style={styles.tokenInput}
-                        />
-                        <View style={styles.devActions}>
-                          <Button
-                            label="Use Demo Token"
-                            variant="secondary"
-                            onPress={() => setApplePayToken(createDemoApplePayToken())}
-                            style={{ flex: 1 }}
-                          />
-                          <Button
-                            label={checkoutMutation.isPending ? "Processing…" : "Run Test"}
-                            variant="ghost"
-                            disabled={checkoutMutation.isPending || nativeApplePayPending}
-                            onPress={handleApplePayTokenCheckout}
-                            style={{ flex: 1 }}
-                          />
+                      <View style={styles.paymentStatusRow}>
+                        <View style={styles.paymentStatusIconWrap}>
+                          <Ionicons name="logo-apple" size={16} color={uiPalette.text} />
+                        </View>
+                        <View style={styles.paymentStatusCopy}>
+                          <Text style={styles.paymentStatusTitle}>Apple Pay ready</Text>
+                          <Text style={styles.paymentStatusBody}>Use the footer to confirm payment when you are ready.</Text>
                         </View>
                       </View>
-                    ) : null}
-                  </View>
-                ) : (
-                  <View>
-                    <Text style={styles.payTitle}>Sign in to continue</Text>
-                    <Text style={styles.payBody}>
-                      Orders, rewards, and pickup history stay attached to the right account when payment starts signed in.
-                    </Text>
-                  </View>
-                )}
+
+                      {showDevFallback ? (
+                        <View style={styles.devSection}>
+                          <Text style={styles.devEyebrow}>Development fallback</Text>
+                          <TextInput
+                            value={applePayToken}
+                            onChangeText={setApplePayToken}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            secureTextEntry
+                            placeholder="Test Apple Pay token"
+                            placeholderTextColor={uiPalette.textMuted}
+                            style={styles.tokenInput}
+                          />
+                          <View style={styles.devActions}>
+                            <Button
+                              label="Use Demo Token"
+                              variant="secondary"
+                              onPress={() => setApplePayToken(createDemoApplePayToken())}
+                              style={{ flex: 1 }}
+                            />
+                            <Button
+                              label={checkoutMutation.isPending ? "Processing…" : "Run Test"}
+                              variant="ghost"
+                              disabled={checkoutMutation.isPending || nativeApplePayPending}
+                              onPress={handleApplePayTokenCheckout}
+                              style={{ flex: 1 }}
+                            />
+                          </View>
+                        </View>
+                      ) : null}
+                    </>
+                  ) : null}
+                </View>
               </View>
             </>
           )}
@@ -625,58 +640,27 @@ export default function CartModalScreen() {
           </View>
         ) : null}
 
-        <BottomSheet
-          ref={removeSheetRef}
-          height="42%"
-          modal
-          animationType="slide"
-          backdropMaskColor="rgba(18, 16, 14, 0.28)"
-          closeOnBackdropPress
-          closeOnDragDown
-          openDuration={280}
-          closeDuration={220}
-          dragHandleStyle={styles.removeSheetHandle}
-          style={styles.removeSheet}
+        <ClearCartSheet
+          open={clearSheetOpen}
+          itemCount={itemCount}
+          bottomInset={Math.max(insets.bottom, 14)}
+          onClose={() => setClearSheetOpen(false)}
+          onCancel={() => setClearSheetOpen(false)}
+          onConfirm={resetCartState}
+        />
+
+        <RemoveItemSheet
+          open={pendingRemovalItem !== null}
+          itemName={pendingRemovalItem?.itemName}
+          bottomInset={Math.max(insets.bottom, 14)}
           onClose={() => setPendingRemovalLineId(null)}
-        >
-          <View style={[styles.removeSheetContent, { paddingBottom: Math.max(insets.bottom, 14) + 12 }]}>
-            <Text style={styles.removeSheetEyebrow}>Remove item</Text>
-            <Text style={styles.removeSheetTitle}>Delete from cart?</Text>
-            <Text style={styles.removeSheetBody}>
-              {pendingRemovalItem
-                ? `Remove ${pendingRemovalItem.itemName} from your order review? This will only remove the item from the bag.`
-                : "Remove this item from your order review? This will only remove the item from the bag."}
-            </Text>
-
-            {pendingRemovalItem ? (
-              <View style={styles.removeSheetPreviewRow}>
-                <Text style={styles.removeSheetPreviewName}>{pendingRemovalItem.itemName}</Text>
-                <Text style={styles.removeSheetPreviewMeta}>
-                  {`${pendingRemovalItem.quantity} ${pendingRemovalItem.quantity === 1 ? "item" : "items"}`}
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={styles.removeSheetActionRow}>
-              <Button
-                label="Keep Item"
-                variant="secondary"
-                onPress={() => removeSheetRef.current?.close()}
-                style={styles.removeSheetAction}
-              />
-              <Button
-                label="Delete Item"
-                disabled={!pendingRemovalItem}
-                onPress={() => {
-                  if (!pendingRemovalItem) return;
-                  removeItem(pendingRemovalItem.lineId);
-                  removeSheetRef.current?.close();
-                }}
-                style={styles.removeSheetAction}
-              />
-            </View>
-          </View>
-        </BottomSheet>
+          onCancel={() => setPendingRemovalLineId(null)}
+          onConfirm={() => {
+            if (!pendingRemovalItem) return;
+            removeItem(pendingRemovalItem.lineId);
+            setPendingRemovalLineId(null);
+          }}
+        />
       </View>
     </View>
   );
@@ -850,15 +834,35 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
     fontFamily: uiTypography.displayFamily
   },
-  clearChip: {
+  headerActionChipShell: {
+    borderRadius: 999
+  },
+  headerActionChipPressed: {
+    opacity: 0.8
+  },
+  headerActionChipFrame: {
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  headerActionChipInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: 999
+  },
+  headerActionChipInnerGlass: {
+    backgroundColor: "rgba(255,255,255,0.025)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)"
+  },
+  headerActionChipInnerFallback: {
     backgroundColor: "rgba(255,255,255,0.46)",
     borderWidth: 1,
     borderColor: uiPalette.border
   },
-  clearChipText: {
+  headerActionChipText: {
     fontSize: 12,
     lineHeight: 16,
     fontWeight: "600",
@@ -1019,140 +1023,49 @@ const styles = StyleSheet.create({
   stepperDividerGlass: {
     backgroundColor: "rgba(23, 21, 19, 0.18)"
   },
-  removeSheet: {
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    backgroundColor: "rgba(247, 244, 237, 0.985)",
-    borderWidth: 1,
-    borderColor: uiPalette.border
-  },
-  removeSheetHandle: {
-    marginTop: 12,
-    width: 38,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: "rgba(151, 160, 154, 0.52)"
-  },
-  removeSheetContent: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 14
-  },
-  removeSheetEyebrow: {
-    fontSize: 11,
-    lineHeight: 14,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    color: uiPalette.textMuted,
-    fontWeight: "700"
-  },
-  removeSheetTitle: {
-    marginTop: 8,
-    fontSize: 32,
-    lineHeight: 36,
-    letterSpacing: -0.8,
-    color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily,
-    fontWeight: "700"
-  },
-  removeSheetBody: {
-    marginTop: 12,
-    fontSize: 15,
-    lineHeight: 23,
-    color: uiPalette.textSecondary
-  },
-  removeSheetPreviewRow: {
-    marginTop: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 15,
-    borderRadius: 22,
-    backgroundColor: "rgba(255, 253, 248, 0.78)",
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  removeSheetPreviewName: {
-    flex: 1,
-    fontSize: 15,
-    lineHeight: 20,
-    color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 1.2
-  },
-  removeSheetPreviewMeta: {
-    marginLeft: 12,
-    fontSize: 13,
-    lineHeight: 18,
-    color: uiPalette.textSecondary
-  },
-  removeSheetActionRow: {
-    marginTop: 18,
-    flexDirection: "row",
-    gap: 10
-  },
-  removeSheetAction: {
-    flex: 1
-  },
   checkoutDeck: {
     marginTop: 18,
     paddingTop: 2
   },
-  pickupHeaderRow: {
-    marginTop: 16,
+  pickupMethodBlock: {
+    marginBottom: 18
+  },
+  checkoutContent: {
+    marginTop: 16
+  },
+  pickupMethodLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+    color: uiPalette.textMuted,
+    fontWeight: "700"
+  },
+  pickupMethodRow: {
+    marginTop: 8,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "baseline",
     justifyContent: "space-between",
     gap: 12
   },
-  pickupTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8
+  pickupMethodName: {
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily
   },
-  pickupPanelTitle: {
-    fontSize: 15,
-    lineHeight: 18,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-  pickupEtaText: {
+  pickupMethodEta: {
     fontSize: 13,
     lineHeight: 17,
     color: uiPalette.textMuted,
     fontWeight: "600"
   },
-  pickupBody: {
+  pickupMethodBody: {
     marginTop: 8,
     fontSize: 13,
     lineHeight: 20,
     color: uiPalette.textSecondary
-  },
-  pickupMeta: {
-    marginTop: 14,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8
-  },
-  pickupPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: uiPalette.surfaceStrong,
-    borderWidth: 1,
-    borderColor: uiPalette.border
-  },
-  pickupPillText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "600",
-    color: uiPalette.text
   },
   deckDivider: {
     height: 1,
@@ -1180,24 +1093,44 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "rgba(23, 21, 19, 0.08)"
   },
-  payTitle: {
-    fontSize: 24,
-    lineHeight: 28,
+  paymentStatusRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12
+  },
+  paymentStatusIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.56)",
+    borderWidth: 1,
+    borderColor: uiPalette.border
+  },
+  paymentStatusCopy: {
+    flex: 1
+  },
+  paymentStatusTitle: {
+    fontSize: 15,
+    lineHeight: 18,
     fontWeight: "700",
     color: uiPalette.text,
     fontFamily: uiTypography.displayFamily
   },
-  payBody: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 22,
+  paymentStatusBody: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 19,
     color: uiPalette.textSecondary
   },
   devSection: {
     marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(23, 21, 19, 0.08)"
+    padding: 14,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.44)",
+    borderWidth: 1,
+    borderColor: uiPalette.border
   },
   devEyebrow: {
     marginBottom: 10,

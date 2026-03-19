@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated as RNAnimated,
   Image,
   Pressable,
   RefreshControl,
@@ -145,14 +146,14 @@ function LoadingMenuState({
       <View style={[styles.headerShell, { paddingTop: insets.top + MENU_HEADER_TOP_PADDING, height: headerExpandedHeight }]}>
         <View style={styles.header}>
           <View style={styles.headerCopy}>
-            <View style={styles.pickupMetaWrap}>
+            <View style={[styles.pickupMetaWrap, styles.loadingPickupMetaWrap]}>
               <Text style={styles.pickupMeta}>Estimated pick-up is 12 mins</Text>
             </View>
             <Text style={styles.locationText}>Ann Arbor, Mi.</Text>
           </View>
         </View>
 
-        <View style={styles.tabsWrap}>
+        <View style={[styles.tabsWrap, styles.loadingTabsWrap]}>
           <View style={styles.tabRow}>
             <Text style={styles.activeTab}>Menu</Text>
           </View>
@@ -164,17 +165,38 @@ function LoadingMenuState({
   );
 }
 
-function MenuItemArtwork({ imageUrl }: { imageUrl?: string }) {
+function MenuItemArtwork({
+  imageUrl,
+  onReady
+}: {
+  imageUrl?: string;
+  onReady?: () => void;
+}) {
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     setImageFailed(false);
   }, [imageUrl]);
 
+  useEffect(() => {
+    if (!imageUrl) {
+      onReady?.();
+    }
+  }, [imageUrl, onReady]);
+
   return (
     <View style={styles.menuImage}>
       {imageUrl && !imageFailed ? (
-        <Image source={{ uri: imageUrl }} style={styles.menuImagePhoto} resizeMode="cover" onError={() => setImageFailed(true)} />
+        <Image
+          source={{ uri: imageUrl }}
+          style={styles.menuImagePhoto}
+          resizeMode="cover"
+          onLoadEnd={onReady}
+          onError={() => {
+            setImageFailed(true);
+            onReady?.();
+          }}
+        />
       ) : (
         <Ionicons name="cafe-outline" size={22} color={uiPalette.accent} />
       )}
@@ -185,16 +207,18 @@ function MenuItemArtwork({ imageUrl }: { imageUrl?: string }) {
 function MenuRow({
   item,
   showDivider,
-  onPress
+  onPress,
+  onImageReady
 }: {
   item: MenuItem;
   showDivider: boolean;
   onPress: () => void;
+  onImageReady: () => void;
 }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.menuRow, pressed ? styles.pressed : null]}>
       <View style={styles.menuRowMain}>
-        <MenuItemArtwork imageUrl={item.imageUrl} />
+        <MenuItemArtwork imageUrl={item.imageUrl} onReady={onImageReady} />
         <View style={[styles.menuBodyWrap, showDivider ? styles.menuBodyWrapWithDivider : null]}>
           <View style={styles.menuBodyContent}>
             <View style={styles.menuCopy}>
@@ -233,18 +257,72 @@ export default function MenuScreen() {
   const isInitialLoading = menuQuery.isLoading && !menuQuery.data;
   const menu = isInitialLoading ? null : resolveMenuData(menuQuery.data);
   const scrollViewRef = useRef<ScrollView | null>(null);
+  const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
   const scrollY = useSharedValue(0);
   const dockBottom = getTabBarBottomOffset(insets.bottom > 0);
   const contentBottomInset = dockBottom + TAB_BAR_HEIGHT + 24;
   const headerExpandedHeight = insets.top + MENU_HEADER_EXPANDED_HEIGHT;
   const headerCollapsedHeight = insets.top + MENU_HEADER_COLLAPSED_HEIGHT;
   const headerCollapseDistance = headerExpandedHeight - headerCollapsedHeight;
+  const [loadedImageIds, setLoadedImageIds] = useState<Set<string>>(() => new Set());
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(true);
+  const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
 
   const sections = useMemo(() => buildSections(menu?.categories ?? []), [menu?.categories]);
+  const menuItems = useMemo(() => menu?.categories.flatMap((category) => category.items) ?? [], [menu?.categories]);
+  const requiredImageIds = useMemo(() => menuItems.filter((item) => Boolean(item.imageUrl)).map((item) => item.id), [menuItems]);
+  const imagesReady = requiredImageIds.length === 0 || requiredImageIds.every((itemId) => loadedImageIds.has(itemId));
+  const shouldShowInitialLoading = !didFinishInitialReveal && (isInitialLoading || !menu || !imagesReady);
 
   const setScrollViewRef = useCallback((node: ScrollView | null) => {
     scrollViewRef.current = node;
   }, []);
+
+  const handleMenuItemReady = useCallback(
+    (itemId: string) => {
+      if (didFinishInitialReveal) return;
+
+      setLoadedImageIds((current) => {
+        if (current.has(itemId)) {
+          return current;
+        }
+
+        const next = new Set(current);
+        next.add(itemId);
+        return next;
+      });
+    },
+    [didFinishInitialReveal]
+  );
+
+  useEffect(() => {
+    if (didFinishInitialReveal) return;
+
+    setLoadedImageIds(new Set());
+  }, [didFinishInitialReveal, requiredImageIds]);
+
+  useEffect(() => {
+    if (didFinishInitialReveal) return;
+
+    if (shouldShowInitialLoading) {
+      setShowLoadingOverlay(true);
+      loadingOpacity.stopAnimation();
+      loadingOpacity.setValue(1);
+      return;
+    }
+
+    setShowLoadingOverlay(true);
+    loadingOpacity.stopAnimation();
+    RNAnimated.timing(loadingOpacity, {
+      toValue: 0,
+      duration: 260,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setShowLoadingOverlay(false);
+      setDidFinishInitialReveal(true);
+    });
+  }, [didFinishInitialReveal, loadingOpacity, shouldShowInitialLoading]);
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -322,10 +400,6 @@ export default function MenuScreen() {
     [snapHeader]
   );
 
-  if (isInitialLoading) {
-    return <LoadingMenuState headerExpandedHeight={headerExpandedHeight} contentBottomInset={contentBottomInset} insets={insets} />;
-  }
-
   return (
     <View style={styles.screen}>
       <ScreenBackdrop />
@@ -369,6 +443,7 @@ export default function MenuScreen() {
                   key={item.id}
                   item={item}
                   showDivider={index < section.items.length - 1}
+                  onImageReady={() => handleMenuItemReady(item.id)}
                   onPress={() => router.push({ pathname: "/menu-customize", params: { itemId: item.id } })}
                 />
               ))}
@@ -396,6 +471,12 @@ export default function MenuScreen() {
       </Animated.View>
 
       <TabBarDepthBackdrop />
+
+      {showLoadingOverlay ? (
+        <RNAnimated.View pointerEvents="auto" style={[styles.loadingOverlay, { opacity: loadingOpacity }]}>
+          <LoadingMenuState headerExpandedHeight={headerExpandedHeight} contentBottomInset={contentBottomInset} insets={insets} />
+        </RNAnimated.View>
+      ) : null}
     </View>
   );
 }
@@ -431,6 +512,10 @@ const styles = StyleSheet.create({
   pickupMetaWrap: {
     overflow: "hidden"
   },
+  loadingPickupMetaWrap: {
+    height: 18,
+    marginBottom: 6
+  },
   pickupMeta: {
     fontSize: 13,
     lineHeight: 18,
@@ -448,6 +533,10 @@ const styles = StyleSheet.create({
   },
   tabsWrap: {
     overflow: "hidden"
+  },
+  loadingTabsWrap: {
+    height: 34,
+    marginTop: 9
   },
   tabRow: {
     flexDirection: "row",
@@ -499,6 +588,10 @@ const styles = StyleSheet.create({
   },
   loadingBlock: {
     backgroundColor: "rgba(219, 216, 207, 0.92)"
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 30
   },
   menuBodyWrap: {
     flex: 1,

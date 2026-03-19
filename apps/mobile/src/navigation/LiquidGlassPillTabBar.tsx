@@ -6,8 +6,6 @@ import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-na
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { findActiveOrder, useOrderHistoryQuery } from "../account/data";
-import { useAuthSession } from "../auth/session";
 import { useCart } from "../cart/store";
 import { uiPalette, uiTypography } from "../ui/system";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "./tabBarMetrics";
@@ -28,9 +26,6 @@ export function LiquidGlassPillTabBar({ state, descriptors, navigation }: PillTa
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { itemCount } = useCart();
-  const { isAuthenticated } = useAuthSession();
-  const ordersQuery = useOrderHistoryQuery(isAuthenticated);
-  const activeOrder = findActiveOrder(ordersQuery.data ?? []);
   const [tabRowWidth, setTabRowWidth] = useState(0);
   const [dragTargetIndex, setDragTargetIndex] = useState<number | null>(null);
   const indicatorTranslateX = useSharedValue(0);
@@ -375,11 +370,6 @@ export function LiquidGlassPillTabBar({ state, descriptors, navigation }: PillTa
                           {label}
                         </Text>
                       </View>
-                      {route.name === "orders" && activeOrder ? (
-                        <View style={[styles.activityDot, isFocused ? styles.activityDotActive : null]}>
-                          <View style={[styles.activityDotInner, isFocused ? styles.activityDotInnerActive : null]} />
-                        </View>
-                      ) : null}
                     </Pressable>
                   </View>
                 );
@@ -607,31 +597,5 @@ const styles = StyleSheet.create({
   },
   tabLabelActive: {
     color: "rgba(18, 18, 18, 0.96)"
-  },
-  activityDot: {
-    position: "absolute",
-    top: 9,
-    right: 15,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: "rgba(255,255,255,0.94)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(23,21,19,0.08)",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  activityDotActive: {
-    backgroundColor: "rgba(23,21,19,0.86)",
-    borderColor: "rgba(255,255,255,0.24)"
-  },
-  activityDotInner: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(18, 18, 18, 0.96)"
-  },
-  activityDotInnerActive: {
-    backgroundColor: "#FFFFFF"
   }
 });

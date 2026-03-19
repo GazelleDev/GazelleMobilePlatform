@@ -1,6 +1,6 @@
 # Mobile Menu + Cart Flow
 
-Last reviewed: `2026-03-10`
+Last reviewed: `2026-03-19`
 
 ## Scope
 
@@ -28,6 +28,14 @@ Pricing and line merge behavior lives in `src/cart/model.ts`:
 - Users can build and edit cart state without being authenticated.
 - Checkout action remains gated by auth and currently shows a `Coming Soon` state after sign-in.
 - Unauthenticated users are prompted to sign in from the cart summary.
+
+## Loading + Navigation Behavior
+
+- Menu initial load now keeps the loading overlay visible until the first set of item artwork resolves, then fades into the live menu surface instead of switching abruptly.
+- Menu loading header spacing is intentionally aligned with the expanded live header so the skeleton and the live screen share the same top rhythm.
+- The customize modal uses a skeleton sheet that matches the live modal outline, including hero image area, content blocks, summary rows, and footer controls.
+- Customize modal initial reveal now fades the loading sheet over the live modal and waits for the hero image before clearing the overlay.
+- The Orders tab no longer shows a separate active-order dot in the tab bar. Active order state is communicated inside the Orders screen itself.
 
 ## Verification
 

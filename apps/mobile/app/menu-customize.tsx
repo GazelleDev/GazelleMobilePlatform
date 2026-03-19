@@ -2,13 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   describeCustomizationSelection,
   priceMenuItemCustomization,
   type CustomizationValidationIssue
 } from "@gazelle/contracts-catalog";
 import {
+  Animated as RNAnimated,
   Image,
   Platform,
   Pressable,
@@ -294,14 +295,22 @@ export default function MenuCustomizeModalScreen() {
 
   const { addItem } = useCart();
   const menuQuery = useMenuQuery();
-  const menu = resolveMenuData(menuQuery.data);
-  const items = useMemo(() => menu.categories.flatMap((category) => category.items), [menu.categories]);
+  const isInitialLoading = menuQuery.isLoading && !menuQuery.data;
+  const menu = isInitialLoading ? null : resolveMenuData(menuQuery.data);
+  const items = useMemo(() => menu?.categories.flatMap((category) => category.items) ?? [], [menu?.categories]);
   const item = useMemo(() => findMenuItemById(itemId, items), [itemId, items]);
+  const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
 
   const [customization, setCustomization] = useState<CartCustomization>(DEFAULT_CUSTOMIZATION);
   const [quantity, setQuantity] = useState(1);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
-  const [heroReady, setHeroReady] = useState(true);
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(true);
+  const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
+  const [readyHeroItemId, setReadyHeroItemId] = useState<string | null>(null);
+
+  const heroReady = !item || !item.imageUrl || readyHeroItemId === item.id;
+  const shouldShowInitialLoading = !didFinishInitialReveal && (isInitialLoading || (Boolean(item) && !heroReady));
+
   useEffect(() => {
     setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
     setQuantity(1);
@@ -309,13 +318,20 @@ export default function MenuCustomizeModalScreen() {
   }, [item]);
 
   useEffect(() => {
+    setDidFinishInitialReveal(false);
+    setShowLoadingOverlay(true);
+    loadingOpacity.stopAnimation();
+    loadingOpacity.setValue(1);
+  }, [itemId, loadingOpacity]);
+
+  useEffect(() => {
     if (!item) {
-      setHeroReady(true);
+      setReadyHeroItemId(null);
       return;
     }
 
-    setHeroReady(!item.imageUrl);
-  }, [item]);
+    setReadyHeroItemId(item.imageUrl ? null : item.id);
+  }, [item?.id, item?.imageUrl]);
 
   const resolvedCustomization = useMemo(
     () => (item ? resolveCartCustomization(item.customizationGroups, customization) : resolveCartCustomization([], customization)),
@@ -358,16 +374,48 @@ export default function MenuCustomizeModalScreen() {
   );
   const priceLine = formatUsd(selectedUnitPriceCents);
   const metaLine = customizationPreview;
-  const handleHeroReady = useMemo(
-    () => () => {
+  const handleHeroReady = useCallback(() => {
+    if (!item?.id) return;
+
+    const activeItemId = item.id;
+
+    requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setHeroReady(true);
-        });
+        setReadyHeroItemId((currentItemId) => (currentItemId === activeItemId ? currentItemId : activeItemId));
       });
-    },
-    []
-  );
+    });
+  }, [item?.id]);
+
+  useEffect(() => {
+    if (didFinishInitialReveal) return;
+
+    if (!item && !isInitialLoading) {
+      loadingOpacity.stopAnimation();
+      loadingOpacity.setValue(0);
+      setShowLoadingOverlay(false);
+      setDidFinishInitialReveal(true);
+      return;
+    }
+
+    if (shouldShowInitialLoading) {
+      setShowLoadingOverlay(true);
+      loadingOpacity.stopAnimation();
+      loadingOpacity.setValue(1);
+      return;
+    }
+
+    setShowLoadingOverlay(true);
+    loadingOpacity.stopAnimation();
+    RNAnimated.timing(loadingOpacity, {
+      toValue: 0,
+      duration: 260,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setShowLoadingOverlay(false);
+      setDidFinishInitialReveal(true);
+    });
+  }, [didFinishInitialReveal, isInitialLoading, item, loadingOpacity, shouldShowInitialLoading]);
 
   function closeModal() {
     if (router.canGoBack()) {
@@ -396,11 +444,7 @@ export default function MenuCustomizeModalScreen() {
     closeModal();
   }
 
-  if (menuQuery.isLoading && !menuQuery.data) {
-    return <CustomizeModalLoadingSheet />;
-  }
-
-  if (!item) {
+  if (!item && !showLoadingOverlay) {
     return (
       <SimpleModalState
         title="This item is unavailable."
@@ -413,99 +457,102 @@ export default function MenuCustomizeModalScreen() {
 
   return (
     <View style={styles.backdrop}>
-      <View style={styles.sheet}>
-        <View style={styles.handleWrap}>
-          <View style={styles.handle} />
-        </View>
-
-        <ScrollView
-          bounces
-          showsVerticalScrollIndicator={false}
-          contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
-        >
-          <View style={styles.heroWrap}>
-            <ProductImage imageUrl={item.imageUrl} onReady={handleHeroReady} />
+      {item ? (
+        <View style={styles.sheet}>
+          <View style={styles.handleWrap}>
+            <View style={styles.handle} />
           </View>
 
-          <View style={styles.content}>
-            <View style={styles.titleRow}>
-              <Text style={[styles.title, styles.titleText]}>{item.name}</Text>
-              <Text style={styles.price}>{priceLine}</Text>
+          <ScrollView
+            bounces
+            showsVerticalScrollIndicator={false}
+            contentInsetAdjustmentBehavior="never"
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
+          >
+            <View style={styles.heroWrap}>
+              <ProductImage imageUrl={item.imageUrl} onReady={handleHeroReady} />
             </View>
-            {metaLine ? <Text style={styles.meta}>{metaLine}</Text> : null}
-            <Text style={styles.description}>{item.description}</Text>
 
-            <View>
-              <View style={styles.customizationSectionsWrap}>
-                {item.customizationGroups.map((group) => (
-                  <CustomizationGroupSection
-                    key={group.id}
-                    group={group}
-                    customization={customization}
-                    validationMessage={showValidationErrors ? findGroupIssue(resolvedCustomization.issues, group.id)?.message : undefined}
-                    onSelectOption={(option) => setCustomization((prev) => updateCustomizationOption(prev, group, option))}
+            <View style={styles.content}>
+              <View style={styles.titleRow}>
+                <Text style={[styles.title, styles.titleText]}>{item.name}</Text>
+                <Text style={styles.price}>{priceLine}</Text>
+              </View>
+              {metaLine ? <Text style={styles.meta}>{metaLine}</Text> : null}
+              <Text style={styles.description}>{item.description}</Text>
+
+              <View>
+                <View style={styles.customizationSectionsWrap}>
+                  {item.customizationGroups.map((group) => (
+                    <CustomizationGroupSection
+                      key={group.id}
+                      group={group}
+                      customization={customization}
+                      validationMessage={showValidationErrors ? findGroupIssue(resolvedCustomization.issues, group.id)?.message : undefined}
+                      onSelectOption={(option) => setCustomization((prev) => updateCustomizationOption(prev, group, option))}
+                    />
+                  ))}
+                </View>
+
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Notes</Text>
+                  <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
+                  <TextInput
+                    value={customization.notes}
+                    onChangeText={(value) =>
+                      setCustomization((prev) =>
+                        normalizeCustomization({
+                          ...prev,
+                          notes: value
+                        })
+                      )
+                    }
+                    placeholder="No foam, easy ice, half sweet..."
+                    placeholderTextColor={uiPalette.textMuted}
+                    style={styles.noteInput}
+                    multiline
                   />
-                ))}
+                </View>
               </View>
 
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Notes</Text>
-                <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
-                <TextInput
-                  value={customization.notes}
-                  onChangeText={(value) =>
-                    setCustomization((prev) =>
-                      normalizeCustomization({
-                        ...prev,
-                        notes: value
-                      })
-                    )
-                  }
-                  placeholder="No foam, easy ice, half sweet..."
-                  placeholderTextColor={uiPalette.textMuted}
-                  style={styles.noteInput}
-                  multiline
-                />
+              <View style={styles.summarySection}>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Customization</Text>
+                  <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
+                </View>
+                {showValidationErrors && !resolvedCustomization.valid ? (
+                  <Text style={styles.summaryError}>{resolvedCustomization.issues[0]?.message ?? "Please finish the required selections."}</Text>
+                ) : null}
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Total</Text>
+                  <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
+                </View>
               </View>
             </View>
+          </ScrollView>
 
-            <View style={styles.summarySection}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Customization</Text>
-                <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
-              </View>
-              {showValidationErrors && !resolvedCustomization.valid ? (
-                <Text style={styles.summaryError}>{resolvedCustomization.issues[0]?.message ?? "Please finish the required selections."}</Text>
-              ) : null}
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Total</Text>
-                <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
-              </View>
-            </View>
+          <View pointerEvents="box-none" style={[styles.footerRow, { bottom: footerBottom }]}>
+            <FooterPill style={styles.footerPrimaryPill}>
+              <Pressable onPress={addSelectedItem} style={[styles.footerButton, styles.footerPrimaryButton]}>
+                <Text style={styles.footerPrimaryText}>Add to Cart</Text>
+              </Pressable>
+            </FooterPill>
+            <FooterQuantityPill
+              style={styles.footerQuantityPill}
+              quantity={quantity}
+              canDecrease={quantity > 1}
+              canIncrease={quantity < MAX_QUANTITY}
+              onDecrease={() => setQuantity((prev) => Math.max(prev - 1, 1))}
+              onIncrease={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
+            />
           </View>
-        </ScrollView>
+        </View>
+      ) : null}
 
-        <View pointerEvents="box-none" style={[styles.footerRow, { bottom: footerBottom }]}>
-          <FooterPill style={styles.footerPrimaryPill}>
-            <Pressable onPress={addSelectedItem} style={[styles.footerButton, styles.footerPrimaryButton]}>
-              <Text style={styles.footerPrimaryText}>Add to Cart</Text>
-            </Pressable>
-          </FooterPill>
-          <FooterQuantityPill
-            style={styles.footerQuantityPill}
-            quantity={quantity}
-            canDecrease={quantity > 1}
-            canIncrease={quantity < MAX_QUANTITY}
-            onDecrease={() => setQuantity((prev) => Math.max(prev - 1, 1))}
-            onIncrease={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
-          />
-        </View>
-      </View>
-      {!heroReady ? (
-        <View style={styles.loadingOverlay}>
+      {showLoadingOverlay ? (
+        <RNAnimated.View pointerEvents="auto" style={[styles.loadingOverlay, { opacity: loadingOpacity }]}>
           <CustomizeModalLoadingSheet />
-        </View>
+        </RNAnimated.View>
       ) : null}
     </View>
   );
