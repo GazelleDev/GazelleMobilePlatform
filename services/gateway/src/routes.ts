@@ -149,6 +149,8 @@ function trimToUndefined(value: string | undefined) {
   return next && next.length > 0 ? next : undefined;
 }
 
+// Local JWT verification is intentionally fail-closed. Once JWT mode is enabled, malformed or tampered
+// bearer tokens are treated as unauthorized instead of falling back to identity roundtrips.
 function verifyJwtAccessToken(token: string, secret: string): { userId: string } | undefined {
   const parts = token.split(".");
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
@@ -285,6 +287,8 @@ async function proxyUpstream<TResponse>(params: {
     "x-request-id": request.id
   };
   const authorization = request.headers.authorization;
+  // Gateway prefers verified auth context for downstream customer calls and only falls back to a raw
+  // inbound header on routes that intentionally remain unscoped.
   const userIdHeader = request.authenticatedUserId ?? toHeaderValue(request.headers["x-user-id"]);
 
   if (typeof authorization === "string") {
@@ -318,6 +322,10 @@ async function proxyUpstream<TResponse>(params: {
     });
   } catch (error) {
     if (isAbortError(error)) {
+      request.log.warn(
+        { requestId: request.id, serviceLabel, method, path, timeoutMs },
+        "upstream request timed out"
+      );
       return reply.status(504).send(
         apiErrorSchema.parse({
           code: "UPSTREAM_TIMEOUT",
@@ -327,6 +335,10 @@ async function proxyUpstream<TResponse>(params: {
       );
     }
 
+    request.log.error(
+      { error, requestId: request.id, serviceLabel, method, path },
+      "upstream request failed before response"
+    );
     return reply.status(502).send(
       apiErrorSchema.parse({
         code: "UPSTREAM_UNAVAILABLE",
@@ -528,6 +540,7 @@ async function resolveAuthenticatedUserId(params: {
     });
   } catch (error) {
     if (isAbortError(error)) {
+      request.log.warn({ requestId: request.id, timeoutMs }, "identity auth lookup timed out");
       reply.status(504).send(
         apiErrorSchema.parse({
           code: "UPSTREAM_TIMEOUT",
@@ -538,6 +551,7 @@ async function resolveAuthenticatedUserId(params: {
       return undefined;
     }
 
+    request.log.error({ error, requestId: request.id }, "identity auth lookup failed before response");
     reply.status(502).send(
       apiErrorSchema.parse({
         code: "UPSTREAM_UNAVAILABLE",
@@ -1151,6 +1165,8 @@ export async function registerRoutes(app: FastifyInstance) {
         reply.raw.flushHeaders();
       }
 
+      // This is SSE backed by gateway polling rather than a dedicated websocket/event bus. The stream keeps
+      // client integration simple today while the gateway re-reads order state on an interval behind the scenes.
       let closed = false;
       let pollTimeout: ReturnType<typeof setTimeout> | undefined;
       let lastSeenStatus = initialOrderResult.order.status;

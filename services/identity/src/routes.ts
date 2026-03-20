@@ -46,7 +46,7 @@ const defaultPasskeyVerifyRateLimitMax = 12;
 const defaultPasskeyChallengeRateLimitMax = 24;
 const defaultAccessTokenTtlMs = 30 * 60 * 1000;
 // Successful refresh rotation extends the session's idle lifetime by issuing a new refresh token.
-// TODO(platform): Add an absolute max refresh-session lifetime on top of this idle timeout if we need stricter long-lived session control.
+// We intentionally keep this as an idle timeout for now; absolute session caps are a future policy choice.
 const defaultRefreshSessionTtlMs = 30 * 24 * 60 * 60 * 1000;
 
 function parseCommaSeparatedEnv(value: string | undefined) {
@@ -137,7 +137,8 @@ function buildStoredSession(seed: string, userId: string) {
   const refreshExpiresAt = new Date(Date.now() + defaultRefreshSessionTtlMs).toISOString();
   const jwtSecret = loadJwtSecret();
   // JWT access tokens are opt-in for rollout compatibility. Refresh/logout semantics remain DB-backed
-  // either way because the refresh token and session record are still persisted.
+  // either way because the refresh token and session record are still persisted. The opaque path stays
+  // until every identity+gateway deployment shares JWT_SECRET.
   const accessToken = jwtSecret ? buildJwtAccessToken(userId, accessExpiresAt, jwtSecret) : `access-${tokenSuffix}`;
 
   return {
@@ -245,7 +246,8 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
       const input = appleExchangeRequestSchema.parse(request.body);
 
       if (appleSignInVerificationEnabled) {
-        // TODO(identity): Implement full Apple JWKS signature verification when APPLE_SIGN_IN_VERIFY=true.
+        // Apple verification is intentionally fail-closed when explicitly enabled. Until full JWKS
+        // signature verification exists, we reject these requests instead of accepting unverifiable tokens.
         app.log.warn(
           {
             requestId: request.id
@@ -417,7 +419,7 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
           authMethod: "passkey-register"
         });
       } catch (error) {
-        app.log.warn({ error }, "passkey register verify failed");
+        app.log.warn({ error, requestId: request.id }, "passkey register verify failed");
         return reply
           .status(401)
           .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey registration verification failed"));
@@ -555,7 +557,7 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
           authMethod: "passkey-auth"
         });
       } catch (error) {
-        app.log.warn({ error }, "passkey auth verify failed");
+        app.log.warn({ error, requestId: request.id }, "passkey auth verify failed");
         return reply
           .status(401)
           .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey authentication verification failed"));

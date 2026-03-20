@@ -206,7 +206,7 @@ button {
   margin-top: 18px;
 }
 
-.filter-chip {
+.filter-btn {
   min-height: 38px;
   padding: 0 14px;
   border-radius: 999px;
@@ -216,7 +216,7 @@ button {
   font-weight: 700;
 }
 
-.filter-chip--active {
+.filter-btn--active {
   background: rgba(45, 40, 35, 0.12);
   border-color: rgba(45, 40, 35, 0.24);
   color: var(--ink);
@@ -318,6 +318,12 @@ button {
   color: var(--ink);
 }
 
+.button--danger {
+  background: rgba(142, 59, 47, 0.1);
+  border-color: rgba(142, 59, 47, 0.22);
+  color: var(--danger);
+}
+
 .button--ghost {
   background: transparent;
   border-color: rgba(142, 59, 47, 0.25);
@@ -375,18 +381,10 @@ button {
   color: var(--danger);
 }
 
-.inline-confirm {
-  display: grid;
+.cancel-confirm-row {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
-  margin-top: 14px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(142, 59, 47, 0.18);
-  background: rgba(142, 59, 47, 0.08);
-}
-
-.inline-confirm .subtle-copy {
-  color: var(--danger);
 }
 
 .editor-card {

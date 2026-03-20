@@ -17,6 +17,18 @@ function resolveMailProvider(env: NodeJS.ProcessEnv) {
   return env.MAIL_PROVIDER?.trim().toLowerCase() || defaultMailProvider;
 }
 
+function sanitizeMagicLinkUrl(magicLinkUrl: string) {
+  try {
+    const url = new URL(magicLinkUrl);
+    if (url.searchParams.has("token")) {
+      url.searchParams.set("token", "[redacted]");
+    }
+    return url.toString();
+  } catch {
+    return "[redacted]";
+  }
+}
+
 export function createMailSender({
   env = process.env,
   fetchImpl = fetch,
@@ -31,7 +43,7 @@ export function createMailSender({
           {
             provider,
             recipient: to,
-            magicLinkUrl
+            magicLinkUrl: sanitizeMagicLinkUrl(magicLinkUrl)
           },
           "magic link generated in log mode; no email was sent"
         );
@@ -68,8 +80,7 @@ export function createMailSender({
         });
 
         if (!response.ok) {
-          const responseText = await response.text();
-          throw new Error(`Resend request failed with ${response.status}: ${responseText}`);
+          throw new Error(`Resend request failed with status ${response.status}`);
         }
       }
     };

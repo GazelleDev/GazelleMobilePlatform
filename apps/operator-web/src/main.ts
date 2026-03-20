@@ -38,18 +38,20 @@ type AppState = {
   selectedOrderId: string | null;
   appConfig: AppConfig | null;
   orders: OperatorOrder[];
-  ordersFilter: OperatorOrderFilter;
+  orderFilter: OperatorOrderFilter;
   menuCategories: AdminMenuCategory[];
   storeConfig: AdminStoreConfig | null;
   busyOrderId: string | null;
   busyMenuItemId: string | null;
   savingStore: boolean;
-  lastOrdersLoadedAtMs: number | null;
+  lastRefreshedAt: number | null;
+  autoRefreshHandle: ReturnType<typeof setInterval> | null;
   pendingCancelOrderId: string | null;
+  pendingCancelTimeoutHandle: ReturnType<typeof setTimeout> | null;
 };
 
 const ordersRefreshIntervalMs = 30_000;
-const cancelConfirmTimeoutMs = 5_000;
+const cancelConfirmTimeoutMs = 10_000;
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) {
@@ -66,19 +68,17 @@ const state: AppState = {
   selectedOrderId: null,
   appConfig: null,
   orders: [],
-  ordersFilter: "active",
+  orderFilter: "active",
   menuCategories: [],
   storeConfig: null,
   busyOrderId: null,
   busyMenuItemId: null,
   savingStore: false,
-  lastOrdersLoadedAtMs: null,
-  pendingCancelOrderId: null
+  lastRefreshedAt: null,
+  autoRefreshHandle: null,
+  pendingCancelOrderId: null,
+  pendingCancelTimeoutHandle: null
 };
-
-let ordersRefreshIntervalId: number | null = null;
-let ordersFreshnessIntervalId: number | null = null;
-let cancelConfirmTimeoutId: number | null = null;
 
 function escapeHtml(value: string | undefined | null) {
   return String(value ?? "")
@@ -114,117 +114,93 @@ function setError(message: string | null) {
 }
 
 function getVisibleOrders() {
-  return filterOrdersByView(state.orders, state.ordersFilter);
+  return filterOrdersByView(state.orders, state.orderFilter);
 }
 
-function formatOrdersFreshnessLabel() {
-  if (state.lastOrdersLoadedAtMs === null) {
-    return state.loading ? "Last refreshed: loading…" : "Last refreshed: not yet";
-  }
+function renderRefreshMeta() {
+  const refreshedLabel =
+    state.lastRefreshedAt === null
+      ? state.loading
+        ? "refreshing..."
+        : "not yet refreshed"
+      : `refreshed ${Math.max(0, Math.floor((Date.now() - state.lastRefreshedAt) / 1000))}s ago`;
 
-  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - state.lastOrdersLoadedAtMs) / 1000));
-  return state.loading ? `Last refreshed: ${elapsedSeconds}s ago · refreshing…` : `Last refreshed: ${elapsedSeconds}s ago`;
+  return `
+    <div class="metric-stack">
+      <span class="metric">${state.orders.length} total loaded</span>
+      <span class="metric">${escapeHtml(refreshedLabel)}</span>
+    </div>
+  `;
 }
 
-function updateOrdersFreshnessIndicator() {
-  const indicator = root.querySelector<HTMLElement>('[data-role="orders-last-refreshed"]');
-  if (indicator) {
-    indicator.textContent = formatOrdersFreshnessLabel();
-  }
-}
-
-function stopOrdersRefreshTimers() {
-  if (ordersRefreshIntervalId !== null) {
-    window.clearInterval(ordersRefreshIntervalId);
-    ordersRefreshIntervalId = null;
-  }
-
-  if (ordersFreshnessIntervalId !== null) {
-    window.clearInterval(ordersFreshnessIntervalId);
-    ordersFreshnessIntervalId = null;
+function stopAutoRefresh() {
+  if (state.autoRefreshHandle !== null) {
+    clearInterval(state.autoRefreshHandle);
+    state.autoRefreshHandle = null;
   }
 }
 
-function syncOrdersRefreshTimers() {
-  if (typeof window === "undefined") {
+function startAutoRefresh() {
+  if (typeof window === "undefined" || state.autoRefreshHandle !== null) {
     return;
   }
 
-  if (!state.session || state.section !== "orders") {
-    stopOrdersRefreshTimers();
+  if (!state.session || state.section !== "orders" || state.loading) {
     return;
   }
 
-  if (ordersRefreshIntervalId === null) {
-    ordersRefreshIntervalId = window.setInterval(() => {
+  state.autoRefreshHandle = setInterval(() => {
+    if (state.section === "orders" && state.session && !state.loading) {
       void loadDashboard();
-    }, ordersRefreshIntervalMs);
-  }
-
-  if (ordersFreshnessIntervalId === null) {
-    ordersFreshnessIntervalId = window.setInterval(() => {
-      updateOrdersFreshnessIndicator();
-    }, 1000);
-  }
-
-  updateOrdersFreshnessIndicator();
+    }
+  }, ordersRefreshIntervalMs);
 }
 
-function clearCancelConfirmation(renderAfterClear = false) {
-  if (cancelConfirmTimeoutId !== null) {
-    window.clearTimeout(cancelConfirmTimeoutId);
-    cancelConfirmTimeoutId = null;
+function clearPendingCancel() {
+  if (state.pendingCancelTimeoutHandle !== null) {
+    clearTimeout(state.pendingCancelTimeoutHandle);
+    state.pendingCancelTimeoutHandle = null;
   }
 
-  const changed = state.pendingCancelOrderId !== null;
   state.pendingCancelOrderId = null;
-
-  if (renderAfterClear && changed) {
-    render();
-  }
 }
 
-function armCancelConfirmation(orderId: string) {
-  clearCancelConfirmation(false);
+function armPendingCancel(orderId: string) {
+  clearPendingCancel();
   state.pendingCancelOrderId = orderId;
-  cancelConfirmTimeoutId = window.setTimeout(() => {
+  state.pendingCancelTimeoutHandle = setTimeout(() => {
     if (state.pendingCancelOrderId === orderId) {
-      state.pendingCancelOrderId = null;
-      cancelConfirmTimeoutId = null;
+      clearPendingCancel();
       render();
     }
   }, cancelConfirmTimeoutMs);
 }
 
 function getSelectedOrder() {
-  const availableOrders = getVisibleOrders();
-  if (availableOrders.length === 0) {
-    return null;
-  }
-
   if (state.selectedOrderId) {
-    return availableOrders.find((order) => order.id === state.selectedOrderId) ?? null;
+    return state.orders.find((order) => order.id === state.selectedOrderId) ?? null;
   }
 
-  return availableOrders.find(isActiveOrder) ?? availableOrders[0] ?? null;
+  return state.orders.find(isActiveOrder) ?? null;
 }
 
 function selectOrder(orderId: string | null) {
+  clearPendingCancel();
   state.selectedOrderId = orderId;
-
-  if (state.pendingCancelOrderId && state.pendingCancelOrderId !== orderId) {
-    clearCancelConfirmation();
-  }
 }
 
 function reconcileSelectedOrder() {
-  const selectedOrder = getSelectedOrder();
-  selectOrder(selectedOrder?.id ?? null);
+  if (state.selectedOrderId && state.orders.some((order) => order.id === state.selectedOrderId)) {
+    return;
+  }
+
+  state.selectedOrderId = state.orders.find(isActiveOrder)?.id ?? null;
 }
 
 async function loadDashboard() {
   if (!state.session) {
     state.loading = false;
+    stopAutoRefresh();
     render();
     return;
   }
@@ -243,16 +219,17 @@ async function loadDashboard() {
     state.orders = snapshot.orders;
     state.menuCategories = snapshot.menu.categories;
     state.storeConfig = snapshot.storeConfig;
-    state.lastOrdersLoadedAtMs = Date.now();
+    state.lastRefreshedAt = Date.now();
     reconcileSelectedOrder();
 
-    if (state.pendingCancelOrderId && !getVisibleOrders().some((order) => order.id === state.pendingCancelOrderId)) {
-      clearCancelConfirmation();
+    if (state.pendingCancelOrderId && !state.orders.some((order) => order.id === state.pendingCancelOrderId)) {
+      clearPendingCancel();
     }
   } catch (error) {
     setError(error instanceof Error ? error.message : "Unable to load operator data.");
   } finally {
     state.loading = false;
+    startAutoRefresh();
     render();
   }
 }
@@ -345,9 +322,9 @@ function renderOrdersSection() {
   const visibleOrders = getVisibleOrders();
   const selectedOrder = getSelectedOrder();
   const emptyMessage =
-    state.ordersFilter === "active"
+    state.orderFilter === "active"
       ? "No active orders right now."
-      : state.ordersFilter === "completed"
+      : state.orderFilter === "completed"
         ? "No completed or canceled orders are loaded yet."
         : "No orders are loaded yet.";
   const orderRows =
@@ -367,27 +344,6 @@ function renderOrdersSection() {
           .join("")
       : `<p class="empty-copy">${escapeHtml(emptyMessage)}</p>`;
 
-  const filterButtons = (
-    [
-      { key: "all", label: "All", count: state.orders.length },
-      { key: "active", label: "Active", count: activeOrders.length },
-      { key: "completed", label: "Completed", count: completedOrders.length }
-    ] as const
-  )
-    .map(
-      (filter) => `
-        <button
-          class="filter-chip ${state.ordersFilter === filter.key ? "filter-chip--active" : ""}"
-          type="button"
-          data-action="set-order-filter"
-          data-order-filter="${filter.key}"
-        >
-          ${escapeHtml(filter.label)} (${filter.count})
-        </button>
-      `
-    )
-    .join("");
-
   const orderDetail = selectedOrder
     ? renderOrderDetail(selectedOrder, state.appConfig)
     : `<p class="empty-copy">Select an order to inspect its line items and timeline.</p>`;
@@ -399,14 +355,10 @@ function renderOrdersSection() {
           <div>
             <p class="eyebrow">Orders</p>
             <h2>${visibleOrders.length} in view</h2>
-            <p class="subtle-copy" data-role="orders-last-refreshed">${escapeHtml(formatOrdersFreshnessLabel())}</p>
           </div>
-          <div class="metric-stack">
-            <span class="metric">${activeOrders.length} active</span>
-            <span class="metric">${state.orders.length} total loaded</span>
-          </div>
+          ${renderRefreshMeta()}
         </div>
-        <div class="filter-row">${filterButtons}</div>
+        <div class="filter-row">${renderOrderFilterRow(activeOrders.length, completedOrders.length)}</div>
         <div class="list-stack">${orderRows}</div>
       </article>
 
@@ -414,6 +366,73 @@ function renderOrdersSection() {
         ${orderDetail}
       </article>
     </section>
+  `;
+}
+
+function renderOrderFilterRow(activeOrderCount: number, completedOrderCount: number) {
+  return (
+    [
+      { key: "active", label: "Active", count: activeOrderCount },
+      { key: "all", label: "All", count: state.orders.length },
+      { key: "completed", label: "Completed", count: completedOrderCount }
+    ] as const
+  )
+    .map(
+      (filter) => `
+        <button
+          class="filter-btn ${state.orderFilter === filter.key ? "filter-btn--active" : ""}"
+          type="button"
+          data-action="set-order-filter"
+          data-order-filter="${filter.key}"
+        >
+          ${escapeHtml(filter.label)} (${filter.count})
+        </button>
+      `
+    )
+    .join("");
+}
+
+function renderCancelButton(order: OperatorOrder, manualStatusControlsEnabled: boolean) {
+  if (!manualStatusControlsEnabled || order.status === "COMPLETED" || order.status === "CANCELED") {
+    return "";
+  }
+
+  const disabled = state.busyOrderId === order.id ? "disabled" : "";
+  if (state.pendingCancelOrderId === order.id) {
+    return `
+      <div class="cancel-confirm-row">
+        <button
+          class="button button--danger"
+          type="button"
+          data-action="confirm-cancel-order"
+          data-order-id="${order.id}"
+          ${disabled}
+        >
+          Confirm cancel
+        </button>
+        <button
+          class="button button--secondary"
+          type="button"
+          data-action="dismiss-cancel-order"
+          data-order-id="${order.id}"
+          ${disabled}
+        >
+          Go back
+        </button>
+      </div>
+    `;
+  }
+
+  return `
+    <button
+      class="button button--danger"
+      type="button"
+      data-action="cancel-order"
+      data-order-id="${order.id}"
+      ${disabled}
+    >
+      Cancel order
+    </button>
   `;
 }
 
@@ -465,40 +484,6 @@ function renderOrderDetail(order: OperatorOrder, appConfig: AppConfig | null) {
       `
     )
     .join("");
-
-  const cancelButton =
-    manualStatusControlsEnabled && order.status !== "COMPLETED" && order.status !== "CANCELED"
-      ? `
-        <button
-          class="button button--ghost"
-          type="button"
-          data-action="cancel-order"
-          data-order-id="${order.id}"
-          ${state.busyOrderId === order.id ? "disabled" : ""}
-        >
-          ${state.pendingCancelOrderId === order.id ? "Confirm Cancel" : "Cancel"}
-        </button>
-      `
-      : "";
-  const cancelConfirmation =
-    state.pendingCancelOrderId === order.id
-      ? `
-        <div class="inline-confirm">
-          <p class="subtle-copy">Confirm cancellation within 5 seconds or keep the order active.</p>
-          <div class="button-row">
-            <button
-              class="button button--secondary"
-              type="button"
-              data-action="dismiss-cancel"
-              data-order-id="${order.id}"
-              ${state.busyOrderId === order.id ? "disabled" : ""}
-            >
-              Keep Order
-            </button>
-          </div>
-        </div>
-      `
-      : "";
   const fulfillmentMessage = manualStatusControlsEnabled
     ? ""
     : `<p class="subtle-copy">Time-based fulfillment is active. Manual order status controls are disabled.</p>`;
@@ -516,8 +501,7 @@ function renderOrderDetail(order: OperatorOrder, appConfig: AppConfig | null) {
     <p class="detail-meta">${escapeHtml(order.locationId)} · ${formatMoney(order.total.amountCents)}</p>
     <div class="detail-stack">${items}</div>
     ${fulfillmentMessage}
-    <div class="button-row">${actionButtons}${cancelButton}</div>
-    ${cancelConfirmation}
+    <div class="button-row">${actionButtons}${renderCancelButton(order, manualStatusControlsEnabled)}</div>
     <div class="timeline-stack">${timeline}</div>
   `;
 }
@@ -666,8 +650,6 @@ function renderDashboard() {
 
 function render() {
   root.innerHTML = state.session ? renderDashboard() : renderUnlockScreen();
-  syncOrdersRefreshTimers();
-  updateOrdersFreshnessIndicator();
 }
 
 async function handleUnlockSubmit(form: HTMLFormElement) {
@@ -761,7 +743,7 @@ async function handleOrderAdvance(orderId: string, status: "IN_PREP" | "READY" |
 
   try {
     state.busyOrderId = orderId;
-    clearCancelConfirmation();
+    clearPendingCancel();
     setError(null);
     render();
     await updateOperatorOrderStatus(state.session, orderId, {
@@ -817,8 +799,8 @@ root.addEventListener("click", (event) => {
   }
 
   if (action === "sign-out") {
-    stopOrdersRefreshTimers();
-    clearCancelConfirmation();
+    stopAutoRefresh();
+    clearPendingCancel();
     clearStoredSession();
     state.session = null;
     state.loading = false;
@@ -827,7 +809,7 @@ root.addEventListener("click", (event) => {
     state.menuCategories = [];
     state.storeConfig = null;
     state.selectedOrderId = null;
-    state.lastOrdersLoadedAtMs = null;
+    state.lastRefreshedAt = null;
     state.busyOrderId = null;
     state.busyMenuItemId = null;
     state.savingStore = false;
@@ -840,12 +822,18 @@ root.addEventListener("click", (event) => {
   if (action === "change-section") {
     const section = actionElement.dataset.section;
     if (section === "orders" || section === "menu" || section === "store") {
-      state.section = section;
       if (section !== "orders") {
-        clearCancelConfirmation();
+        stopAutoRefresh();
+        clearPendingCancel();
       }
+
+      state.section = section;
       persistSection(section);
       render();
+
+      if (section === "orders") {
+        startAutoRefresh();
+      }
     }
     return;
   }
@@ -853,9 +841,7 @@ root.addEventListener("click", (event) => {
   if (action === "set-order-filter") {
     const filter = actionElement.dataset.orderFilter;
     if (filter === "all" || filter === "active" || filter === "completed") {
-      state.ordersFilter = filter;
-      reconcileSelectedOrder();
-      clearCancelConfirmation();
+      state.orderFilter = filter;
       render();
     }
     return;
@@ -889,18 +875,25 @@ root.addEventListener("click", (event) => {
       return;
     }
 
-    if (state.pendingCancelOrderId === orderId) {
-      void handleOrderAdvance(orderId, "CANCELED", "Canceled by staff.");
-      return;
-    }
-
-    armCancelConfirmation(orderId);
+    armPendingCancel(orderId);
     render();
     return;
   }
 
-  if (action === "dismiss-cancel") {
-    clearCancelConfirmation(true);
+  if (action === "confirm-cancel-order") {
+    const orderId = actionElement.dataset.orderId;
+    if (!orderId) {
+      return;
+    }
+
+    clearPendingCancel();
+    void handleOrderAdvance(orderId, "CANCELED", "Canceled by staff.");
+    return;
+  }
+
+  if (action === "dismiss-cancel-order") {
+    clearPendingCancel();
+    render();
   }
 });
 

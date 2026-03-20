@@ -1319,7 +1319,16 @@ async function executeLiveCharge(params: {
         }
       })
     });
-  } catch {
+  } catch (error) {
+    logger.warn(
+      {
+        error,
+        requestId,
+        orderId: request.orderId,
+        internalPaymentId
+      },
+      "Clover charge request failed before response"
+    );
     return {
       response: chargeResponseSchema.parse({
         paymentId: randomUUID(),
@@ -1565,7 +1574,7 @@ export async function registerRoutes(app: FastifyInstance) {
         providerPaymentId: result.providerPaymentId
       });
     } catch (error) {
-      request.log.error({ error }, "live Clover charge failed");
+      request.log.error({ error, requestId: request.id, orderId: input.orderId }, "live Clover charge failed");
       return reply.status(502).send(
         serviceErrorSchema.parse({
           code: "CLOVER_CHARGE_ERROR",
@@ -1653,7 +1662,10 @@ export async function registerRoutes(app: FastifyInstance) {
       });
       return repository.saveRefund({ request: input, response: refundResponse });
     } catch (error) {
-      request.log.error({ error }, "live Clover refund failed");
+      request.log.error(
+        { error, requestId: request.id, orderId: input.orderId, paymentId: input.paymentId },
+        "live Clover refund failed"
+      );
       return reply.status(502).send(
         serviceErrorSchema.parse({
           code: "CLOVER_REFUND_ERROR",
@@ -1767,7 +1779,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
       if (!dispatchResult.ok) {
         request.log.error(
-          { orderId, paymentId, webhookEventId: resolved.eventId, dispatchResult },
+          { requestId: request.id, orderId, paymentId, webhookEventId: resolved.eventId, dispatchResult },
           "failed to dispatch charge reconciliation to orders service"
         );
         return reply.status(502).send(
@@ -1832,7 +1844,7 @@ export async function registerRoutes(app: FastifyInstance) {
     });
     if (!dispatchResult.ok) {
       request.log.error(
-        { orderId, paymentId, webhookEventId: resolved.eventId, dispatchResult },
+        { requestId: request.id, orderId, paymentId, webhookEventId: resolved.eventId, dispatchResult },
         "failed to dispatch refund reconciliation to orders service"
       );
       return reply.status(502).send(

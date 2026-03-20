@@ -259,7 +259,17 @@ async function applyLoyaltyMutation(params: {
       },
       body: JSON.stringify(mutation)
     });
-  } catch {
+  } catch (error) {
+    deps.logger.warn(
+      {
+        error,
+        requestId,
+        orderId: mutation.orderId,
+        userId: mutation.userId,
+        mutationType: mutation.type
+      },
+      "loyalty service request failed before response"
+    );
     return buildServiceError({
       statusCode: 502,
       code: failureCode,
@@ -322,9 +332,9 @@ async function sendOrderStateNotification(params: {
       },
       body: JSON.stringify(payload)
     });
-  } catch {
+  } catch (error) {
     deps.logger.warn(
-      { orderId: order.id, status: order.status, userId, requestId },
+      { error, orderId: order.id, status: order.status, userId, requestId },
       "notifications service unavailable while dispatching order-state event"
     );
     return;
@@ -656,7 +666,11 @@ async function requestSuccessfulCharge(params: {
       },
       body: JSON.stringify(chargeRequestPayload)
     });
-  } catch {
+  } catch (error) {
+    params.deps.logger.warn(
+      { error, requestId: params.requestId, orderId: params.orderId },
+      "payments charge request failed before response"
+    );
     return buildServiceError({
       statusCode: 502,
       code: "PAYMENTS_UNAVAILABLE",
@@ -739,7 +753,16 @@ async function requestSuccessfulRefund(params: {
       },
       body: JSON.stringify(refundPayload)
     });
-  } catch {
+  } catch (error) {
+    params.deps.logger.warn(
+      {
+        error,
+        requestId: params.requestId,
+        orderId: params.orderId,
+        paymentId: params.paymentId
+      },
+      "payments refund request failed before response"
+    );
     return buildServiceError({
       statusCode: 502,
       code: "PAYMENTS_UNAVAILABLE",

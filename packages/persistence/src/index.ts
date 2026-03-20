@@ -276,6 +276,8 @@ export function getDatabaseUrl(env: NodeJS.ProcessEnv = process.env) {
 }
 
 /** @deprecated Use runMigrations instead. Will be removed in a future release. */
+// Legacy bootstrap remains for backward-compatible direct callers until every startup path and external
+// script has fully moved to the migration runner.
 export async function ensurePersistenceTables(db: PersistenceDb) {
   await db.transaction().execute(async (trx) => {
   await sql`SELECT pg_advisory_xact_lock(947531, 1)`.execute(trx);

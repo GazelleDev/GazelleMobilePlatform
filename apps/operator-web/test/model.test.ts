@@ -114,6 +114,36 @@ describe("operator-web model", () => {
     ).toEqual(["COMPLETED", "CANCELED"]);
   });
 
+  it("filters active orders with filterOrdersByView", () => {
+    expect(
+      filterOrdersByView([sampleOrder, { ...sampleOrder, status: "COMPLETED" }, { ...sampleOrder, status: "CANCELED" }], "active").map(
+        (order) => order.status
+      )
+    ).toEqual(["PAID"]);
+  });
+
+  it("filters completed orders with filterOrdersByView", () => {
+    expect(
+      filterOrdersByView([sampleOrder, { ...sampleOrder, status: "COMPLETED" }, { ...sampleOrder, status: "CANCELED" }], "completed").map(
+        (order) => order.status
+      )
+    ).toEqual(["COMPLETED", "CANCELED"]);
+  });
+
+  it("returns all orders with filterOrdersByView", () => {
+    expect(
+      filterOrdersByView([sampleOrder, { ...sampleOrder, status: "COMPLETED" }, { ...sampleOrder, status: "CANCELED" }], "all").map(
+        (order) => order.status
+      )
+    ).toEqual(["PAID", "COMPLETED", "CANCELED"]);
+  });
+
+  it("returns an empty array when filtering an empty order list", () => {
+    expect(filterOrdersByView([], "active")).toEqual([]);
+    expect(filterOrdersByView([], "completed")).toEqual([]);
+    expect(filterOrdersByView([], "all")).toEqual([]);
+  });
+
   it("formats order statuses and customer labels", () => {
     expect(formatOrderStatus("IN_PREP")).toBe("IN PREP");
     expect(getOrderCustomerLabel(sampleOrder)).toBe("Jordan Lee · jordan@example.com · 555-0101");

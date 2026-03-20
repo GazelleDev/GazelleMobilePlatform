@@ -48,6 +48,8 @@ const serviceErrorSchema = z.object({
   details: z.record(z.unknown()).optional()
 });
 
+// x-user-id is a gateway-to-service context header. Customer clients should not be talking to orders
+// directly with this value; gateway/internal auth remains the trust boundary.
 const userHeadersSchema = z.object({
   "x-user-id": z.string().uuid().optional()
 });
