@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { apiErrorSchema, authSessionSchema } from "@gazelle/contracts-core";
 import {
@@ -39,8 +40,23 @@ import {
   pushTokenUpsertSchema
 } from "@gazelle/contracts-notifications";
 
+declare module "fastify" {
+  interface FastifyRequest {
+    authenticatedUserId?: string;
+  }
+}
+
 const authHeaderSchema = z.object({
   authorization: z.string().startsWith("Bearer ").optional()
+});
+const jwtHeaderSchema = z.object({
+  alg: z.literal("HS256"),
+  typ: z.literal("JWT")
+});
+const jwtAccessTokenClaimsSchema = z.object({
+  sub: z.string().uuid(),
+  exp: z.number().int(),
+  iat: z.number().int()
 });
 const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
 const menuItemParamsSchema = z.object({ itemId: z.string().min(1) });
@@ -133,6 +149,46 @@ function trimToUndefined(value: string | undefined) {
   return next && next.length > 0 ? next : undefined;
 }
 
+function verifyJwtAccessToken(token: string, secret: string): { userId: string } | undefined {
+  const parts = token.split(".");
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    return undefined;
+  }
+
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const expectedSignature = createHmac("sha256", secret).update(signingInput).digest("base64url");
+  const actualSignatureBuffer = Buffer.from(encodedSignature, "utf8");
+  const expectedSignatureBuffer = Buffer.from(expectedSignature, "utf8");
+
+  if (actualSignatureBuffer.length !== expectedSignatureBuffer.length) {
+    return undefined;
+  }
+
+  if (!timingSafeEqual(actualSignatureBuffer, expectedSignatureBuffer)) {
+    return undefined;
+  }
+
+  try {
+    const header = jwtHeaderSchema.parse(JSON.parse(Buffer.from(encodedHeader, "base64url").toString("utf8")));
+    const claims = jwtAccessTokenClaimsSchema.parse(
+      JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"))
+    );
+
+    if (header.alg !== "HS256" || header.typ !== "JWT") {
+      return undefined;
+    }
+
+    if (claims.exp <= Math.floor(Date.now() / 1000)) {
+      return undefined;
+    }
+
+    return { userId: claims.sub };
+  } catch {
+    return undefined;
+  }
+}
+
 function toPositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -151,7 +207,8 @@ function toHeaderValue(value: string | string[] | undefined) {
 }
 
 function userScopedRateLimitKey(request: FastifyRequest) {
-  const userId = trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
+  const userId =
+    trimToUndefined(request.authenticatedUserId) ?? trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
   if (userId) {
     return `user:${userId.toLowerCase()}`;
   }
@@ -228,7 +285,7 @@ async function proxyUpstream<TResponse>(params: {
     "x-request-id": request.id
   };
   const authorization = request.headers.authorization;
-  const userIdHeader = request.headers["x-user-id"];
+  const userIdHeader = request.authenticatedUserId ?? toHeaderValue(request.headers["x-user-id"]);
 
   if (typeof authorization === "string") {
     headers.authorization = authorization;
@@ -428,14 +485,27 @@ async function resolveAuthenticatedUserId(params: {
   request: FastifyRequest;
   reply: FastifyReply;
   identityBaseUrl: string;
+  jwtSecretConfigured?: boolean;
   timeoutMs?: number;
 }) {
   const {
     request,
     reply,
     identityBaseUrl,
+    jwtSecretConfigured = false,
     timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs)
   } = params;
+  if (request.authenticatedUserId) {
+    return request.authenticatedUserId;
+  }
+
+  if (jwtSecretConfigured) {
+    // JWT mode is fail-closed: once local verification is enabled, we do not fall back to
+    // identity for bearer verification. Revocation remains bounded by the short access-token TTL.
+    reply.status(401).send(unauthorized(request.id));
+    return undefined;
+  }
+
   const authorization = request.headers.authorization;
 
   if (typeof authorization !== "string") {
@@ -514,7 +584,52 @@ async function resolveAuthenticatedUserId(params: {
     return undefined;
   }
 
+  request.authenticatedUserId = parsedResponse.data.userId;
   return parsedResponse.data.userId;
+}
+
+async function requireAuthenticatedCustomer(params: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  identityBaseUrl: string;
+  jwtSecret?: string;
+}) {
+  const { request, reply, identityBaseUrl, jwtSecret } = params;
+
+  if (!ensureBearerAuth(request, reply)) {
+    return reply;
+  }
+
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string") {
+    return reply.status(401).send(unauthorized(request.id));
+  }
+
+  const accessToken = authorization.slice("Bearer ".length);
+
+  if (jwtSecret) {
+    const verified = verifyJwtAccessToken(accessToken, jwtSecret);
+    if (!verified) {
+      return reply.status(401).send(unauthorized(request.id));
+    }
+
+    request.authenticatedUserId = verified.userId;
+    return undefined;
+  }
+
+  // Legacy opaque-token mode still resolves the caller through identity so rollout can happen
+  // incrementally when JWT signing is not configured yet.
+  const userId = await resolveAuthenticatedUserId({
+    request,
+    reply,
+    identityBaseUrl
+  });
+  if (!userId) {
+    return reply;
+  }
+
+  request.authenticatedUserId = userId;
+  return undefined;
 }
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -526,6 +641,7 @@ export async function registerRoutes(app: FastifyInstance) {
   const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
   const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const gatewayStaffApiToken = trimToUndefined(process.env.GATEWAY_STAFF_API_TOKEN);
+  const jwtSecret = trimToUndefined(process.env.JWT_SECRET);
   const rateLimitWindowMs = toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const authWriteRateLimit = {
     max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_AUTH_WRITE_MAX, 24),
@@ -580,6 +696,13 @@ export async function registerRoutes(app: FastifyInstance) {
     timeWindow: rateLimitWindowMs,
     keyGenerator: userScopedRateLimitKey
   };
+  const requireCustomerAuth = async (request: FastifyRequest, reply: FastifyReply) =>
+    requireAuthenticatedCustomer({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecret
+    });
 
   app.get("/health", async () => ({ status: "ok", service: "gateway" }));
   app.get("/ready", async () => ({ status: "ready", service: "gateway" }));
@@ -855,7 +978,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.post(
     "/v1/orders/quote",
-    { preHandler: [app.rateLimit(ordersWriteRateLimit), requireBearerAuth] },
+    { preHandler: [app.rateLimit(ordersWriteRateLimit), requireCustomerAuth] },
     async (request, reply) => {
     const input = quoteRequestSchema.parse(request.body);
 
@@ -875,12 +998,13 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post("/v1/orders", { preHandler: [app.rateLimit(ordersWriteRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.post("/v1/orders", { preHandler: [app.rateLimit(ordersWriteRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const input = createOrderRequestSchema.parse(request.body);
     const userId = await resolveAuthenticatedUserId({
       request,
       reply,
-      identityBaseUrl
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
     });
     if (!userId) {
       return;
@@ -902,13 +1026,14 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post("/v1/orders/:orderId/pay", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.post("/v1/orders/:orderId/pay", { preHandler: [app.rateLimit(checkoutRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = payOrderRequestSchema.parse(request.body);
     const userId = await resolveAuthenticatedUserId({
       request,
       reply,
-      identityBaseUrl
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
     });
     if (!userId) {
       return;
@@ -930,11 +1055,12 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get("/v1/orders", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get("/v1/orders", { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const userId = await resolveAuthenticatedUserId({
       request,
       reply,
-      identityBaseUrl
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
     });
     if (!userId) {
       return;
@@ -955,12 +1081,13 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get("/v1/orders/:orderId", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get("/v1/orders/:orderId", { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const userId = await resolveAuthenticatedUserId({
       request,
       reply,
-      identityBaseUrl
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
     });
     if (!userId) {
       return;
@@ -983,13 +1110,14 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.get(
     "/v1/orders/:orderId/stream",
-    { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] },
+    { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] },
     async (request, reply) => {
       const { orderId } = orderIdParamsSchema.parse(request.params);
       const userId = await resolveAuthenticatedUserId({
         request,
         reply,
-        identityBaseUrl
+        identityBaseUrl,
+        jwtSecretConfigured: Boolean(jwtSecret)
       });
       if (!userId) {
         return;
@@ -1111,13 +1239,14 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post("/v1/orders/:orderId/cancel", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.post("/v1/orders/:orderId/cancel", { preHandler: [app.rateLimit(checkoutRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = cancelOrderRequestSchema.parse(request.body);
     const userId = await resolveAuthenticatedUserId({
       request,
       reply,
-      identityBaseUrl
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
     });
     if (!userId) {
       return;
@@ -1342,7 +1471,7 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.get("/v1/loyalty/balance", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get("/v1/loyalty/balance", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -1357,7 +1486,7 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get("/v1/loyalty/ledger", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get("/v1/loyalty/ledger", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -1372,7 +1501,7 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.put("/v1/devices/push-token", { preHandler: [app.rateLimit(pushTokenRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.put("/v1/devices/push-token", { preHandler: [app.rateLimit(pushTokenRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const input = pushTokenUpsertSchema.parse(request.body);
 
     return proxyUpstream({

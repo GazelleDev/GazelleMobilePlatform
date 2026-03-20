@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -89,6 +89,30 @@ function buildMagicLinkUrl(baseUrl: string, token: string) {
   return url.toString();
 }
 
+function loadJwtSecret() {
+  const secret = process.env.JWT_SECRET?.trim();
+  return secret && secret.length > 0 ? secret : undefined;
+}
+
+function buildJwtAccessToken(userId: string, expiresAt: string, secret: string): string {
+  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const expiresAtSeconds = Math.floor(Date.parse(expiresAt) / 1000);
+  const encodedHeader = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url");
+  const encodedPayload = Buffer.from(
+    JSON.stringify({
+      sub: userId,
+      exp: expiresAtSeconds,
+      iat: issuedAtSeconds,
+      jti: randomUUID()
+    }),
+    "utf8"
+  ).toString("base64url");
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const signature = createHmac("sha256", secret).update(signingInput).digest("base64url");
+
+  return `${signingInput}.${signature}`;
+}
+
 function loadPasskeyConfig() {
   const rpId = process.env.PASSKEY_RP_ID?.trim() || defaultPasskeyRpId;
   const rpName = process.env.PASSKEY_RP_NAME?.trim() || defaultPasskeyRpName;
@@ -111,9 +135,14 @@ function buildStoredSession(seed: string, userId: string) {
   const tokenSuffix = `${seed}-${randomUUID()}`;
   const accessExpiresAt = new Date(Date.now() + defaultAccessTokenTtlMs).toISOString();
   const refreshExpiresAt = new Date(Date.now() + defaultRefreshSessionTtlMs).toISOString();
+  const jwtSecret = loadJwtSecret();
+  // JWT access tokens are opt-in for rollout compatibility. Refresh/logout semantics remain DB-backed
+  // either way because the refresh token and session record are still persisted.
+  const accessToken = jwtSecret ? buildJwtAccessToken(userId, accessExpiresAt, jwtSecret) : `access-${tokenSuffix}`;
+
   return {
     ...authSessionSchema.parse({
-      accessToken: `access-${tokenSuffix}`,
+      accessToken,
       refreshToken: `refresh-${tokenSuffix}`,
       expiresAt: accessExpiresAt,
       userId
