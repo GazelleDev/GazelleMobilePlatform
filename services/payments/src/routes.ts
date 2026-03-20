@@ -539,10 +539,7 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
       return toRefundResponse(updated as PersistedRefundRow);
     },
     async findWebhookResult(eventKey) {
-      // TODO(payments): Remove this cast once @gazelle/persistence exposes the new dedup table
-      // through the workspace package boundary without requiring rebuilt declarations.
-      const dedupDb = db as any;
-      const row = await dedupDb
+      const row = await db
         .selectFrom("payments_webhook_deduplication")
         .selectAll()
         .where("event_key", "=", eventKey)
@@ -551,8 +548,7 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
       return row ? toWebhookDispatchResult(row as PersistedWebhookDedupRow) : undefined;
     },
     async saveWebhookResult(eventKey, result) {
-      const dedupDb = db as any;
-      await dedupDb
+      await db
         .insertInto("payments_webhook_deduplication")
         .values({
           event_key: eventKey,
@@ -562,7 +558,7 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
           status: result.status,
           order_applied: result.orderApplied
         })
-        .onConflict((oc: any) => oc.column("event_key").doNothing())
+        .onConflict((oc) => oc.column("event_key").doNothing())
         .execute();
     },
     async close() {

@@ -233,6 +233,25 @@
         }
       }
     },
+    "/orders/{orderId}/stream": {
+      "get": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "orderId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/orders/{orderId}/cancel": {
       "post": {
         "parameters": [
