@@ -80,6 +80,7 @@ type ScreenProps = {
   contentContainerStyle?: StyleProp<ViewStyle>;
   refreshing?: boolean;
   onRefresh?: () => void;
+  stickyHeaderIndices?: number[];
 };
 
 export function ScreenScroll({
@@ -87,7 +88,8 @@ export function ScreenScroll({
   bottomInset = 132,
   contentContainerStyle,
   refreshing = false,
-  onRefresh
+  onRefresh,
+  stickyHeaderIndices
 }: ScreenProps) {
   const insets = useSafeAreaInsets();
 
@@ -96,6 +98,7 @@ export function ScreenScroll({
       <ScreenBackdrop />
       <ScrollView
         showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={stickyHeaderIndices}
         refreshControl={
           onRefresh ? (
             <RefreshControl

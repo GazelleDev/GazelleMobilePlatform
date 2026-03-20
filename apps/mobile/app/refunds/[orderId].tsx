@@ -8,7 +8,8 @@ import {
   findLatestOrderTime,
   findRefundEntriesForOrder,
   formatOrderDateTime,
-  formatOrderStatus
+  formatOrderStatus,
+  formatOrderTimelineNote
 } from "../../src/orders/history";
 import { Button, Card, GlassCard, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
 
@@ -122,7 +123,7 @@ export default function RefundDetailScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.timelineTitle}>{formatOrderStatus(entry.status)}</Text>
                   <Text style={styles.timelineMeta}>{formatOrderDateTime(entry.occurredAt)}</Text>
-                  {entry.note ? <Text style={styles.timelineNote}>{entry.note}</Text> : null}
+                  {entry.note ? <Text style={styles.timelineNote}>{formatOrderTimelineNote(entry.note)}</Text> : null}
                 </View>
               </View>
             ))}

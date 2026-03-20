@@ -13,6 +13,19 @@ export function formatOrderStatus(status: string) {
   return status.replaceAll("_", " ");
 }
 
+export function formatOrderTimelineNote(note: string) {
+  const normalized = note
+    .replace(/^Clover payment accepted;\s*/i, "")
+    .replace(/^Payment confirmed;\s*/i, "")
+    .replace(/^Payment reconciled from Clover[^;]*;\s*/i, "")
+    .replace(/^Clover accepted the charge;\s*/i, "")
+    .replace(/^earned\b/i, "Earned")
+    .replace(/;\s*earned\b/g, "; Earned")
+    .trim();
+
+  return normalized.length > 0 ? normalized : note;
+}
+
 export function findLatestOrderTime(order: OrderHistoryEntry) {
   return order.timeline[order.timeline.length - 1]?.occurredAt ?? "";
 }

@@ -184,4 +184,69 @@ describe("sdk-mobile", () => {
       expect(body.applePayToken).toBeUndefined();
     }
   });
+
+  it("retries concurrent unauthorized requests behind a single refresh", async () => {
+    const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
+    client.setAccessToken("access-old");
+    const refreshHandler = vi.fn(async () => ({
+      accessToken: "access-new",
+      refreshToken: "refresh-new",
+      expiresAt: "2030-01-01T00:30:00.000Z",
+      userId: "123e4567-e89b-12d3-a456-426614174000"
+    }));
+    client.setSessionRefreshHandler(refreshHandler);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const authHeader = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? "");
+
+      if (url.endsWith("/auth/me")) {
+        if (authHeader === "Bearer access-old") {
+          return new Response(JSON.stringify({ code: "UNAUTHORIZED" }), { status: 401 });
+        }
+
+        return new Response(
+          JSON.stringify({
+            userId: "123e4567-e89b-12d3-a456-426614174000",
+            email: "owner@gazellecoffee.com",
+            methods: ["apple"]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/orders")) {
+        if (authHeader === "Bearer access-old") {
+          return new Response(JSON.stringify({ code: "UNAUTHORIZED" }), { status: 401 });
+        }
+
+        return new Response(
+          JSON.stringify([
+            {
+              id: "123e4567-e89b-12d3-a456-426614174012",
+              locationId: "flagship-01",
+              status: "PAID",
+              items: [{ itemId: "latte", quantity: 1, unitPriceCents: 675 }],
+              total: { currency: "USD", amountCents: 716 },
+              pickupCode: "A1B2C3",
+              timeline: [
+                { status: "PENDING_PAYMENT", occurredAt: "2026-03-10T00:00:00.000Z" },
+                { status: "PAID", occurredAt: "2026-03-10T00:01:00.000Z" }
+              ]
+            }
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      return new Response("not-found", { status: 404 });
+    });
+
+    const [me, orders] = await Promise.all([client.me(), client.listOrders()]);
+
+    expect(refreshHandler).toHaveBeenCalledTimes(1);
+    expect(me.email).toBe("owner@gazellecoffee.com");
+    expect(orders[0]?.status).toBe("PAID");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 });

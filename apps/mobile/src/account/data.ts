@@ -3,9 +3,33 @@ import { z } from "zod";
 import { apiClient } from "../api/client";
 
 const orderStatusSchema = z.enum(["PENDING_PAYMENT", "PAID", "IN_PREP", "READY", "COMPLETED", "CANCELED"]);
+const orderItemSchema = z.object({
+  itemId: z.string(),
+  itemName: z.string().min(1).optional(),
+  quantity: z.number().int().positive(),
+  unitPriceCents: z.number().int().nonnegative(),
+  lineTotalCents: z.number().int().nonnegative().optional(),
+  customization: z
+    .object({
+      notes: z.string().default(""),
+      selectedOptions: z
+        .array(
+          z.object({
+            groupId: z.string(),
+            groupLabel: z.string(),
+            optionId: z.string(),
+            optionLabel: z.string(),
+            priceDeltaCents: z.number().int()
+          })
+        )
+        .default([])
+    })
+    .optional()
+});
 const orderSchema = z.object({
   id: z.string().uuid(),
   status: orderStatusSchema,
+  items: z.array(orderItemSchema),
   pickupCode: z.string().min(1),
   total: z.object({
     currency: z.literal("USD"),

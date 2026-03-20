@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 
 describe("identity service", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("responds on /health and /ready", async () => {
     const app = await buildApp();
     const healthResponse = await app.inject({ method: "GET", url: "/health" });
@@ -18,6 +22,8 @@ describe("identity service", () => {
   });
 
   it("creates auth session for apple exchange", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
     const app = await buildApp();
     const response = await app.inject({
       method: "POST",
@@ -31,6 +37,7 @@ describe("identity service", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json().accessToken).toContain("nonce-value");
+    expect(response.json().expiresAt).toBe("2030-01-01T00:30:00.000Z");
     await app.close();
   });
 
@@ -73,6 +80,8 @@ describe("identity service", () => {
   });
 
   it("supports refresh rotation and invalidates prior access tokens after logout", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
     const app = await buildApp();
 
     const exchange = await app.inject({
@@ -99,6 +108,7 @@ describe("identity service", () => {
     expect(refresh.statusCode).toBe(200);
     const rotatedSession = refresh.json();
     expect(rotatedSession.accessToken).not.toBe(session.accessToken);
+    expect(rotatedSession.refreshToken).not.toBe(session.refreshToken);
 
     const oldSessionMe = await app.inject({
       method: "GET",
@@ -117,6 +127,15 @@ describe("identity service", () => {
       }
     });
     expect(newSessionMe.statusCode).toBe(200);
+
+    const reusedRefresh = await app.inject({
+      method: "POST",
+      url: "/v1/auth/refresh",
+      payload: {
+        refreshToken: session.refreshToken
+      }
+    });
+    expect(reusedRefresh.statusCode).toBe(401);
 
     const logout = await app.inject({
       method: "POST",
@@ -145,6 +164,173 @@ describe("identity service", () => {
     });
     expect(invalidRefresh.statusCode).toBe(401);
     expect(invalidRefresh.json()).toMatchObject({
+      code: "INVALID_REFRESH_TOKEN"
+    });
+
+    await app.close();
+  });
+
+  it("allows only one concurrent refresh rotation for the same token", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    const app = await buildApp();
+
+    const exchange = await app.inject({
+      method: "POST",
+      url: "/v1/auth/apple/exchange",
+      payload: {
+        identityToken: "identity-token",
+        authorizationCode: "auth-code",
+        nonce: "parallel-rotation"
+      }
+    });
+
+    expect(exchange.statusCode).toBe(200);
+    const session = exchange.json();
+
+    const [firstRefresh, secondRefresh] = await Promise.all([
+      app.inject({
+        method: "POST",
+        url: "/v1/auth/refresh",
+        payload: {
+          refreshToken: session.refreshToken
+        }
+      }),
+      app.inject({
+        method: "POST",
+        url: "/v1/auth/refresh",
+        payload: {
+          refreshToken: session.refreshToken
+        }
+      })
+    ]);
+
+    const successfulRefresh = firstRefresh.statusCode === 200 ? firstRefresh : secondRefresh;
+    const failedRefresh = firstRefresh.statusCode === 401 ? firstRefresh : secondRefresh;
+
+    expect(successfulRefresh.statusCode).toBe(200);
+    expect(failedRefresh.statusCode).toBe(401);
+    expect(failedRefresh.json()).toMatchObject({
+      code: "INVALID_REFRESH_TOKEN"
+    });
+
+    const rotatedSession = successfulRefresh.json();
+    const oldSessionMe = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`
+      }
+    });
+    expect(oldSessionMe.statusCode).toBe(401);
+
+    const newSessionMe = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: {
+        authorization: `Bearer ${rotatedSession.accessToken}`
+      }
+    });
+    expect(newSessionMe.statusCode).toBe(200);
+
+    await app.close();
+  });
+
+  it("expires access tokens after 30 minutes but allows refresh within 30 days", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    const app = await buildApp();
+
+    const exchange = await app.inject({
+      method: "POST",
+      url: "/v1/auth/apple/exchange",
+      payload: {
+        identityToken: "identity-token",
+        authorizationCode: "auth-code",
+        nonce: "thirty-minute-access"
+      }
+    });
+
+    expect(exchange.statusCode).toBe(200);
+    const session = exchange.json();
+    expect(session.expiresAt).toBe("2030-01-01T00:30:00.000Z");
+
+    vi.setSystemTime(new Date("2030-01-01T00:31:00.000Z"));
+
+    const expiredMe = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`
+      }
+    });
+    expect(expiredMe.statusCode).toBe(401);
+
+    const refresh = await app.inject({
+      method: "POST",
+      url: "/v1/auth/refresh",
+      payload: {
+        refreshToken: session.refreshToken
+      }
+    });
+    expect(refresh.statusCode).toBe(200);
+    expect(refresh.json().expiresAt).toBe("2030-01-01T01:01:00.000Z");
+
+    await app.close();
+  });
+
+  it("expires refresh sessions after 30 days", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    const app = await buildApp();
+
+    const exchange = await app.inject({
+      method: "POST",
+      url: "/v1/auth/apple/exchange",
+      payload: {
+        identityToken: "identity-token",
+        authorizationCode: "auth-code",
+        nonce: "thirty-day-refresh"
+      }
+    });
+
+    expect(exchange.statusCode).toBe(200);
+    const session = exchange.json();
+
+    vi.setSystemTime(new Date("2030-01-30T23:59:00.000Z"));
+    const stillValidRefresh = await app.inject({
+      method: "POST",
+      url: "/v1/auth/refresh",
+      payload: {
+        refreshToken: session.refreshToken
+      }
+    });
+    expect(stillValidRefresh.statusCode).toBe(200);
+
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    const secondExchange = await app.inject({
+      method: "POST",
+      url: "/v1/auth/apple/exchange",
+      payload: {
+        identityToken: "identity-token",
+        authorizationCode: "auth-code",
+        nonce: "expired-refresh"
+      }
+    });
+
+    expect(secondExchange.statusCode).toBe(200);
+    const expiringSession = secondExchange.json();
+
+    vi.setSystemTime(new Date("2030-01-31T00:01:00.000Z"));
+    const expiredRefresh = await app.inject({
+      method: "POST",
+      url: "/v1/auth/refresh",
+      payload: {
+        refreshToken: expiringSession.refreshToken
+      }
+    });
+    expect(expiredRefresh.statusCode).toBe(401);
+    expect(expiredRefresh.json()).toMatchObject({
       code: "INVALID_REFRESH_TOKEN"
     });
 

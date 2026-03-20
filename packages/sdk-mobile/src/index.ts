@@ -26,13 +26,21 @@ export type ApiClientOptions = {
   accessToken?: string;
 };
 
+type SessionRefreshHandler = () => Promise<z.output<typeof authSessionSchema> | null>;
+
 export class GazelleApiClient {
   private accessToken?: string;
+  private sessionRefreshHandler?: SessionRefreshHandler;
+  private refreshInFlight?: Promise<z.output<typeof authSessionSchema> | null>;
 
   constructor(private readonly options: ApiClientOptions) {}
 
   setAccessToken(token?: string) {
     this.accessToken = token;
+  }
+
+  setSessionRefreshHandler(handler?: SessionRefreshHandler) {
+    this.sessionRefreshHandler = handler;
   }
 
   async get<T>(path: string): Promise<T> {
@@ -163,7 +171,34 @@ export class GazelleApiClient {
     return orderSchema.parse(data);
   }
 
-  private async request<T>(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<T> {
+  private async refreshSessionSafely() {
+    if (!this.sessionRefreshHandler) {
+      return null;
+    }
+
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = (async () => {
+        try {
+          const nextSession = await this.sessionRefreshHandler?.();
+          if (nextSession?.accessToken) {
+            this.setAccessToken(nextSession.accessToken);
+          }
+          return nextSession ?? null;
+        } finally {
+          this.refreshInFlight = undefined;
+        }
+      })();
+    }
+
+    return this.refreshInFlight;
+  }
+
+  private async request<T>(
+    method: "GET" | "POST" | "PUT",
+    path: string,
+    body?: unknown,
+    hasRetriedUnauthorized = false
+  ): Promise<T> {
     const effectiveToken = this.accessToken ?? this.options.accessToken;
     const headers: Record<string, string> = {};
     if (effectiveToken) {
@@ -178,6 +213,20 @@ export class GazelleApiClient {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body)
     });
+
+    const canRetryUnauthorized =
+      response.status === 401 &&
+      !hasRetriedUnauthorized &&
+      Boolean(effectiveToken) &&
+      path !== "/auth/refresh" &&
+      path !== "/auth/logout";
+
+    if (canRetryUnauthorized) {
+      const nextSession = await this.refreshSessionSafely();
+      if (nextSession?.accessToken) {
+        return this.request<T>(method, path, body, true);
+      }
+    }
 
     if (!response.ok) {
       const text = await response.text();

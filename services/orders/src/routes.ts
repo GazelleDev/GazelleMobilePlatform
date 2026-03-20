@@ -15,6 +15,7 @@ import {
   quoteRequestSchema
 } from "@gazelle/contracts-orders";
 import { z } from "zod";
+import { reconcileOrderFulfillmentState } from "./fulfillment.js";
 import { createOrdersRepository, type OrdersRepository, type QuoteCatalogItem } from "./repository.js";
 
 const payloadSchema = z.object({
@@ -632,6 +633,32 @@ function appendOrderStatus(order: Order, status: z.output<typeof orderSchema>["s
   });
 }
 
+async function reconcilePersistedOrderFulfillmentState(params: {
+  order: Order;
+  repository: OrdersRepository;
+  request: FastifyRequest;
+}): Promise<Order> {
+  const { order, repository, request } = params;
+
+  // TODO(platform): Replace this temporary time-based fulfillment progression with authoritative order state transitions driven by staff actions, POS/webhook events, or kitchen workflow. This stopgap exists only to unblock the mobile active-order experience until real fulfillment writers are implemented.
+  const reconciliation = reconcileOrderFulfillmentState(order, new Date());
+  if (!reconciliation.changed) {
+    return order;
+  }
+
+  const reconciledOrder = await repository.updateOrder(order.id, reconciliation.order);
+  request.log.info(
+    {
+      orderId: order.id,
+      fromStatus: order.status,
+      toStatus: reconciledOrder.status,
+      appendedStatuses: reconciliation.appendedStatuses
+    },
+    "reconciled temporary fulfillment state on order read"
+  );
+  return reconciledOrder;
+}
+
 function createOrderFromQuote(quote: OrderQuote): Order {
   const orderId = randomUUID();
 
@@ -790,13 +817,12 @@ export async function registerRoutes(app: FastifyInstance) {
 
       const loyaltyParts = [
         orderQuote.pointsToRedeem > 0 ? `redeemed ${orderQuote.pointsToRedeem} loyalty points` : undefined,
-        `earned ${existingOrder.total.amountCents} loyalty points`
+        `Earned ${existingOrder.total.amountCents} loyalty points`
       ].filter((value): value is string => Boolean(value));
-      const eventNote = input.eventId ? `event ${input.eventId}` : "webhook event";
       const paidOrder = appendOrderStatus(
         existingOrder,
         "PAID",
-        `Payment reconciled from Clover ${eventNote}; ${loyaltyParts.join("; ")}.`
+        `${loyaltyParts.join("; ")}.`
       );
       await repository.updateOrder(input.orderId, paidOrder);
       await sendOrderStateNotification({
@@ -1217,10 +1243,10 @@ export async function registerRoutes(app: FastifyInstance) {
 
     const loyaltyParts = [
       orderQuote.pointsToRedeem > 0 ? `redeemed ${orderQuote.pointsToRedeem} loyalty points` : undefined,
-      `earned ${existingOrder.total.amountCents} loyalty points`
+      `Earned ${existingOrder.total.amountCents} loyalty points`
     ].filter((value): value is string => Boolean(value));
 
-    const paidOrder = appendOrderStatus(existingOrder, "PAID", `Clover payment accepted; ${loyaltyParts.join("; ")}.`);
+    const paidOrder = appendOrderStatus(existingOrder, "PAID", `${loyaltyParts.join("; ")}.`);
     await repository.updateOrder(orderId, paidOrder);
     await repository.setPaymentId(orderId, successfulCharge.paymentId);
     await repository.savePaymentIdempotency(orderId, input.idempotencyKey);
@@ -1241,7 +1267,17 @@ export async function registerRoutes(app: FastifyInstance) {
     }
 
     const orders = await repository.listOrders();
-    return z.array(orderSchema).parse(orders);
+    // TODO(platform): Replace this temporary time-based fulfillment progression with authoritative order state transitions driven by staff actions, POS/webhook events, or kitchen workflow. This stopgap exists only to unblock the mobile active-order experience until real fulfillment writers are implemented.
+    const reconciledOrders = await Promise.all(
+      orders.map((order) =>
+        reconcilePersistedOrderFulfillmentState({
+          order,
+          repository,
+          request
+        })
+      )
+    );
+    return z.array(orderSchema).parse(reconciledOrders);
   });
 
   app.get("/v1/orders/:orderId", async (request, reply) => {
@@ -1262,7 +1298,13 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
 
-    return orderSchema.parse(order);
+    // TODO(platform): Replace this temporary time-based fulfillment progression with authoritative order state transitions driven by staff actions, POS/webhook events, or kitchen workflow. This stopgap exists only to unblock the mobile active-order experience until real fulfillment writers are implemented.
+    const reconciledOrder = await reconcilePersistedOrderFulfillmentState({
+      order,
+      repository,
+      request
+    });
+    return orderSchema.parse(reconciledOrder);
   });
 
   app.post(

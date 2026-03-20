@@ -1,6 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
+import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { Link, useRouter } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Animated as RNAnimated, Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, {
+  Easing,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  type SharedValue
+} from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthSession } from "../../src/auth/session";
 import {
   findActiveOrder,
@@ -8,295 +20,1068 @@ import {
   useOrderHistoryQuery,
   type OrderHistoryEntry
 } from "../../src/account/data";
-import { formatUsd } from "../../src/menu/catalog";
-import { findLatestOrderTime, formatOrderDateTime, formatOrderStatus, hasRefundActivity } from "../../src/orders/history";
-import { Button, Card, GlassCard, ScreenScroll, SectionLabel, TitleBlock, uiPalette, uiTypography } from "../../src/ui/system";
+import { formatUsd, resolveMenuData, useMenuQuery, type MenuItem } from "../../src/menu/catalog";
+import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../../src/navigation/tabBarMetrics";
+import {
+  findLatestOrderTime,
+  formatOrderDateTime,
+  formatOrderStatus,
+  formatOrderTimelineNote,
+  hasRefundActivity
+} from "../../src/orders/history";
+import { OrdersLoadingState } from "../../src/orders/OrdersLoadingState";
+import { Button, ScreenScroll, SectionLabel, uiPalette, uiTypography } from "../../src/ui/system";
 
-function StatusPill({ status }: { status: string }) {
+const ACTIVE_PROGRESS_STEPS = [
+  { status: "PENDING_PAYMENT", label: "Payment" },
+  { status: "PAID", label: "Confirmed" },
+  { status: "IN_PREP", label: "In prep" },
+  { status: "READY", label: "Ready" }
+] as const satisfies Array<{ status: OrderHistoryEntry["status"]; label: string }>;
+
+const ORDERS_HEADER_HEIGHT = 52;
+const PROGRESS_ANIMATION_MS = 420;
+
+function clampUnit(value: number) {
+  "worklet";
+  return Math.max(0, Math.min(1, value));
+}
+
+function canUseLiquidGlassStatusPill() {
+  if (Platform.OS !== "ios") return false;
+
+  try {
+    return isLiquidGlassAvailable();
+  } catch {
+    return false;
+  }
+}
+
+function getStatusTone(status: OrderHistoryEntry["status"]) {
+  switch (status) {
+    case "PENDING_PAYMENT":
+      return {
+        backgroundColor: "rgba(164, 108, 44, 0.08)",
+        borderColor: "rgba(164, 108, 44, 0.18)",
+        textColor: uiPalette.warning
+      };
+    case "READY":
+      return {
+        backgroundColor: "rgba(79, 122, 99, 0.1)",
+        borderColor: "rgba(79, 122, 99, 0.22)",
+        textColor: uiPalette.success
+      };
+    case "CANCELED":
+      return {
+        backgroundColor: "rgba(180, 91, 79, 0.08)",
+        borderColor: "rgba(180, 91, 79, 0.18)",
+        textColor: uiPalette.danger
+      };
+    case "COMPLETED":
+      return {
+        backgroundColor: "rgba(23, 21, 19, 0.05)",
+        borderColor: "rgba(23, 21, 19, 0.1)",
+        textColor: uiPalette.textSecondary
+      };
+    case "PAID":
+    case "IN_PREP":
+    default:
+      return {
+        backgroundColor: uiPalette.accentSoft,
+        borderColor: "rgba(30, 27, 24, 0.1)",
+        textColor: uiPalette.accent
+      };
+  }
+}
+
+function getActiveOrderTitle(status: OrderHistoryEntry["status"]) {
+  switch (status) {
+    case "PENDING_PAYMENT":
+      return "Waiting for payment to start the order.";
+    case "PAID":
+      return "Confirmed";
+    case "IN_PREP":
+      return "In Preparation";
+    case "READY":
+      return "Ready for Pickup";
+    default:
+      return "Your current order is in motion.";
+  }
+}
+
+function getActiveOrderBody(status: OrderHistoryEntry["status"]) {
+  switch (status) {
+    case "PENDING_PAYMENT":
+      return "Complete payment to lock the order and move it into prep.";
+    case "PAID":
+      return "Your order has been confirmed and will start prep shortly.";
+    case "IN_PREP":
+      return "Your order is currently being prepared by our team.";
+    case "READY":
+      return "Bring the pickup code to the counter and our team will hand it over.";
+    default:
+      return "Status changes and pickup details update here automatically.";
+  }
+}
+
+function getLatestTimelineNote(order: OrderHistoryEntry) {
+  const latestEvent = order.timeline[order.timeline.length - 1];
+  return latestEvent?.note?.trim() ? formatOrderTimelineNote(latestEvent.note.trim()) : formatOrderStatus(order.status);
+}
+
+function resolveOrderItemIcon(name: string) {
+  const haystack = name.toLowerCase();
+  if (haystack.includes("tea") || haystack.includes("matcha")) return "leaf-outline" as const;
+  if (
+    haystack.includes("croissant") ||
+    haystack.includes("cookie") ||
+    haystack.includes("muffin") ||
+    haystack.includes("pastry")
+  ) {
+    return "nutrition-outline" as const;
+  }
+  if (
+    haystack.includes("latte") ||
+    haystack.includes("espresso") ||
+    haystack.includes("coffee") ||
+    haystack.includes("cappuccino")
+  ) {
+    return "cafe-outline" as const;
+  }
+
+  return "sparkles-outline" as const;
+}
+
+function buildOrderItemsSummary(order: OrderHistoryEntry, menuItemsById: Map<string, MenuItem>) {
+  const names = order.items
+    .map((item) => item.itemName?.trim() || menuItemsById.get(item.itemId)?.name || "Item")
+    .filter(Boolean);
+
+  if (names.length === 0) {
+    return "Order details unavailable";
+  }
+
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  if (names.length === 2) {
+    return `${names[0]} and ${names[1]}`;
+  }
+
+  return `${names[0]}, ${names[1]}, and ${names.length - 2} more`;
+}
+
+function countOrderUnits(order: OrderHistoryEntry) {
+  return order.items.reduce((sum, item) => sum + item.quantity, 0);
+}
+
+function OrderItemThumbnail({
+  item,
+  menuItemsById,
+  stacked = false
+}: {
+  item: OrderHistoryEntry["items"][number];
+  menuItemsById: Map<string, MenuItem>;
+  stacked?: boolean;
+}) {
+  const menuItem = menuItemsById.get(item.itemId);
+  const label = item.itemName?.trim() || menuItem?.name || "Item";
+  const imageUrl = menuItem?.imageUrl;
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
   return (
-    <View style={styles.statusPill}>
-      <Text style={styles.statusPillText}>{formatOrderStatus(status)}</Text>
+    <View style={[styles.orderThumb, stacked ? styles.orderThumbStacked : null]}>
+      {imageUrl && !imageFailed ? (
+        <Image source={{ uri: imageUrl }} style={styles.orderThumbImage} resizeMode="cover" onError={() => setImageFailed(true)} />
+      ) : (
+        <Ionicons name={resolveOrderItemIcon(label)} size={16} color={uiPalette.accent} />
+      )}
+    </View>
+  );
+}
+
+function OrderItemStrip({
+  order,
+  menuItemsById
+}: {
+  order: OrderHistoryEntry;
+  menuItemsById: Map<string, MenuItem>;
+}) {
+  const previewItems = order.items.slice(0, 3);
+  const remainingItemTypes = order.items.length - previewItems.length;
+  const totalUnits = countOrderUnits(order);
+
+  return (
+    <View style={styles.orderItemsRow}>
+      <View style={styles.orderThumbStack}>
+        {previewItems.length > 0 ? (
+          previewItems.map((item, index) => (
+            <OrderItemThumbnail key={`${order.id}-${item.itemId}-${index}`} item={item} menuItemsById={menuItemsById} stacked={index > 0} />
+          ))
+        ) : (
+          <View style={styles.orderThumb}>
+            <Ionicons name="receipt-outline" size={16} color={uiPalette.accent} />
+          </View>
+        )}
+        {remainingItemTypes > 0 ? (
+          <View style={[styles.orderThumb, styles.orderThumbStacked, styles.orderThumbCount]}>
+            <Text style={styles.orderThumbCountText}>{`+${remainingItemTypes}`}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.orderItemsCopy}>
+        <Text style={styles.orderItemsTitle}>{buildOrderItemsSummary(order, menuItemsById)}</Text>
+        <Text style={styles.orderItemsMeta}>{`${totalUnits} item${totalUnits === 1 ? "" : "s"}`}</Text>
+      </View>
+    </View>
+  );
+}
+
+function OrdersSectionHeader({
+  label,
+  trailing
+}: {
+  label: string;
+  trailing?: string;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <SectionLabel label={label} />
+      {trailing ? <Text style={styles.sectionMeta}>{trailing}</Text> : null}
+    </View>
+  );
+}
+
+function StatusPill({
+  status,
+  glassStyle = "regular"
+}: {
+  status: OrderHistoryEntry["status"];
+  glassStyle?: "regular" | "clear";
+}) {
+  const tone = getStatusTone(status);
+  const label = formatOrderStatus(status);
+  const shouldUseGlassPill =
+    status === "PAID" || status === "IN_PREP" || status === "READY" || status === "COMPLETED";
+
+  if (shouldUseGlassPill) {
+    const useLiquidGlass = canUseLiquidGlassStatusPill();
+
+    return (
+      <View style={styles.statusPillShell}>
+        {useLiquidGlass ? (
+          <GlassView glassEffectStyle={glassStyle} colorScheme="auto" isInteractive style={styles.statusPillFrame} />
+        ) : (
+          <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.statusPillFrame} />
+        )}
+        <View pointerEvents="none" style={styles.statusPillContent}>
+          <Text style={[styles.statusPillText, styles.statusPillTextGlass]}>{label}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={[
+        styles.statusPill,
+        {
+          backgroundColor: tone.backgroundColor,
+          borderColor: tone.borderColor
+        }
+      ]}
+    >
+      <Text style={[styles.statusPillText, { color: tone.textColor }]}>{label}</Text>
+    </View>
+  );
+}
+
+function ActiveOrderPill({ children }: { children: ReactNode }) {
+  const useLiquidGlass = canUseLiquidGlassStatusPill();
+
+  const content = (
+    <View style={[styles.activePanelInner, useLiquidGlass ? styles.activePanelInnerGlass : styles.activePanelInnerFallback]}>
+      {children}
+    </View>
+  );
+
+  return (
+    <View style={styles.activePanelShell}>
+      {useLiquidGlass ? (
+        <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.activePanelFrame}>
+          {content}
+        </GlassView>
+      ) : (
+        <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.activePanelFrame}>
+          {content}
+        </BlurView>
+      )}
+    </View>
+  );
+}
+
+function OrderProgressStep({
+  index,
+  label,
+  progressValue,
+  isLast
+}: {
+  index: number;
+  label: string;
+  progressValue: SharedValue<number>;
+  isLast: boolean;
+}) {
+  const dotAnimatedStyle = useAnimatedStyle(() => {
+    const activation = clampUnit(progressValue.value - (index - 1));
+    const completion = clampUnit(progressValue.value - index);
+
+    const backgroundColor =
+      activation < 1
+        ? interpolateColor(activation, [0, 1], [uiPalette.background, uiPalette.surfaceStrong])
+        : interpolateColor(completion, [0, 1], [uiPalette.surfaceStrong, uiPalette.primary]);
+
+    const borderColor = interpolateColor(activation, [0, 1], [uiPalette.borderStrong, uiPalette.primary]);
+    const scale = activation < 1 ? 0.88 + activation * 0.12 : 1 + completion * 0.06;
+
+    return {
+      backgroundColor,
+      borderColor,
+      transform: [{ scale }]
+    };
+  });
+
+  const labelAnimatedStyle = useAnimatedStyle(() => {
+    const activation = clampUnit(progressValue.value - (index - 1));
+
+    return {
+      color: interpolateColor(activation, [0, 1], [uiPalette.textMuted, uiPalette.text])
+    };
+  });
+
+  const checkAnimatedStyle = useAnimatedStyle(() => {
+    const completion = clampUnit(progressValue.value - index);
+
+    return {
+      opacity: completion,
+      transform: [{ translateY: (1 - completion) * 3 }, { scale: 0.72 + completion * 0.28 }]
+    };
+  });
+
+  const leftLineAnimatedStyle = useAnimatedStyle(() => {
+    const fill = clampUnit(progressValue.value - (index - 1));
+
+    return {
+      width: `${fill * 100}%`,
+      opacity: fill
+    };
+  });
+
+  const rightLineAnimatedStyle = useAnimatedStyle(() => {
+    const fill = clampUnit(progressValue.value - index);
+
+    return {
+      width: `${fill * 100}%`,
+      opacity: fill
+    };
+  });
+
+  return (
+    <View style={styles.progressStep}>
+      <View style={styles.progressTrack}>
+        {index > 0 ? (
+          <View style={[styles.progressLine, styles.progressLineLeft]}>
+            <Animated.View style={[styles.progressLineFill, leftLineAnimatedStyle]} />
+          </View>
+        ) : null}
+        {!isLast ? (
+          <View style={[styles.progressLine, styles.progressLineRight]}>
+            <Animated.View style={[styles.progressLineFill, rightLineAnimatedStyle]} />
+          </View>
+        ) : null}
+        <Animated.View style={[styles.progressDot, dotAnimatedStyle]}>
+          <Animated.View style={checkAnimatedStyle}>
+            <Ionicons name="checkmark" size={11} color="#FFFFFF" />
+          </Animated.View>
+        </Animated.View>
+      </View>
+      <Animated.Text style={[styles.progressLabel, labelAnimatedStyle]}>{label}</Animated.Text>
+    </View>
+  );
+}
+
+function OrderProgress({ status }: { status: OrderHistoryEntry["status"] }) {
+  const activeIndex = ACTIVE_PROGRESS_STEPS.findIndex((step) => step.status === status);
+  const targetIndex = activeIndex === -1 ? 0 : activeIndex + 1;
+  const progressValue = useSharedValue(targetIndex);
+
+  useEffect(() => {
+    progressValue.value = withTiming(targetIndex, {
+      duration: PROGRESS_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic)
+    });
+  }, [progressValue, targetIndex]);
+
+  return (
+    <View style={styles.progressWrap}>
+      {ACTIVE_PROGRESS_STEPS.map((step, index) => (
+        <OrderProgressStep
+          key={step.status}
+          index={index}
+          label={step.label}
+          progressValue={progressValue}
+          isLast={index === ACTIVE_PROGRESS_STEPS.length - 1}
+        />
+      ))}
     </View>
   );
 }
 
 function HistoryRow({
   order,
+  menuItemsById,
   canOpenRefund,
   onOpenRefund
 }: {
   order: OrderHistoryEntry;
+  menuItemsById: Map<string, MenuItem>;
   canOpenRefund: boolean;
   onOpenRefund: () => void;
 }) {
   return (
     <View style={styles.historyRow}>
-      <View style={styles.historyIcon}>
-        <Ionicons name="receipt-outline" size={18} color={uiPalette.accent} />
+      <View style={styles.historyTopRow}>
+        <StatusPill status={order.status} />
+        <Text style={styles.historyAmount}>{formatUsd(order.total.amountCents)}</Text>
       </View>
-      <View style={{ flex: 1 }}>
-        <View style={styles.historyTop}>
-          <StatusPill status={order.status} />
-          <Text style={styles.historyAmount}>{formatUsd(order.total.amountCents)}</Text>
+
+      <OrderItemStrip order={order} menuItemsById={menuItemsById} />
+
+      {canOpenRefund ? (
+        <View style={styles.historyFlag}>
+          <Text style={styles.historyFlagText}>Refund</Text>
         </View>
-        <Text style={styles.historyCode}>{order.pickupCode}</Text>
-        <Text style={styles.historyMeta}>{formatOrderDateTime(findLatestOrderTime(order))}</Text>
-        {canOpenRefund ? (
-          <Pressable style={styles.inlineAction} onPress={onOpenRefund}>
-            <Text style={styles.inlineActionText}>Refund details</Text>
-            <Ionicons name="chevron-forward" size={14} color={uiPalette.textMuted} />
-          </Pressable>
-        ) : null}
-      </View>
+      ) : null}
+
+      <Text style={styles.historyMeta}>{formatOrderDateTime(findLatestOrderTime(order))}</Text>
+      <Text style={styles.historyBody}>{getLatestTimelineNote(order)}</Text>
+
+      {canOpenRefund ? (
+        <Pressable style={({ pressed }) => [styles.inlineAction, pressed ? styles.inlineActionPressed : null]} onPress={onOpenRefund}>
+          <Text style={styles.inlineActionText}>Refund details</Text>
+          <Ionicons name="arrow-forward" size={14} color={uiPalette.text} />
+        </Pressable>
+      ) : null}
     </View>
+  );
+}
+
+function OrdersHeader({
+  title
+}: {
+  title: string;
+}) {
+  return (
+    <>
+      <View style={styles.pageHeader}>
+        <View style={styles.pageCopy}>
+          <View style={styles.pageMetaSpacer} />
+          <Text style={styles.pageTitle}>{title}</Text>
+        </View>
+      </View>
+      <View style={styles.pageTabsSpacer} />
+    </>
   );
 }
 
 export default function OrdersScreen() {
   const router = useRouter();
-  const { isAuthenticated } = useAuthSession();
+  const insets = useSafeAreaInsets();
+  const { isAuthenticated, isHydrating } = useAuthSession();
   const ordersQuery = useOrderHistoryQuery(isAuthenticated);
   const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
+  const menuQuery = useMenuQuery();
+  const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
+  const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
 
   const orders = ordersQuery.data ?? [];
   const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
-  const activeOrder = findActiveOrder(orders);
+  const menu = resolveMenuData(menuQuery.data);
+  const menuItemsById = useMemo(
+    () => new Map(menu.categories.flatMap((category) => category.items).map((item) => [item.id, item])),
+    [menu.categories]
+  );
+  const realActiveOrder = findActiveOrder(orders);
+  const activeOrder = realActiveOrder;
+  const activeOrderStatus = activeOrder?.status;
   const orderHistory = activeOrder ? orders.filter((order) => order.id !== activeOrder.id) : orders;
+  const headerOffset = insets.top + ORDERS_HEADER_HEIGHT;
+  const contentBottomInset = Math.max(getTabBarBottomOffset(insets.bottom > 0) + TAB_BAR_HEIGHT + 24 - insets.bottom, 24);
+  const isInitialOrdersLoading = isAuthenticated && ordersQuery.isLoading && !ordersQuery.data;
+  const shouldShowInitialLoading = !didFinishInitialReveal && (isHydrating || isInitialOrdersLoading);
+
+  useEffect(() => {
+    if (didFinishInitialReveal) return;
+
+    if (shouldShowInitialLoading) {
+      setShowLoadingOverlay(true);
+      loadingOpacity.stopAnimation();
+      loadingOpacity.setValue(1);
+      return;
+    }
+
+    if (!showLoadingOverlay) {
+      setDidFinishInitialReveal(true);
+      return;
+    }
+
+    setShowLoadingOverlay(true);
+    loadingOpacity.stopAnimation();
+    RNAnimated.timing(loadingOpacity, {
+      toValue: 0,
+      duration: 260,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setShowLoadingOverlay(false);
+      setDidFinishInitialReveal(true);
+    });
+  }, [didFinishInitialReveal, loadingOpacity, shouldShowInitialLoading, showLoadingOverlay]);
+
+  const refreshOrders = () => {
+    void ordersQuery.refetch();
+    void loyaltyLedgerQuery.refetch();
+  };
 
   if (!isAuthenticated) {
     return (
-      <ScreenScroll>
-        <TitleBlock title="Orders" subtitle="Live status, pickup codes, and recent orders stay together." />
+      <View style={styles.screenShell}>
+        <ScreenScroll
+          bottomInset={contentBottomInset}
+          contentContainerStyle={[styles.screenContentNoTopPadding, { paddingTop: headerOffset }]}
+        >
+          <View style={styles.sectionBlock}>
+            <OrdersSectionHeader label="Sign in required" />
+            <View style={styles.supportPanel}>
+              <Text style={styles.stateTitle}>Order tracking lives here.</Text>
+              <Text style={styles.stateBody}>
+                Current status, pickup codes, and previous orders stay attached to your account so they are available whenever you return.
+              </Text>
+              <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/orders" } }} asChild>
+                <Pressable>
+                  <Button
+                    label="Sign In"
+                    style={styles.authButton}
+                    left={<Ionicons name="log-in-outline" size={16} color={uiPalette.primaryText} />}
+                  />
+                </Pressable>
+              </Link>
+            </View>
+          </View>
+        </ScreenScroll>
 
-        <GlassCard style={{ marginTop: 18 }}>
-          <SectionLabel label="Sign in required" />
-          <Text style={styles.heroTitle}>Order tracking lives here.</Text>
-          <Text style={styles.heroBody}>
-            Sign in once to follow active orders, revisit recent pickups, and keep refund-related follow-up attached to the right order.
-          </Text>
-          <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/orders" } }} asChild>
-            <Pressable>
-              <Button
-                label="Sign In"
-                style={{ marginTop: 18, alignSelf: "flex-start" }}
-                left={<Ionicons name="log-in-outline" size={16} color={uiPalette.primaryText} />}
-              />
-            </Pressable>
-          </Link>
-        </GlassCard>
-      </ScreenScroll>
+        <View pointerEvents="none" style={[styles.pageHeaderFloating, { paddingTop: insets.top, height: insets.top + ORDERS_HEADER_HEIGHT }]}>
+          <OrdersHeader title="Live pickup status and recent history." />
+        </View>
+
+        {showLoadingOverlay ? (
+          <RNAnimated.View pointerEvents="auto" style={[styles.loadingOverlay, { opacity: loadingOpacity }]}>
+            <OrdersLoadingState headerHeight={ORDERS_HEADER_HEIGHT} contentBottomInset={contentBottomInset} />
+          </RNAnimated.View>
+        ) : null}
+      </View>
     );
   }
 
   return (
-    <ScreenScroll
-      bottomInset={156}
-      refreshing={ordersQuery.isRefetching || loyaltyLedgerQuery.isRefetching}
-      onRefresh={() => {
-        void ordersQuery.refetch();
-        void loyaltyLedgerQuery.refetch();
-      }}
-    >
-      <TitleBlock
-        title="Orders"
-        subtitle="The current order stays at the top. Everything else follows below as history."
-        action={<Button label="Refresh" variant="secondary" onPress={() => {
-          void ordersQuery.refetch();
-          void loyaltyLedgerQuery.refetch();
-        }} />}
-      />
-
-      <GlassCard style={{ marginTop: 18 }}>
-        <SectionLabel label="Active" />
-        <Text style={styles.heroTitle}>{activeOrder ? "Your current pickup is in motion." : "No active order right now."}</Text>
-        <Text style={styles.heroBody}>
-          {activeOrder
-            ? "Pickup code, live status, and the next action stay in one place."
-            : "When the next order is placed, it will appear here automatically."}
-        </Text>
+    <View style={styles.screenShell}>
+      <ScreenScroll
+        bottomInset={contentBottomInset}
+        refreshing={ordersQuery.isRefetching || loyaltyLedgerQuery.isRefetching}
+        onRefresh={refreshOrders}
+        contentContainerStyle={[styles.screenContentNoTopPadding, { paddingTop: headerOffset }]}
+      >
         {activeOrder ? (
-          <View style={styles.activeCard}>
-            <View style={styles.activeTop}>
-              <StatusPill status={activeOrder.status} />
-              <Text style={styles.activeAmount}>{formatUsd(activeOrder.total.amountCents)}</Text>
-            </View>
-            <Text style={styles.pickupLabel}>Pickup code</Text>
-            <Text style={styles.pickupValue}>{activeOrder.pickupCode}</Text>
-            <Text style={styles.activeMeta}>{formatOrderDateTime(findLatestOrderTime(activeOrder))}</Text>
-            {activeOrder.status === "PENDING_PAYMENT" ? (
-              <Button
-                label="Complete Payment"
-                onPress={() => router.push("/cart")}
-                style={{ marginTop: 16, alignSelf: "flex-start" }}
-                left={<Ionicons name="logo-apple" size={16} color={uiPalette.primaryText} />}
-              />
-            ) : null}
-          </View>
-        ) : null}
-      </GlassCard>
-
-      <Card style={{ marginTop: 14 }}>
-        <SectionLabel label="Recent orders" />
-        {ordersQuery.isLoading ? <Text style={styles.bodyText}>Loading recent orders…</Text> : null}
-        {ordersQuery.error ? <Text style={styles.bodyText}>Unable to load recent orders.</Text> : null}
-        {!ordersQuery.isLoading && !ordersQuery.error && orderHistory.length === 0 ? (
-          <Text style={styles.bodyText}>Your recent order history will appear here.</Text>
-        ) : null}
-
-        {!ordersQuery.isLoading && !ordersQuery.error && orderHistory.length > 0 ? (
-          <View style={styles.groupedList}>
-            {orderHistory.map((order, index) => (
-              <View key={order.id}>
-                <HistoryRow
-                  order={order}
-                  canOpenRefund={hasRefundActivity(order, loyaltyLedger)}
-                  onOpenRefund={() => router.push(`/refunds/${order.id}`)}
-                />
-                {index < orderHistory.length - 1 ? <View style={styles.divider} /> : null}
+          <View style={styles.sectionBlock}>
+            <ActiveOrderPill>
+              <View style={styles.activeTopRow}>
+                <StatusPill status={activeOrderStatus ?? activeOrder.status} glassStyle="clear" />
+                <Text style={styles.activeAmount}>{formatUsd(activeOrder.total.amountCents)}</Text>
               </View>
-            ))}
+
+              <Text style={styles.activeTitle}>{getActiveOrderTitle(activeOrderStatus ?? activeOrder.status)}</Text>
+              <Text style={styles.activeBody}>{getActiveOrderBody(activeOrderStatus ?? activeOrder.status)}</Text>
+
+              <View style={styles.pickupCodeBlock}>
+                <Text style={styles.metricLabel}>Pickup code</Text>
+                <Text style={styles.pickupCodeValue}>{activeOrder.pickupCode}</Text>
+              </View>
+
+              <OrderProgress status={activeOrderStatus ?? activeOrder.status} />
+
+              {(activeOrderStatus ?? activeOrder.status) === "PENDING_PAYMENT" ? (
+                <Button
+                  label="Complete Payment"
+                  onPress={() => router.push("/cart")}
+                  style={styles.paymentButton}
+                  left={<Ionicons name="logo-apple" size={16} color={uiPalette.primaryText} />}
+                />
+              ) : null}
+            </ActiveOrderPill>
           </View>
         ) : null}
-      </Card>
-    </ScreenScroll>
+
+        <View style={styles.sectionBlock}>
+          <OrdersSectionHeader
+            label="Recent orders"
+            trailing={!ordersQuery.isLoading && !ordersQuery.error ? `${orderHistory.length} total` : undefined}
+          />
+
+          {ordersQuery.error ? <Text style={styles.sectionMessage}>Unable to load recent orders.</Text> : null}
+          {!ordersQuery.isLoading && !ordersQuery.error && orderHistory.length === 0 ? (
+            <Text style={styles.sectionMessage}>Completed pickups and older orders will collect here.</Text>
+          ) : null}
+
+          {!ordersQuery.isLoading && !ordersQuery.error && orderHistory.length > 0 ? (
+            <View style={styles.historyList}>
+              {orderHistory.map((order, index) => (
+                <View key={order.id}>
+                  <HistoryRow
+                    order={order}
+                    menuItemsById={menuItemsById}
+                    canOpenRefund={hasRefundActivity(order, loyaltyLedger)}
+                    onOpenRefund={() => router.push(`/refunds/${order.id}`)}
+                  />
+                  {index < orderHistory.length - 1 ? <View style={styles.historyDivider} /> : null}
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      </ScreenScroll>
+
+      <View pointerEvents="none" style={[styles.pageHeaderFloating, { paddingTop: insets.top, height: insets.top + ORDERS_HEADER_HEIGHT }]}>
+        <OrdersHeader title={activeOrder ? "Track your order" : "Past Orders"} />
+      </View>
+
+      {showLoadingOverlay ? (
+        <RNAnimated.View pointerEvents="auto" style={[styles.loadingOverlay, { opacity: loadingOpacity }]}>
+          <OrdersLoadingState headerHeight={ORDERS_HEADER_HEIGHT} contentBottomInset={contentBottomInset} />
+        </RNAnimated.View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  heroTitle: {
-    marginTop: 10,
-    fontSize: 30,
-    lineHeight: 34,
-    fontWeight: "700",
-    letterSpacing: -0.8,
-    color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily
+  screenShell: {
+    flex: 1
   },
-  heroBody: {
-    marginTop: 10,
-    fontSize: 14,
-    lineHeight: 22,
-    color: uiPalette.textSecondary
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 30
   },
-  activeCard: {
-    marginTop: 18,
-    padding: 18,
-    borderRadius: 20,
-    backgroundColor: uiPalette.surfaceStrong,
-    borderWidth: 1,
-    borderColor: uiPalette.border
-  },
-  activeTop: {
+  pageHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
-    alignItems: "center"
+    alignItems: "flex-start",
+    gap: 16,
+    paddingBottom: 11
   },
-  activeAmount: {
-    fontSize: 16,
-    lineHeight: 20,
-    fontWeight: "600",
-    color: uiPalette.text
+  pageHeaderFloating: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    backgroundColor: uiPalette.background,
+    overflow: "hidden",
+    justifyContent: "flex-end",
+    zIndex: 10
   },
-  pickupLabel: {
-    marginTop: 16,
-    fontSize: 11,
-    lineHeight: 14,
-    letterSpacing: 1,
+  pageCopy: {
+    flex: 1
+  },
+  pageMetaSpacer: {
+    height: 0,
+    marginBottom: 0,
+    overflow: "hidden"
+  },
+  pageTabsSpacer: {
+    height: 0,
+    marginTop: 0
+  },
+  pageTitle: {
+    marginTop: 3,
+    fontSize: 17,
+    lineHeight: 18,
+    letterSpacing: 1.2,
     textTransform: "uppercase",
-    color: uiPalette.textMuted,
-    fontWeight: "700"
-  },
-  pickupValue: {
-    marginTop: 6,
-    fontSize: 28,
-    lineHeight: 32,
-    fontWeight: "700",
-    letterSpacing: -0.8,
     color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
   },
-  activeMeta: {
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 19,
-    color: uiPalette.textSecondary
+  screenContentNoTopPadding: {
+    paddingTop: 0
+  },
+  sectionBlock: {
+    marginTop: 28
+  },
+  sectionHeader: {
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: uiPalette.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  sectionMeta: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: uiPalette.textMuted
   },
   statusPill: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 11,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: uiPalette.accentSoft
+    borderWidth: 1
+  },
+  statusPillShell: {
+    position: "relative",
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  statusPillFrame: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  statusPillContent: {
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999
   },
   statusPillText: {
     fontSize: 11,
     lineHeight: 14,
     letterSpacing: 1,
     textTransform: "uppercase",
-    fontWeight: "700",
-    color: uiPalette.accent
+    fontWeight: "700"
   },
-  bodyText: {
-    marginTop: 14,
+  statusPillTextGlass: {
+    color: uiPalette.text
+  },
+  activePanelShell: {
+    borderRadius: 36,
+    overflow: "hidden"
+  },
+  activePanelFrame: {
+    borderRadius: 36,
+    overflow: "hidden"
+  },
+  activePanelInner: {
+    padding: 22,
+    borderRadius: 36,
+    borderWidth: 1
+  },
+  activePanelInnerGlass: {
+    backgroundColor: "rgba(255,255,255,0.01)",
+    borderColor: "rgba(255,255,255,0.18)"
+  },
+  activePanelInnerFallback: {
+    backgroundColor: "rgba(255, 253, 248, 0.78)",
+    borderColor: "rgba(255,255,255,0.42)"
+  },
+  activeTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  activeAmount: {
     fontSize: 14,
-    lineHeight: 22,
+    lineHeight: 20,
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "400"
+  },
+  activeTitle: {
+    marginTop: 18,
+    fontSize: 28,
+    lineHeight: 32,
+    letterSpacing: -0.9,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700"
+  },
+  activeBody: {
+    marginTop: 10,
+    fontSize: 15,
+    lineHeight: 24,
     color: uiPalette.textSecondary
   },
-  groupedList: {
-    marginTop: 14
+  pickupCodeBlock: {
+    marginTop: 22,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border
   },
-  historyRow: {
-    minHeight: 82,
+  metricLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    color: uiPalette.textMuted,
+    fontWeight: "700"
+  },
+  pickupCodeValue: {
+    marginTop: 8,
+    fontSize: 34,
+    lineHeight: 40,
+    letterSpacing: 1.2,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700"
+  },
+  progressWrap: {
+    marginTop: 22,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border,
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 420,
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14
+    alignItems: "flex-start"
   },
-  historyIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: uiPalette.accentSoft
-  },
-  historyTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
+  progressStep: {
+    flex: 1,
     alignItems: "center"
   },
-  historyAmount: {
+  progressTrack: {
+    width: "100%",
+    height: 22,
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  progressDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: uiPalette.borderStrong,
+    backgroundColor: uiPalette.background,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  progressDotComplete: {
+    backgroundColor: uiPalette.primary,
+    borderColor: uiPalette.primary
+  },
+  progressDotCurrent: {
+    backgroundColor: uiPalette.surfaceStrong,
+    borderColor: uiPalette.primary
+  },
+  progressLine: {
+    position: "absolute",
+    top: 10.5,
+    height: 1,
+    backgroundColor: uiPalette.borderStrong,
+    overflow: "hidden"
+  },
+  progressLineFill: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: "100%",
+    backgroundColor: uiPalette.primary
+  },
+  progressLineLeft: {
+    left: 0,
+    right: "50%",
+    marginRight: 19
+  },
+  progressLineRight: {
+    left: "50%",
+    right: 0,
+    marginLeft: 19
+  },
+  progressLineComplete: {
+    backgroundColor: uiPalette.primary
+  },
+  progressLabel: {
+    marginTop: 10,
+    maxWidth: 80,
+    fontSize: 12,
+    lineHeight: 16,
+    textAlign: "center",
+    color: uiPalette.textMuted
+  },
+  progressLabelActive: {
+    color: uiPalette.text
+  },
+  paymentButton: {
+    marginTop: 22,
+    alignSelf: "flex-start"
+  },
+  supportPanel: {
+    marginTop: 18,
+    paddingTop: 18
+  },
+  stateTitle: {
+    fontSize: 28,
+    lineHeight: 32,
+    letterSpacing: -0.8,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700"
+  },
+  stateBody: {
+    marginTop: 10,
+    maxWidth: 520,
     fontSize: 15,
-    lineHeight: 18,
-    fontWeight: "600",
-    color: uiPalette.text
+    lineHeight: 24,
+    color: uiPalette.textSecondary
   },
-  historyCode: {
-    marginTop: 8,
-    fontSize: 16,
+  authButton: {
+    marginTop: 18,
+    alignSelf: "flex-start"
+  },
+  sectionMessage: {
+    marginTop: 18,
+    fontSize: 15,
+    lineHeight: 23,
+    color: uiPalette.textSecondary
+  },
+  historyList: {
+    marginTop: 8
+  },
+  historyRow: {
+    paddingVertical: 18
+  },
+  historyTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  historyAmount: {
+    fontSize: 14,
     lineHeight: 20,
-    fontWeight: "600",
-    color: uiPalette.text
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "400"
   },
-  historyMeta: {
-    marginTop: 4,
+  orderItemsRow: {
+    marginTop: 12,
+    alignItems: "flex-start"
+  },
+  orderThumbStack: {
+    flexDirection: "row",
+    alignItems: "center"
+  },
+  orderThumb: {
+    width: 42,
+    height: 52,
+    borderRadius: 0,
+    overflow: "hidden",
+    backgroundColor: "#D5D4CE",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  orderThumbStacked: {
+    marginLeft: -8
+  },
+  orderThumbImage: {
+    width: "100%",
+    height: "100%"
+  },
+  orderThumbCount: {
+    backgroundColor: "#D5D4CE"
+  },
+  orderThumbCountText: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: uiPalette.text,
+    fontWeight: "700"
+  },
+  orderItemsCopy: {
+    marginTop: 10,
+    maxWidth: 320
+  },
+  orderItemsTitle: {
+    fontSize: 16,
+    lineHeight: 21,
+    color: uiPalette.text,
+    fontWeight: "600"
+  },
+  orderItemsMeta: {
+    marginTop: 2,
     fontSize: 12,
     lineHeight: 18,
     color: uiPalette.textSecondary
   },
-  inlineAction: {
+  historyFlag: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(180, 91, 79, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(180, 91, 79, 0.18)"
+  },
+  historyFlagText: {
+    fontSize: 11,
+    lineHeight: 14,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    color: uiPalette.danger,
+    fontWeight: "700"
+  },
+  historyMeta: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 19,
+    color: uiPalette.textSecondary
+  },
+  historyBody: {
     marginTop: 8,
+    fontSize: 14,
+    lineHeight: 22,
+    color: uiPalette.text
+  },
+  inlineAction: {
+    marginTop: 12,
+    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: 4
+    gap: 6
+  },
+  inlineActionPressed: {
+    opacity: 0.72
   },
   inlineActionText: {
     fontSize: 13,
-    lineHeight: 17,
-    fontWeight: "600",
-    color: uiPalette.text
+    lineHeight: 18,
+    color: uiPalette.text,
+    fontWeight: "600"
   },
-  divider: {
+  historyDivider: {
     height: 1,
     backgroundColor: uiPalette.border
   }

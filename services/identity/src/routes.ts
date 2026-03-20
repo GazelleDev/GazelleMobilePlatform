@@ -43,6 +43,10 @@ const defaultAuthWriteRateLimitMax = 24;
 const defaultAuthReadRateLimitMax = 120;
 const defaultPasskeyVerifyRateLimitMax = 12;
 const defaultPasskeyChallengeRateLimitMax = 24;
+const defaultAccessTokenTtlMs = 30 * 60 * 1000;
+// Successful refresh rotation extends the session's idle lifetime by issuing a new refresh token.
+// TODO(platform): Add an absolute max refresh-session lifetime on top of this idle timeout if we need stricter long-lived session control.
+const defaultRefreshSessionTtlMs = 30 * 24 * 60 * 60 * 1000;
 
 function parseCommaSeparatedEnv(value: string | undefined) {
   return (value ?? "")
@@ -78,14 +82,19 @@ function loadPasskeyConfig() {
   };
 }
 
-function buildSession(seed: string, userId: string) {
+function buildStoredSession(seed: string, userId: string) {
   const tokenSuffix = `${seed}-${randomUUID()}`;
-  return authSessionSchema.parse({
-    accessToken: `access-${tokenSuffix}`,
-    refreshToken: `refresh-${tokenSuffix}`,
-    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    userId
-  });
+  const accessExpiresAt = new Date(Date.now() + defaultAccessTokenTtlMs).toISOString();
+  const refreshExpiresAt = new Date(Date.now() + defaultRefreshSessionTtlMs).toISOString();
+  return {
+    ...authSessionSchema.parse({
+      accessToken: `access-${tokenSuffix}`,
+      refreshToken: `refresh-${tokenSuffix}`,
+      expiresAt: accessExpiresAt,
+      userId
+    }),
+    refreshExpiresAt
+  };
 }
 
 function extractChallengeFromClientData(clientDataJSON: string) {
@@ -120,9 +129,9 @@ async function issueSession(params: {
   userId?: string;
   authMethod: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh";
 }) {
-  const session = buildSession(params.seed, params.userId ?? defaultUserId);
+  const session = buildStoredSession(params.seed, params.userId ?? defaultUserId);
   await params.repository.saveSession(session, params.authMethod);
-  return session;
+  return authSessionSchema.parse(session);
 }
 
 function buildApiError(requestId: string, code: string, message: string) {
@@ -480,8 +489,12 @@ export async function registerRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const input = refreshRequestSchema.parse(request.body);
-      const currentSession = await repository.getSessionByRefreshToken(input.refreshToken);
-      if (!currentSession) {
+      const rotatedSession = await repository.rotateRefreshSession(
+        input.refreshToken,
+        (userId) => buildStoredSession(input.refreshToken, userId),
+        "refresh"
+      );
+      if (!rotatedSession) {
         return reply.status(401).send(
           apiErrorSchema.parse({
             code: "INVALID_REFRESH_TOKEN",
@@ -491,12 +504,7 @@ export async function registerRoutes(app: FastifyInstance) {
         );
       }
 
-      await repository.revokeByRefreshToken(input.refreshToken);
-      return issueSession({
-        repository,
-        seed: input.refreshToken,
-        authMethod: "refresh"
-      });
+      return rotatedSession;
     }
   );
 

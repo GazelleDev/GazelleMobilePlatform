@@ -22,7 +22,7 @@ import {
 } from "../src/orders/checkout";
 import { useCheckoutFlow } from "../src/orders/flow";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../src/navigation/tabBarMetrics";
-import { Button, GlassCard, uiPalette, uiTypography } from "../src/ui/system";
+import { Button, uiPalette, uiTypography } from "../src/ui/system";
 
 function SummaryRow({
   label,
@@ -68,26 +68,6 @@ function canUseLiquidGlassSheets() {
   } catch {
     return false;
   }
-}
-
-function SheetCard({
-  children,
-  style
-}: {
-  children: React.ReactNode;
-  style?: object;
-}) {
-  if (!canUseLiquidGlassSheets()) {
-    return <GlassCard style={style}>{children}</GlassCard>;
-  }
-
-  return (
-    <View style={[styles.sheetCardShell, style]}>
-      <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.sheetCardGlass}>
-        <View style={styles.sheetCardInner}>{children}</View>
-      </GlassView>
-    </View>
-  );
 }
 
 function StickyActionPill({
@@ -450,29 +430,21 @@ export default function CartModalScreen() {
           bounces
           showsVerticalScrollIndicator={false}
           contentInsetAdjustmentBehavior="never"
-          contentContainerStyle={{
-            paddingHorizontal: 20,
-            paddingTop: items.length > 0 ? 14 : 8,
-            paddingBottom: items.length > 0 ? stickyFooterClearance : Math.max(insets.bottom, 12) + 8
-          }}
+          contentContainerStyle={[
+            {
+              paddingHorizontal: 20,
+              paddingTop: items.length > 0 ? 14 : 8,
+              paddingBottom: items.length > 0 ? stickyFooterClearance : Math.max(insets.bottom, 12) + 8
+            },
+            items.length === 0 ? styles.emptyScrollContent : null
+          ]}
         >
           {items.length === 0 ? (
-            <SheetCard style={styles.emptyCard}>
-              <View style={styles.emptyIconWrap}>
-                <Ionicons name="bag-handle-outline" size={30} color={uiPalette.accent} />
-              </View>
-              <Text style={styles.emptyEyebrow}>Nothing here yet</Text>
-              <Text style={styles.emptyTitle}>Build the cart from the menu.</Text>
-              <Text style={styles.emptyBody}>
-                Add drinks or pastries first, then come back here to review quantities, pickup timing, and payment.
-              </Text>
-              <Button
-                label="Browse Menu"
-                onPress={() => router.replace("/(tabs)/menu")}
-                left={<Ionicons name="cafe-outline" size={16} color={uiPalette.primaryText} />}
-                style={styles.emptyPrimary}
-              />
-            </SheetCard>
+            <View style={styles.emptyPage}>
+              <Text style={styles.emptyEyebrow}>Bag</Text>
+              <Text style={styles.emptyTitle}>Your cart is empty.</Text>
+              <Text style={styles.emptyBody}>Add drinks or pastries from the menu, then come back here to review and pay.</Text>
+            </View>
           ) : (
             <>
               {retryableOrder ? (
@@ -722,63 +694,37 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: uiPalette.textSecondary
   },
-  sheetCardShell: {
-    borderRadius: 26,
-    overflow: "hidden"
+  emptyScrollContent: {
+    flexGrow: 1,
+    justifyContent: "center"
   },
-  sheetCardGlass: {
-    borderRadius: 26,
-    overflow: "hidden"
-  },
-  sheetCardInner: {
-    borderRadius: 26,
-    overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.008)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)"
-  },
-  emptyCard: {
-    marginTop: 12,
-    paddingTop: 26,
-    paddingBottom: 24
-  },
-  emptyIconWrap: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.64)",
-    borderWidth: 1,
-    borderColor: "rgba(23, 21, 19, 0.08)"
+  emptyPage: {
+    alignItems: "center"
   },
   emptyEyebrow: {
-    marginTop: 16,
     fontSize: 11,
     lineHeight: 14,
     textTransform: "uppercase",
-    letterSpacing: 1.2,
+    letterSpacing: 1.15,
     color: uiPalette.textMuted,
-    fontWeight: "700"
+    fontWeight: "700",
+    textAlign: "center"
   },
   emptyTitle: {
-    marginTop: 8,
-    fontSize: 30,
-    lineHeight: 34,
-    fontWeight: "700",
-    letterSpacing: -0.8,
+    marginTop: 6,
+    fontSize: 16,
+    lineHeight: 22,
     color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily
+    fontWeight: "600",
+    textAlign: "center"
   },
   emptyBody: {
-    marginTop: 10,
+    marginTop: 8,
     fontSize: 14,
     lineHeight: 22,
-    color: uiPalette.textSecondary
-  },
-  emptyPrimary: {
-    marginTop: 18,
-    alignSelf: "flex-start"
+    color: uiPalette.textSecondary,
+    maxWidth: 340,
+    textAlign: "center"
   },
   banner: {
     marginTop: 14,

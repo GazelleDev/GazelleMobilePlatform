@@ -233,6 +233,7 @@ describe("orders service", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
@@ -400,6 +401,103 @@ describe("orders service", () => {
       (typeof input === "string" ? input : input.toString()).endsWith("/v1/loyalty/internal/ledger/apply")
     );
     expect(loyaltyMutationCalls).toHaveLength(2);
+
+    await app.close();
+  });
+
+  it("lazily reconciles fulfillment state forward on get and list reads", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-10T00:00:00.000Z"));
+
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const createdOrder = orderSchema.parse(createResponse.json());
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${createdOrder.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "pay-stopgap-1"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(payResponse.json()).status).toBe("PAID");
+
+    vi.setSystemTime(new Date("2026-03-10T00:04:59.000Z"));
+    const beforePrepResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    expect(orderSchema.parse(beforePrepResponse.json()).status).toBe("PAID");
+
+    vi.setSystemTime(new Date("2026-03-10T00:05:00.000Z"));
+    const inPrepResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    const inPrepOrder = orderSchema.parse(inPrepResponse.json());
+    expect(inPrepOrder.status).toBe("IN_PREP");
+    expect(inPrepOrder.timeline.map((entry) => entry.status)).toEqual([
+      "PENDING_PAYMENT",
+      "PAID",
+      "IN_PREP"
+    ]);
+
+    vi.setSystemTime(new Date("2026-03-10T00:10:00.000Z"));
+    const readyListResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders"
+    });
+    const readyList = orderSchema.array().parse(readyListResponse.json());
+    const readyOrder = readyList.find((entry) => entry.id === createdOrder.id);
+    expect(readyOrder).toMatchObject({
+      id: createdOrder.id,
+      status: "READY"
+    });
+    expect(readyOrder?.timeline.map((entry) => entry.status)).toEqual([
+      "PENDING_PAYMENT",
+      "PAID",
+      "IN_PREP",
+      "READY"
+    ]);
+
+    vi.setSystemTime(new Date("2026-03-10T00:15:00.000Z"));
+    const completedResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    const completedOrder = orderSchema.parse(completedResponse.json());
+    expect(completedOrder.status).toBe("COMPLETED");
+    expect(completedOrder.timeline.map((entry) => entry.status)).toEqual([
+      "PENDING_PAYMENT",
+      "PAID",
+      "IN_PREP",
+      "READY",
+      "COMPLETED"
+    ]);
+
+    const repeatedCompletedResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    const repeatedCompletedOrder = orderSchema.parse(repeatedCompletedResponse.json());
+    expect(repeatedCompletedOrder.timeline).toHaveLength(completedOrder.timeline.length);
 
     await app.close();
   });

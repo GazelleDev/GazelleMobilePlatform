@@ -9,8 +9,13 @@ type PersistedSessionRow = {
   access_token: string;
   refresh_token: string;
   user_id: string;
+  access_expires_at: string | Date | null;
   expires_at: string | Date;
   revoked_at: string | Date | null;
+};
+
+type StoredSession = AuthSession & {
+  refreshExpiresAt: string;
 };
 
 type PersistedPasskeyChallengeRow = {
@@ -58,9 +63,14 @@ export type PasskeyCredentialRecord = {
 export type IdentityRepository = {
   backend: "memory" | "postgres";
   saveSession(
-    session: AuthSession,
+    session: StoredSession,
     authMethod: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh"
   ): Promise<void>;
+  rotateRefreshSession(
+    refreshToken: string,
+    createNextSession: (userId: string) => StoredSession,
+    authMethod: "refresh"
+  ): Promise<AuthSession | undefined>;
   getSessionByAccessToken(accessToken: string): Promise<AuthSession | undefined>;
   getSessionByRefreshToken(refreshToken: string): Promise<AuthSession | undefined>;
   revokeByRefreshToken(refreshToken: string): Promise<void>;
@@ -82,12 +92,24 @@ function parseIsoDate(value: unknown) {
   return new Date(String(value)).toISOString();
 }
 
-function isSessionActive(session: AuthSession, revokedAt: string | undefined) {
+function isAccessSessionActive(session: AuthSession, revokedAt: string | undefined) {
   if (revokedAt) {
     return false;
   }
 
   return Date.parse(session.expiresAt) > Date.now();
+}
+
+function isRefreshSessionActive(refreshExpiresAt: string, revokedAt: string | undefined) {
+  if (revokedAt) {
+    return false;
+  }
+
+  return Date.parse(refreshExpiresAt) > Date.now();
+}
+
+function toPublicSession(session: StoredSession): AuthSession {
+  return authSessionSchema.parse(session);
 }
 
 function toPasskeyChallengeRecord(row: PersistedPasskeyChallengeRow): PasskeyChallengeRecord {
@@ -119,7 +141,7 @@ function toPasskeyCredentialRecord(row: PersistedPasskeyCredentialRow): PasskeyC
 }
 
 function createInMemoryRepository(): IdentityRepository {
-  const sessionsByAccessToken = new Map<string, { session: AuthSession; revokedAt?: string }>();
+  const sessionsByAccessToken = new Map<string, { session: StoredSession; revokedAt?: string }>();
   const accessTokenByRefreshToken = new Map<string, string>();
   const passkeyChallengesByFlow = new Map<"register" | "auth", PasskeyChallengeRecord[]>();
   const passkeyCredentialsById = new Map<string, PasskeyCredentialRecord>();
@@ -130,9 +152,31 @@ function createInMemoryRepository(): IdentityRepository {
       sessionsByAccessToken.set(session.accessToken, { session });
       accessTokenByRefreshToken.set(session.refreshToken, session.accessToken);
     },
+    async rotateRefreshSession(refreshToken, createNextSession) {
+      const accessToken = accessTokenByRefreshToken.get(refreshToken);
+      if (!accessToken) {
+        return undefined;
+      }
+
+      const entry = sessionsByAccessToken.get(accessToken);
+      if (!entry || !isRefreshSessionActive(entry.session.refreshExpiresAt, entry.revokedAt)) {
+        return undefined;
+      }
+
+      sessionsByAccessToken.set(accessToken, {
+        ...entry,
+        revokedAt: new Date().toISOString()
+      });
+      accessTokenByRefreshToken.delete(refreshToken);
+
+      const nextSession = createNextSession(entry.session.userId);
+      sessionsByAccessToken.set(nextSession.accessToken, { session: nextSession });
+      accessTokenByRefreshToken.set(nextSession.refreshToken, nextSession.accessToken);
+      return toPublicSession(nextSession);
+    },
     async getSessionByAccessToken(accessToken) {
       const entry = sessionsByAccessToken.get(accessToken);
-      if (!entry || !isSessionActive(entry.session, entry.revokedAt)) {
+      if (!entry || !isAccessSessionActive(entry.session, entry.revokedAt)) {
         return undefined;
       }
       return entry.session;
@@ -144,7 +188,7 @@ function createInMemoryRepository(): IdentityRepository {
       }
 
       const entry = sessionsByAccessToken.get(accessToken);
-      if (!entry || !isSessionActive(entry.session, entry.revokedAt)) {
+      if (!entry || !isRefreshSessionActive(entry.session.refreshExpiresAt, entry.revokedAt)) {
         return undefined;
       }
       return entry.session;
@@ -164,6 +208,7 @@ function createInMemoryRepository(): IdentityRepository {
         ...entry,
         revokedAt: new Date().toISOString()
       });
+      accessTokenByRefreshToken.delete(refreshToken);
     },
     async savePasskeyChallenge(input) {
       const existing = passkeyChallengesByFlow.get(input.flow) ?? [];
@@ -231,10 +276,11 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
             access_token: session.accessToken,
             refresh_token: session.refreshToken,
             user_id: session.userId,
-            expires_at: session.expiresAt,
+            access_expires_at: session.expiresAt,
+            expires_at: session.refreshExpiresAt,
             revoked_at: null,
             auth_method: authMethod
-          })
+          } as never)
           .execute();
         return;
       } catch {
@@ -243,14 +289,60 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
           .set({
             refresh_token: session.refreshToken,
             user_id: session.userId,
-            expires_at: session.expiresAt,
+            access_expires_at: session.expiresAt,
+            expires_at: session.refreshExpiresAt,
             revoked_at: null,
             auth_method: authMethod,
             updated_at: new Date().toISOString()
-          })
+          } as never)
           .where("access_token", "=", session.accessToken)
           .execute();
       }
+    },
+    async rotateRefreshSession(refreshToken, createNextSession, authMethod) {
+      return db.transaction().execute(async (trx) => {
+        const row = await trx
+          .selectFrom("identity_sessions")
+          .selectAll()
+          .where("refresh_token", "=", refreshToken)
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (!row) {
+          return undefined;
+        }
+
+        const persisted = row as unknown as PersistedSessionRow;
+        const revokedAt = persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined;
+        if (!isRefreshSessionActive(parseIsoDate(persisted.expires_at), revokedAt)) {
+          return undefined;
+        }
+
+        await trx
+          .updateTable("identity_sessions")
+          .set({
+            revoked_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .where("access_token", "=", persisted.access_token)
+          .execute();
+
+        const nextSession = createNextSession(persisted.user_id);
+        await trx
+          .insertInto("identity_sessions")
+          .values({
+            access_token: nextSession.accessToken,
+            refresh_token: nextSession.refreshToken,
+            user_id: nextSession.userId,
+            access_expires_at: nextSession.expiresAt,
+            expires_at: nextSession.refreshExpiresAt,
+            revoked_at: null,
+            auth_method: authMethod
+          } as never)
+          .execute();
+
+        return toPublicSession(nextSession);
+      });
     },
     async getSessionByAccessToken(accessToken) {
       const row = await db
@@ -263,15 +355,15 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
         return undefined;
       }
 
-      const persisted = row as PersistedSessionRow;
+      const persisted = row as unknown as PersistedSessionRow;
       const session = authSessionSchema.parse({
         accessToken: persisted.access_token,
         refreshToken: persisted.refresh_token,
         userId: persisted.user_id,
-        expiresAt: parseIsoDate(persisted.expires_at)
+        expiresAt: parseIsoDate(persisted.access_expires_at ?? persisted.expires_at)
       });
 
-      if (!isSessionActive(session, persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined)) {
+      if (!isAccessSessionActive(session, persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined)) {
         return undefined;
       }
 
@@ -288,15 +380,15 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
         return undefined;
       }
 
-      const persisted = row as PersistedSessionRow;
+      const persisted = row as unknown as PersistedSessionRow;
       const session = authSessionSchema.parse({
         accessToken: persisted.access_token,
         refreshToken: persisted.refresh_token,
         userId: persisted.user_id,
-        expiresAt: parseIsoDate(persisted.expires_at)
+        expiresAt: parseIsoDate(persisted.access_expires_at ?? persisted.expires_at)
       });
 
-      if (!isSessionActive(session, persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined)) {
+      if (!isRefreshSessionActive(parseIsoDate(persisted.expires_at), persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined)) {
         return undefined;
       }
 

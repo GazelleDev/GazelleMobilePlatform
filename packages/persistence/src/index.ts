@@ -93,6 +93,7 @@ export interface IdentitySessionTable {
   access_token: string;
   refresh_token: string;
   user_id: string;
+  access_expires_at: string | null;
   expires_at: string;
   revoked_at: string | null;
   auth_method: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh";
@@ -372,12 +373,18 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       access_token TEXT PRIMARY KEY,
       refresh_token TEXT NOT NULL UNIQUE,
       user_id UUID NOT NULL,
+      access_expires_at TIMESTAMPTZ,
       expires_at TIMESTAMPTZ NOT NULL,
       revoked_at TIMESTAMPTZ,
       auth_method TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE identity_sessions
+    ADD COLUMN IF NOT EXISTS access_expires_at TIMESTAMPTZ
   `.execute(trx);
 
   await sql`
