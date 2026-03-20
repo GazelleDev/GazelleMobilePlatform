@@ -16,6 +16,60 @@ describe("gateway", () => {
   let previousGatewayInternalToken: string | undefined;
   let previousGatewayStaffToken: string | undefined;
   let previousOrdersInternalToken: string | undefined;
+  let previousGatewayOrderStreamPollMs: string | undefined;
+  let queuedOrderStatuses: Map<string, Array<"PENDING_PAYMENT" | "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED">>;
+
+  function buildOrderPayload(
+    orderId: string,
+    status: "PENDING_PAYMENT" | "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED"
+  ) {
+    const now = Date.now();
+    const timeline = [
+      {
+        status: "PENDING_PAYMENT" as const,
+        occurredAt: new Date(now - 180000).toISOString()
+      }
+    ];
+
+    if (status !== "PENDING_PAYMENT") {
+      timeline.push({
+        status: "PAID",
+        occurredAt: new Date(now - 120000).toISOString(),
+        note: "Payment accepted"
+      });
+    }
+
+    if (status === "IN_PREP" || status === "READY" || status === "COMPLETED") {
+      timeline.push({
+        status: "IN_PREP",
+        occurredAt: new Date(now - 60000).toISOString()
+      });
+    }
+
+    if (status === "READY" || status === "COMPLETED") {
+      timeline.push({
+        status: "READY",
+        occurredAt: new Date(now - 30000).toISOString()
+      });
+    }
+
+    if (status === "COMPLETED" || status === "CANCELED") {
+      timeline.push({
+        status,
+        occurredAt: new Date(now).toISOString()
+      });
+    }
+
+    return {
+      id: orderId,
+      locationId: "flagship-01",
+      status,
+      items: [],
+      total: { currency: "USD", amountCents: 530 },
+      pickupCode: status === "COMPLETED" ? "DONE01" : status === "CANCELED" ? "CANCEL" : "PREP01",
+      timeline
+    };
+  }
 
   beforeEach(() => {
     fetchMock.mockReset();
@@ -27,6 +81,8 @@ describe("gateway", () => {
     previousGatewayInternalToken = process.env.GATEWAY_INTERNAL_API_TOKEN;
     previousGatewayStaffToken = process.env.GATEWAY_STAFF_API_TOKEN;
     previousOrdersInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
+    previousGatewayOrderStreamPollMs = process.env.GATEWAY_ORDER_STREAM_POLL_MS;
+    queuedOrderStatuses = new Map();
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
     process.env.ORDERS_SERVICE_BASE_URL = "http://orders.internal";
     process.env.CATALOG_SERVICE_BASE_URL = "http://catalog.internal";
@@ -292,30 +348,13 @@ describe("gateway", () => {
       const getOrderMatch = url.match(/\/v1\/orders\/([0-9a-f-]{36})$/);
       if (getOrderMatch && method === "GET") {
         const orderId = getOrderMatch[1];
+        const queuedStatusesForOrder = queuedOrderStatuses.get(orderId);
+        const nextStatus = queuedStatusesForOrder?.shift() ?? "IN_PREP";
+        if (queuedStatusesForOrder && queuedStatusesForOrder.length === 0) {
+          queuedOrderStatuses.delete(orderId);
+        }
         return new Response(
-          JSON.stringify({
-            id: orderId,
-            locationId: "flagship-01",
-            status: "IN_PREP",
-            items: [],
-            total: { currency: "USD", amountCents: 530 },
-            pickupCode: "PREP01",
-            timeline: [
-              {
-                status: "PENDING_PAYMENT",
-                occurredAt: new Date(Date.now() - 120000).toISOString()
-              },
-              {
-                status: "PAID",
-                occurredAt: new Date(Date.now() - 60000).toISOString(),
-                note: "Payment accepted"
-              },
-              {
-                status: "IN_PREP",
-                occurredAt: new Date().toISOString()
-              }
-            ]
-          }),
+          JSON.stringify(buildOrderPayload(orderId, nextStatus)),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
@@ -558,6 +597,12 @@ describe("gateway", () => {
     } else {
       process.env.ORDERS_INTERNAL_API_TOKEN = previousOrdersInternalToken;
     }
+
+    if (previousGatewayOrderStreamPollMs === undefined) {
+      delete process.env.GATEWAY_ORDER_STREAM_POLL_MS;
+    } else {
+      process.env.GATEWAY_ORDER_STREAM_POLL_MS = previousGatewayOrderStreamPollMs;
+    }
   });
 
   it("returns health", async () => {
@@ -786,6 +831,66 @@ describe("gateway", () => {
       expect(upstreamHeaders.get("x-user-id")).toBe("123e4567-e89b-12d3-a456-426614174000");
       expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
     }
+
+    await app.close();
+  });
+
+  it("streams the initial order snapshot as text/event-stream", async () => {
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174116";
+    queuedOrderStatuses.set(orderId, ["COMPLETED"]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${orderId}/stream`,
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/event-stream");
+    expect(response.body).toContain(`"id":"${orderId}"`);
+    expect(response.body).toContain(`"status":"COMPLETED"`);
+
+    const streamOrderCall = fetchMock.mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === `http://orders.internal/v1/orders/${orderId}` && (init?.method ?? "GET") === "GET";
+    });
+    expect(streamOrderCall).toBeDefined();
+    if (streamOrderCall) {
+      const upstreamHeaders = new Headers((streamOrderCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-user-id")).toBe("123e4567-e89b-12d3-a456-426614174000");
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
+    }
+
+    await app.close();
+  });
+
+  it("closes the order stream after sending a terminal update", async () => {
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174117";
+    queuedOrderStatuses.set(orderId, ["IN_PREP", "COMPLETED"]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${orderId}/stream`,
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dataEvents = response.body
+      .split("\n\n")
+      .filter((block) => block.startsWith("data: "))
+      .map((block) => block.trim());
+    expect(dataEvents).toHaveLength(2);
+    expect(dataEvents[0]).toContain(`"status":"IN_PREP"`);
+    expect(dataEvents[1]).toContain(`"status":"COMPLETED"`);
+
+    const orderFetchCalls = fetchMock.mock.calls.filter(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === `http://orders.internal/v1/orders/${orderId}` && (init?.method ?? "GET") === "GET";
+    });
+    expect(orderFetchCalls).toHaveLength(2);
 
     await app.close();
   });

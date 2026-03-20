@@ -52,6 +52,14 @@ const adminOrderStatusUpdateSchema = z.object({
 });
 const defaultRateLimitWindowMs = 60_000;
 const defaultUpstreamTimeoutMs = 5_000;
+const defaultOrderStreamPollIntervalMs = 2_000;
+type StreamOrderFetchSuccess = {
+  order: z.output<typeof orderSchema>;
+};
+type StreamOrderFetchError = {
+  statusCode: number;
+  error: z.output<typeof apiErrorSchema>;
+};
 
 function unauthorized(requestId: string) {
   return apiErrorSchema.parse({
@@ -309,6 +317,113 @@ async function proxyUpstream<TResponse>(params: {
   return reply.status(upstreamResponse.status).send(parsedResponse.data);
 }
 
+async function fetchOrderForStream(params: {
+  requestId: string;
+  ordersBaseUrl: string;
+  gatewayInternalApiToken: string | undefined;
+  orderId: string;
+  userId: string;
+  authorization: string;
+  timeoutMs?: number;
+}): Promise<StreamOrderFetchSuccess | StreamOrderFetchError> {
+  const {
+    requestId,
+    ordersBaseUrl,
+    gatewayInternalApiToken,
+    orderId,
+    userId,
+    authorization,
+    timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs)
+  } = params;
+  const headers: Record<string, string> = {
+    authorization,
+    "x-request-id": requestId,
+    "x-user-id": userId
+  };
+
+  if (gatewayInternalApiToken) {
+    headers["x-gateway-token"] = gatewayInternalApiToken;
+  }
+
+  let upstreamResponse: Response;
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  try {
+    upstreamResponse = await fetch(`${ordersBaseUrl}/v1/orders/${orderId}`, {
+      method: "GET",
+      headers,
+      signal: timeoutController.signal
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      return {
+        statusCode: 504,
+        error: apiErrorSchema.parse({
+          code: "UPSTREAM_TIMEOUT",
+          message: "Orders service timed out",
+          requestId
+        })
+      } as const;
+    }
+
+    return {
+      statusCode: 502,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Orders service is unavailable",
+        requestId
+      })
+    } as const;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  const rawBody = await upstreamResponse.text();
+  const parsedBody = parseJsonSafely(rawBody);
+
+  if (!upstreamResponse.ok) {
+    const upstreamError = apiErrorSchema.safeParse(parsedBody);
+    if (upstreamError.success) {
+      return {
+        statusCode: upstreamResponse.status,
+        error: upstreamError.data
+      } as const;
+    }
+
+    return {
+      statusCode: upstreamResponse.status,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_ERROR",
+        message: `Orders request failed with status ${upstreamResponse.status}`,
+        requestId,
+        details: toErrorDetails(parsedBody)
+      })
+    } as const;
+  }
+
+  const parsedResponse = orderSchema.safeParse(parsedBody);
+  if (!parsedResponse.success) {
+    return {
+      statusCode: 502,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_INVALID_RESPONSE",
+        message: "Orders response did not match contract",
+        requestId,
+        details: parsedResponse.error.flatten()
+      })
+    } as const;
+  }
+
+  return {
+    order: parsedResponse.data
+  } as const;
+}
+
+function isTerminalOrderStatus(status: z.output<typeof orderSchema>["status"]) {
+  return status === "COMPLETED" || status === "CANCELED";
+}
+
 async function resolveAuthenticatedUserId(params: {
   request: FastifyRequest;
   reply: FastifyReply;
@@ -451,6 +566,10 @@ export async function registerRoutes(app: FastifyInstance) {
     timeWindow: rateLimitWindowMs,
     keyGenerator: userScopedRateLimitKey
   };
+  const orderStreamPollIntervalMs = toPositiveInteger(
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS,
+    defaultOrderStreamPollIntervalMs
+  );
   const staffReadRateLimit = {
     max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_STAFF_READ_MAX, 120),
     timeWindow: rateLimitWindowMs,
@@ -861,6 +980,136 @@ export async function registerRoutes(app: FastifyInstance) {
       responseSchema: orderSchema
     });
   });
+
+  app.get(
+    "/v1/orders/:orderId/stream",
+    { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] },
+    async (request, reply) => {
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const userId = await resolveAuthenticatedUserId({
+        request,
+        reply,
+        identityBaseUrl
+      });
+      if (!userId) {
+        return;
+      }
+
+      const authorization = request.headers.authorization;
+      if (typeof authorization !== "string") {
+        return reply.status(401).send(unauthorized(request.id));
+      }
+
+      const initialOrderResult = await fetchOrderForStream({
+        requestId: request.id,
+        ordersBaseUrl,
+        gatewayInternalApiToken,
+        orderId,
+        userId,
+        authorization
+      });
+      if ("error" in initialOrderResult) {
+        const { statusCode, error } = initialOrderResult;
+        return reply.status(statusCode).send(error);
+      }
+
+      reply.hijack();
+      reply.raw.statusCode = 200;
+      reply.raw.setHeader("Content-Type", "text/event-stream");
+      reply.raw.setHeader("Cache-Control", "no-cache");
+      reply.raw.setHeader("Connection", "keep-alive");
+      reply.raw.setHeader("X-Accel-Buffering", "no");
+      if (typeof reply.raw.flushHeaders === "function") {
+        reply.raw.flushHeaders();
+      }
+
+      let closed = false;
+      let pollTimeout: ReturnType<typeof setTimeout> | undefined;
+      let lastSeenStatus = initialOrderResult.order.status;
+
+      const cleanup = () => {
+        if (pollTimeout) {
+          clearTimeout(pollTimeout);
+          pollTimeout = undefined;
+        }
+        if (closed) {
+          return;
+        }
+        closed = true;
+        request.raw.removeListener("close", handleDisconnect);
+        if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+          reply.raw.end();
+        }
+      };
+
+      const sendEvent = (data: unknown) => {
+        if (closed || reply.raw.destroyed || reply.raw.writableEnded) {
+          return;
+        }
+        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const handleDisconnect = () => {
+        cleanup();
+      };
+
+      const pollForUpdates = async () => {
+        if (closed) {
+          return;
+        }
+
+        const nextOrderResult = await fetchOrderForStream({
+          requestId: request.id,
+          ordersBaseUrl,
+          gatewayInternalApiToken,
+          orderId,
+          userId,
+          authorization
+        });
+
+        if ("error" in nextOrderResult) {
+          const { statusCode, error } = nextOrderResult;
+          request.log.warn(
+            {
+              requestId: request.id,
+              orderId,
+              statusCode,
+              errorCode: error.code
+            },
+            "order stream poll failed"
+          );
+          cleanup();
+          return;
+        }
+
+        if (nextOrderResult.order.status !== lastSeenStatus) {
+          lastSeenStatus = nextOrderResult.order.status;
+          sendEvent(nextOrderResult.order);
+        }
+
+        if (isTerminalOrderStatus(lastSeenStatus)) {
+          cleanup();
+          return;
+        }
+
+        pollTimeout = setTimeout(() => {
+          void pollForUpdates();
+        }, orderStreamPollIntervalMs);
+      };
+
+      request.raw.on("close", handleDisconnect);
+      sendEvent(initialOrderResult.order);
+
+      if (isTerminalOrderStatus(lastSeenStatus)) {
+        cleanup();
+        return;
+      }
+
+      pollTimeout = setTimeout(() => {
+        void pollForUpdates();
+      }, orderStreamPollIntervalMs);
+    }
+  );
 
   app.post("/v1/orders/:orderId/cancel", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);

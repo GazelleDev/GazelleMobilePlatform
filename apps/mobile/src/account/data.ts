@@ -68,24 +68,26 @@ const pushTokenUpsertResponseSchema = z.object({
 const orderListSchema = z.array(orderSchema);
 const loyaltyLedgerSchema = z.array(loyaltyLedgerEntrySchema);
 const activeOrderStatusSchema = orderStatusSchema.exclude(["CANCELED", "COMPLETED"]);
+export const orderHistoryQueryKey = ["account", "orders"] as const;
 
 export type OrderHistoryEntry = z.output<typeof orderSchema>;
 export type LoyaltyBalance = z.output<typeof loyaltyBalanceSchema>;
 export type LoyaltyLedgerEntry = z.output<typeof loyaltyLedgerEntrySchema>;
 export type ActiveOrderStatus = z.output<typeof activeOrderStatusSchema>;
 
+export function sortOrdersByLatestActivity(orders: OrderHistoryEntry[]) {
+  return [...orders].sort((left, right) => {
+    const leftOccurredAt = left.timeline[left.timeline.length - 1]?.occurredAt ?? "";
+    const rightOccurredAt = right.timeline[right.timeline.length - 1]?.occurredAt ?? "";
+    return Date.parse(rightOccurredAt) - Date.parse(leftOccurredAt);
+  });
+}
+
 export function useOrderHistoryQuery(enabled = true) {
   return useQuery({
-    queryKey: ["account", "orders"],
+    queryKey: orderHistoryQueryKey,
     enabled,
-    queryFn: async (): Promise<OrderHistoryEntry[]> => {
-      const orders = orderListSchema.parse(await apiClient.listOrders());
-      return [...orders].sort((left, right) => {
-        const leftOccurredAt = left.timeline[left.timeline.length - 1]?.occurredAt ?? "";
-        const rightOccurredAt = right.timeline[right.timeline.length - 1]?.occurredAt ?? "";
-        return Date.parse(rightOccurredAt) - Date.parse(leftOccurredAt);
-      });
-    }
+    queryFn: async (): Promise<OrderHistoryEntry[]> => sortOrdersByLatestActivity(orderListSchema.parse(await apiClient.listOrders()))
   });
 }
 
