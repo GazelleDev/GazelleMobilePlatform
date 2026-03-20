@@ -3,7 +3,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { apiClient } from "../api/client";
 import {
   clearStoredSession,
-  getSessionRefreshDelayMs,
   isSessionExpiringSoon,
   loadStoredSession,
   persistSession,
@@ -24,6 +23,11 @@ type SessionContextValue = {
 };
 
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
+const SESSION_REFRESH_WINDOW_MS = 60_000;
+
+function getSessionRefreshDelayMs(session: AuthSession, nowMs = Date.now()) {
+  return Math.max(0, Date.parse(session.expiresAt) - nowMs - SESSION_REFRESH_WINDOW_MS);
+}
 
 export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
