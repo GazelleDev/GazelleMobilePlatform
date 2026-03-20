@@ -1,5 +1,7 @@
 # Replace temporary time-based order fulfillment progression with authoritative fulfillment state transitions
 
+> Update 2026-03-20: product direction changed. Time-based fulfillment is now a supported configurable mode alongside staff-driven fulfillment. The remaining gap is not forced removal of time-based mode; it is adding richer authoritative writers, better auth/audit controls, and tenant-managed fulfillment configuration.
+
 ## Problem
 
 The mobile active-order experience already supports the lifecycle:

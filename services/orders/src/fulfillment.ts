@@ -1,59 +1,78 @@
-import { orderSchema, orderStatusSchema, orderTimelineEntrySchema } from "@gazelle/contracts-orders";
+import {
+  DEFAULT_APP_CONFIG_FULFILLMENT,
+  appConfigFulfillmentModeSchema,
+  type AppConfigFulfillment
+} from "@gazelle/contracts-catalog";
+import { orderSchema, orderStatusSchema } from "@gazelle/contracts-orders";
 import { z } from "zod";
+import { advanceOrderLifecycleToStatus, isTerminalOrderStatus } from "./lifecycle.js";
 
 type Order = z.output<typeof orderSchema>;
 type OrderStatus = z.output<typeof orderStatusSchema>;
 
-const temporaryFulfillmentFlow = ["PAID", "IN_PREP", "READY", "COMPLETED"] as const satisfies readonly OrderStatus[];
+const timeBasedFulfillmentFlow = ["PAID", "IN_PREP", "READY", "COMPLETED"] as const satisfies readonly OrderStatus[];
 
-const temporaryFulfillmentThresholdsMs = {
-  PAID: 0,
-  IN_PREP: 5 * 60_000,
-  READY: 10 * 60_000,
-  COMPLETED: 15 * 60_000
-} as const satisfies Record<(typeof temporaryFulfillmentFlow)[number], number>;
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
 
-const temporaryFulfillmentNotes = {
-  IN_PREP: "Order moved into preparation.",
-  READY: "Order is ready for pickup.",
-  COMPLETED: "Order completed."
-} as const satisfies Record<Exclude<(typeof temporaryFulfillmentFlow)[number], "PAID">, string>;
+function resolveConfiguredFulfillmentMode(value: string | undefined) {
+  const normalized = trimToUndefined(value)?.toLowerCase().replaceAll("-", "_");
+  const parsed = appConfigFulfillmentModeSchema.safeParse(normalized);
+  if (parsed.success) {
+    return parsed.data;
+  }
 
-export type TemporaryFulfillmentStatus = (typeof temporaryFulfillmentFlow)[number];
+  return DEFAULT_APP_CONFIG_FULFILLMENT.mode;
+}
+
+function getTimeBasedFulfillmentThresholdsMs(fulfillment: AppConfigFulfillment) {
+  return {
+    PAID: 0,
+    IN_PREP: fulfillment.timeBasedScheduleMinutes.inPrep * 60_000,
+    READY: fulfillment.timeBasedScheduleMinutes.ready * 60_000,
+    COMPLETED: fulfillment.timeBasedScheduleMinutes.completed * 60_000
+  } as const satisfies Record<(typeof timeBasedFulfillmentFlow)[number], number>;
+}
+
+export function resolveConfiguredOrderFulfillment(
+  env: Record<string, string | undefined> = process.env
+): AppConfigFulfillment {
+  return {
+    ...DEFAULT_APP_CONFIG_FULFILLMENT,
+    mode: resolveConfiguredFulfillmentMode(env.ORDER_FULFILLMENT_MODE)
+  };
+}
+
+export type TimeBasedFulfillmentStatus = (typeof timeBasedFulfillmentFlow)[number];
 
 export type ReconcileOrderFulfillmentStateResult = {
   order: Order;
   changed: boolean;
-  appendedStatuses: Array<Exclude<TemporaryFulfillmentStatus, "PAID">>;
+  appendedStatuses: Array<Exclude<TimeBasedFulfillmentStatus, "PAID">>;
 };
-
-function hasTimelineStatus(order: Order, status: TemporaryFulfillmentStatus) {
-  return order.timeline.some((entry) => entry.status === status);
-}
 
 function getPaidTimelineEntry(order: Order) {
   return order.timeline.find((entry) => entry.status === "PAID");
 }
 
-function getTemporaryFulfillmentIndex(status: OrderStatus) {
-  return temporaryFulfillmentFlow.findIndex((candidate) => candidate === status);
-}
-
-export function getTemporaryFulfillmentTargetStatus(
+function getTimeBasedFulfillmentTargetStatus(
   paidOccurredAt: Date,
-  now: Date
-): TemporaryFulfillmentStatus {
+  now: Date,
+  thresholdsMs: Record<TimeBasedFulfillmentStatus, number>
+): TimeBasedFulfillmentStatus {
   const elapsedMs = now.getTime() - paidOccurredAt.getTime();
 
-  if (!Number.isFinite(elapsedMs) || elapsedMs < temporaryFulfillmentThresholdsMs.IN_PREP) {
+  if (!Number.isFinite(elapsedMs) || elapsedMs < thresholdsMs.IN_PREP) {
     return "PAID";
   }
 
-  if (elapsedMs < temporaryFulfillmentThresholdsMs.READY) {
+  if (elapsedMs < thresholdsMs.READY) {
     return "IN_PREP";
   }
 
-  if (elapsedMs < temporaryFulfillmentThresholdsMs.COMPLETED) {
+  if (elapsedMs < thresholdsMs.COMPLETED) {
     return "READY";
   }
 
@@ -62,10 +81,14 @@ export function getTemporaryFulfillmentTargetStatus(
 
 export function reconcileOrderFulfillmentState(
   order: Order,
-  now: Date = new Date()
+  options: {
+    now?: Date;
+    fulfillment?: AppConfigFulfillment;
+  } = {}
 ): ReconcileOrderFulfillmentStateResult {
-  // TODO(platform): Replace this temporary time-based fulfillment progression with authoritative order state transitions driven by staff actions, POS/webhook events, or kitchen workflow. This stopgap exists only to unblock the mobile active-order experience until real fulfillment writers are implemented.
-  if (order.status === "PENDING_PAYMENT" || order.status === "CANCELED" || order.status === "COMPLETED") {
+  const now = options.now ?? new Date();
+  const fulfillment = options.fulfillment ?? DEFAULT_APP_CONFIG_FULFILLMENT;
+  if (fulfillment.mode !== "time_based") {
     return {
       order,
       changed: false,
@@ -73,8 +96,7 @@ export function reconcileOrderFulfillmentState(
     };
   }
 
-  const currentIndex = getTemporaryFulfillmentIndex(order.status);
-  if (currentIndex === -1) {
+  if (order.status === "PENDING_PAYMENT" || isTerminalOrderStatus(order.status)) {
     return {
       order,
       changed: false,
@@ -100,9 +122,11 @@ export function reconcileOrderFulfillmentState(
     };
   }
 
-  const targetStatus = getTemporaryFulfillmentTargetStatus(new Date(paidOccurredAtMs), now);
-  const targetIndex = getTemporaryFulfillmentIndex(targetStatus);
-  if (targetIndex <= currentIndex) {
+  const thresholdsMs = getTimeBasedFulfillmentThresholdsMs(fulfillment);
+  const targetStatus = getTimeBasedFulfillmentTargetStatus(new Date(paidOccurredAtMs), now, thresholdsMs);
+  const currentIndex = timeBasedFulfillmentFlow.indexOf(order.status as TimeBasedFulfillmentStatus);
+  const targetIndex = timeBasedFulfillmentFlow.indexOf(targetStatus);
+  if (currentIndex !== -1 && targetIndex !== -1 && targetIndex <= currentIndex) {
     return {
       order,
       changed: false,
@@ -110,38 +134,28 @@ export function reconcileOrderFulfillmentState(
     };
   }
 
-  let nextOrder = order;
-  const appendedStatuses: Array<Exclude<TemporaryFulfillmentStatus, "PAID">> = [];
-
-  for (let index = currentIndex + 1; index <= targetIndex; index += 1) {
-    const status = temporaryFulfillmentFlow[index];
-    const nextStatus = status as Exclude<TemporaryFulfillmentStatus, "PAID">;
-    const occurredAt = new Date(paidOccurredAtMs + temporaryFulfillmentThresholdsMs[status]).toISOString();
-
-    nextOrder = orderSchema.parse({
-      ...nextOrder,
-      status
-    });
-
-    if (hasTimelineStatus(nextOrder, status)) {
-      continue;
-    }
-
-    const nextTimelineEntry = orderTimelineEntrySchema.parse({
-      status,
-      occurredAt,
-      note: temporaryFulfillmentNotes[nextStatus]
-    });
-    nextOrder = orderSchema.parse({
-      ...nextOrder,
-      timeline: [...nextOrder.timeline, nextTimelineEntry]
-    });
-    appendedStatuses.push(nextStatus);
+  if (order.status === targetStatus) {
+    return {
+      order,
+      changed: false,
+      appendedStatuses: []
+    };
   }
 
+  const targetOrder = advanceOrderLifecycleToStatus(order, targetStatus, {
+    resolveStepMetadata: ({ nextStatus }) => ({
+      occurredAt: new Date(
+        paidOccurredAtMs + thresholdsMs[nextStatus as TimeBasedFulfillmentStatus]
+      ).toISOString(),
+      source: "system"
+    })
+  });
+
   return {
-    order: nextOrder,
-    changed: true,
-    appendedStatuses
+    order: targetOrder.order,
+    changed: targetOrder.changed,
+    appendedStatuses: targetOrder.appliedTransitions.map((transition) => transition.toStatus).filter(
+      (status): status is Exclude<TimeBasedFulfillmentStatus, "PAID"> => status !== "PAID"
+    )
   };
 }

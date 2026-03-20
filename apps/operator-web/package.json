@@ -1,0 +1,27 @@
+{
+  "name": "@gazelle/operator-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test --max-warnings=0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@gazelle/contracts-catalog": "workspace:*",
+    "@gazelle/contracts-orders": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@gazelle/config-eslint": "workspace:*",
+    "@gazelle/config-typescript": "workspace:*",
+    "eslint": "^9.21.0",
+    "typescript": "^5.8.2",
+    "vite": "^7.3.1",
+    "vitest": "^3.0.8"
+  }
+}

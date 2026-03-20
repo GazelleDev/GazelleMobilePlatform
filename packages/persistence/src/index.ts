@@ -160,6 +160,7 @@ export interface NotificationsOutboxTable {
 }
 
 export interface CatalogMenuCategoryTable {
+  brand_id: string;
   location_id: string;
   category_id: string;
   title: string;
@@ -169,6 +170,7 @@ export interface CatalogMenuCategoryTable {
 }
 
 export interface CatalogMenuItemTable {
+  brand_id: string;
   location_id: string;
   item_id: string;
   category_id: string;
@@ -185,10 +187,21 @@ export interface CatalogMenuItemTable {
 }
 
 export interface CatalogStoreConfigTable {
+  brand_id: string;
   location_id: string;
+  store_name: string;
+  hours_text: string;
   prep_eta_minutes: number;
   tax_rate_basis_points: number;
   pickup_instructions: string;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface CatalogAppConfigTable {
+  brand_id: string;
+  location_id: string;
+  app_config_json: unknown;
   created_at: Generated<string>;
   updated_at: Generated<string>;
 }
@@ -212,6 +225,7 @@ export interface PersistenceDatabase {
   catalog_menu_categories: CatalogMenuCategoryTable;
   catalog_menu_items: CatalogMenuItemTable;
   catalog_store_configs: CatalogStoreConfigTable;
+  catalog_app_configs: CatalogAppConfigTable;
 }
 
 export type PersistenceDb = Kysely<PersistenceDatabase>;
@@ -478,6 +492,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_menu_categories (
+      brand_id TEXT NOT NULL DEFAULT 'gazelle-default',
       location_id TEXT NOT NULL,
       category_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -489,12 +504,18 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
   `.execute(trx);
 
   await sql`
+    ALTER TABLE catalog_menu_categories
+    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'gazelle-default'
+  `.execute(trx);
+
+  await sql`
     CREATE INDEX IF NOT EXISTS catalog_menu_categories_location_sort_idx
     ON catalog_menu_categories (location_id, sort_order)
   `.execute(trx);
 
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_menu_items (
+      brand_id TEXT NOT NULL DEFAULT 'gazelle-default',
       location_id TEXT NOT NULL,
       item_id TEXT NOT NULL,
       category_id TEXT NOT NULL,
@@ -515,6 +536,11 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     ALTER TABLE catalog_menu_items
+    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'gazelle-default'
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE catalog_menu_items
     ADD COLUMN IF NOT EXISTS image_url TEXT
   `.execute(trx);
 
@@ -530,13 +556,47 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_store_configs (
+      brand_id TEXT NOT NULL DEFAULT 'gazelle-default',
       location_id TEXT PRIMARY KEY,
+      store_name TEXT NOT NULL DEFAULT 'Gazelle Coffee Flagship',
+      hours_text TEXT NOT NULL DEFAULT 'Daily · 7:00 AM - 6:00 PM',
       prep_eta_minutes INTEGER NOT NULL,
       tax_rate_basis_points INTEGER NOT NULL,
       pickup_instructions TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE catalog_store_configs
+    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'gazelle-default'
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE catalog_store_configs
+    ADD COLUMN IF NOT EXISTS store_name TEXT NOT NULL DEFAULT 'Gazelle Coffee Flagship'
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE catalog_store_configs
+    ADD COLUMN IF NOT EXISTS hours_text TEXT NOT NULL DEFAULT 'Daily · 7:00 AM - 6:00 PM'
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS catalog_app_configs (
+      brand_id TEXT NOT NULL,
+      location_id TEXT NOT NULL,
+      app_config_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (brand_id, location_id)
+    )
+  `.execute(trx);
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS catalog_app_configs_location_idx
+    ON catalog_app_configs (location_id, brand_id)
   `.execute(trx);
   });
 }

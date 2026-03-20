@@ -1,0 +1,82 @@
+import {
+  DEFAULT_APP_CONFIG_FULFILLMENT,
+  appConfigFulfillmentModeSchema,
+  appConfigSchema,
+  type AppConfig
+} from "@gazelle/contracts-catalog";
+
+export const DEFAULT_BRAND_ID = "gazelle-default";
+export const DEFAULT_LOCATION_ID = "flagship-01";
+export const DEFAULT_BRAND_NAME = "Gazelle Coffee";
+export const DEFAULT_LOCATION_NAME = "Gazelle Coffee Flagship";
+export const DEFAULT_MARKET_LABEL = "Ann Arbor, MI";
+export const DEFAULT_STORE_HOURS = "Daily · 7:00 AM - 6:00 PM";
+
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
+
+function resolveConfiguredFulfillmentMode(value: string | undefined) {
+  const normalized = trimToUndefined(value)?.toLowerCase().replaceAll("-", "_");
+  const parsed = appConfigFulfillmentModeSchema.safeParse(normalized);
+  if (parsed.success) {
+    return parsed.data;
+  }
+
+  return DEFAULT_APP_CONFIG_FULFILLMENT.mode;
+}
+
+export function resolveDefaultAppConfigPayload(
+  env: Record<string, string | undefined> = process.env
+): AppConfig {
+  return appConfigSchema.parse({
+    brand: {
+      brandId: DEFAULT_BRAND_ID,
+      brandName: DEFAULT_BRAND_NAME,
+      locationId: DEFAULT_LOCATION_ID,
+      locationName: DEFAULT_LOCATION_NAME,
+      marketLabel: DEFAULT_MARKET_LABEL
+    },
+    theme: {
+      background: "#F7F4ED",
+      backgroundAlt: "#F0ECE4",
+      surface: "#FFFDF8",
+      surfaceMuted: "#F3EFE7",
+      foreground: "#171513",
+      foregroundMuted: "#605B55",
+      muted: "#9B9389",
+      border: "rgba(23, 21, 19, 0.08)",
+      primary: "#1E1B18",
+      accent: "#2D2823",
+      fontFamily: "System",
+      displayFontFamily: "Fraunces"
+    },
+    enabledTabs: ["home", "menu", "orders", "account"],
+    featureFlags: {
+      loyalty: true,
+      pushNotifications: true,
+      refunds: true,
+      orderTracking: true,
+      staffDashboard: true,
+      menuEditing: true
+    },
+    loyaltyEnabled: true,
+    paymentCapabilities: {
+      applePay: true,
+      card: true,
+      cash: false,
+      refunds: true,
+      clover: {
+        enabled: true,
+        merchantRef: "flagship-01"
+      }
+    },
+    fulfillment: {
+      ...DEFAULT_APP_CONFIG_FULFILLMENT,
+      mode: resolveConfiguredFulfillmentMode(env.ORDER_FULFILLMENT_MODE)
+    }
+  });
+}
+
+export const defaultAppConfigPayload: AppConfig = resolveDefaultAppConfigPayload();

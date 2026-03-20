@@ -212,6 +212,42 @@ describe("payments service", () => {
     await app.close();
   });
 
+  it("rejects charge idempotency key reuse when the payload changes", async () => {
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174099";
+
+    const firstCharge = await app.inject({
+      method: "POST",
+      url: "/v1/payments/charges",
+      payload: {
+        orderId,
+        amountCents: 800,
+        currency: "USD",
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "charge-key-reuse"
+      }
+    });
+    expect(firstCharge.statusCode).toBe(200);
+
+    const conflictingCharge = await app.inject({
+      method: "POST",
+      url: "/v1/payments/charges",
+      payload: {
+        orderId,
+        amountCents: 825,
+        currency: "USD",
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "charge-key-reuse"
+      }
+    });
+
+    expect(conflictingCharge.statusCode).toBe(409);
+    expect(conflictingCharge.json()).toMatchObject({
+      code: "IDEMPOTENCY_KEY_REUSE"
+    });
+    await app.close();
+  });
+
   it("propagates x-request-id and exposes metrics counters", async () => {
     const app = await buildApp();
     const requestId = "payments-trace-1";
@@ -438,7 +474,18 @@ describe("payments service", () => {
       method: "POST",
       url: "/v1/payments/webhooks/clover",
       payload: {
-        eventId: "evt_charge_1",
+        type: "payment.updated",
+        paymentId: chargeResponse.json().paymentId,
+        orderId,
+        status: "APPROVED",
+        message: "Settled asynchronously",
+        occurredAt: "2026-03-11T00:00:00.000Z"
+      }
+    });
+    const duplicateWebhookResponse = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/clover",
+      payload: {
         type: "payment.updated",
         paymentId: chargeResponse.json().paymentId,
         orderId,
@@ -449,6 +496,8 @@ describe("payments service", () => {
     });
 
     expect(webhookResponse.statusCode).toBe(200);
+    expect(duplicateWebhookResponse.statusCode).toBe(200);
+    expect(duplicateWebhookResponse.json()).toMatchObject(webhookResponse.json());
     expect(webhookResponse.json()).toMatchObject({
       accepted: true,
       kind: "CHARGE",
@@ -516,7 +565,18 @@ describe("payments service", () => {
       method: "POST",
       url: "/v1/payments/webhooks/clover",
       payload: {
-        eventId: "evt_refund_1",
+        type: "refund.updated",
+        paymentId: chargeResponse.json().paymentId,
+        orderId,
+        status: "REFUNDED",
+        message: "Refund finalized",
+        occurredAt: "2026-03-11T01:00:00.000Z"
+      }
+    });
+    const duplicateWebhookResponse = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/clover",
+      payload: {
         type: "refund.updated",
         paymentId: chargeResponse.json().paymentId,
         orderId,
@@ -527,6 +587,8 @@ describe("payments service", () => {
     });
 
     expect(webhookResponse.statusCode).toBe(200);
+    expect(duplicateWebhookResponse.statusCode).toBe(200);
+    expect(duplicateWebhookResponse.json()).toMatchObject(webhookResponse.json());
     expect(webhookResponse.json()).toMatchObject({
       accepted: true,
       kind: "REFUND",
@@ -535,6 +597,89 @@ describe("payments service", () => {
       orderApplied: true
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("retries webhook reconciliation after a transient downstream failure", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    let reconcileAttempts = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
+        reconcileAttempts += 1;
+        if (reconcileAttempts === 1) {
+          return new Response(
+            JSON.stringify({
+              code: "ORDERS_RECONCILIATION_FAILED",
+              message: "Orders reconciliation call failed",
+              requestId: "payments-test"
+            }),
+            { status: 502, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        expect(body.kind).toBe("CHARGE");
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            applied: true,
+            orderStatus: "PAID"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`unexpected webhook dispatch URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174039";
+    const chargeResponse = await app.inject({
+      method: "POST",
+      url: "/v1/payments/charges",
+      payload: {
+        orderId,
+        amountCents: 1045,
+        currency: "USD",
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "webhook-retry-charge"
+      }
+    });
+    expect(chargeResponse.statusCode).toBe(200);
+
+    const webhookPayload = {
+      type: "payment.updated",
+      paymentId: chargeResponse.json().paymentId,
+      orderId,
+      status: "APPROVED",
+      message: "Settled asynchronously",
+      occurredAt: "2026-03-11T02:00:00.000Z"
+    };
+
+    const firstWebhook = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/clover",
+      payload: webhookPayload
+    });
+    const secondWebhook = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/clover",
+      payload: webhookPayload
+    });
+
+    expect(firstWebhook.statusCode).toBe(502);
+    expect(firstWebhook.json()).toMatchObject({ code: "ORDERS_RECONCILIATION_FAILED" });
+    expect(secondWebhook.statusCode).toBe(200);
+    expect(secondWebhook.json()).toMatchObject({
+      accepted: true,
+      kind: "CHARGE",
+      orderId,
+      status: "SUCCEEDED",
+      orderApplied: true
+    });
+    expect(reconcileAttempts).toBe(2);
     await app.close();
   });
 

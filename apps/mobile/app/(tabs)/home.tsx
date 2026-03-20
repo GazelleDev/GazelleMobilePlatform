@@ -5,7 +5,7 @@ import { useCallback, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import Animated, { Extrapolation, interpolate, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { resolveStoreConfigData, useStoreConfigQuery } from "../../src/menu/catalog";
+import { resolveAppConfigData, resolveStoreConfigData, useAppConfigQuery, useStoreConfigQuery } from "../../src/menu/catalog";
 import { TAB_BAR_HEIGHT, getTabBarBottomOffset } from "../../src/navigation/tabBarMetrics";
 import { Card, ScreenBackdrop, TabBarDepthBackdrop, uiPalette, uiTypography } from "../../src/ui/system";
 
@@ -47,8 +47,10 @@ const HOME_NEWS_ITEMS = [
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const appConfigQuery = useAppConfigQuery();
   const storeConfigQuery = useStoreConfigQuery();
   const [isManualRefresh, setIsManualRefresh] = useState(false);
+  const appConfig = resolveAppConfigData(appConfigQuery.data);
   const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const scrollY = useSharedValue(0);
@@ -221,9 +223,9 @@ export default function HomeScreen() {
 
       <Animated.View style={[styles.headerShell, { paddingTop: insets.top + HEADER_TOP_PADDING }, headerStyle]}>
         <View style={styles.hero}>
-          <Animated.Text style={[styles.title, titleStyle]}>Gazelle</Animated.Text>
+          <Animated.Text style={[styles.title, titleStyle]}>{appConfig.brand.brandName}</Animated.Text>
           <Animated.View style={[styles.subtitleWrap, subtitleStyle]}>
-            <Text style={styles.subtitle}>Enter Slogan Here.</Text>
+            <Text style={styles.subtitle}>{appConfig.brand.locationName}</Text>
           </Animated.View>
         </View>
 
@@ -232,7 +234,7 @@ export default function HomeScreen() {
             <Animated.View style={[styles.pickupMetaWrap, pickupMetaStyle]}>
               <Text style={styles.storeMeta}>{`Estimated pick-up is ${storeConfig.prepEtaMinutes} mins`}</Text>
             </Animated.View>
-            <Animated.Text style={[styles.storeTitle, storeTitleStyle]}>ANN ARBOR, MI.</Animated.Text>
+            <Animated.Text style={[styles.storeTitle, storeTitleStyle]}>{appConfig.brand.marketLabel}</Animated.Text>
           </View>
 
           <Animated.View style={menuLinkStyle}>

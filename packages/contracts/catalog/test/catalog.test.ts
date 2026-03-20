@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  adminMenuItemSchema,
+  adminMenuItemUpdateSchema,
+  adminStoreConfigSchema,
+  adminStoreConfigUpdateSchema,
+  appConfigSchema,
   buildDefaultCustomizationInput,
   describeCustomizationSelection,
+  catalogContract,
   menuResponseSchema,
   priceMenuItemCustomization,
   resolveMenuItemCustomization,
@@ -81,6 +87,156 @@ describe("contracts-catalog", () => {
     });
 
     expect(config.taxRateBasisPoints).toBe(600);
+  });
+
+  it("validates app config payload", () => {
+    const config = appConfigSchema.parse({
+      brand: {
+        brandId: "gazelle-default",
+        brandName: "Gazelle Coffee",
+        locationId: "flagship-01",
+        locationName: "Gazelle Coffee Flagship",
+        marketLabel: "Ann Arbor, MI"
+      },
+      theme: {
+        background: "#F7F4ED",
+        backgroundAlt: "#F0ECE4",
+        surface: "#FFFDF8",
+        surfaceMuted: "#F3EFE7",
+        foreground: "#171513",
+        foregroundMuted: "#605B55",
+        muted: "#9B9389",
+        border: "rgba(23, 21, 19, 0.08)",
+        primary: "#1E1B18",
+        accent: "#2D2823",
+        fontFamily: "System",
+        displayFontFamily: "Fraunces"
+      },
+      enabledTabs: ["home", "menu", "orders", "account"],
+      featureFlags: {
+        loyalty: true,
+        pushNotifications: true,
+        refunds: true,
+        orderTracking: true,
+        staffDashboard: false,
+        menuEditing: false
+      },
+      loyaltyEnabled: true,
+      paymentCapabilities: {
+        applePay: true,
+        card: true,
+        cash: false,
+        refunds: true,
+        clover: {
+          enabled: true,
+          merchantRef: "flagship-01"
+        }
+      },
+      fulfillment: {
+        mode: "staff",
+        timeBasedScheduleMinutes: {
+          inPrep: 5,
+          ready: 10,
+          completed: 15
+        }
+      }
+    });
+
+    expect(config.brand.marketLabel).toBe("Ann Arbor, MI");
+    expect(config.fulfillment.mode).toBe("staff");
+  });
+
+  it("defaults fulfillment config for older app-config payloads", () => {
+    const config = appConfigSchema.parse({
+      brand: {
+        brandId: "gazelle-default",
+        brandName: "Gazelle Coffee",
+        locationId: "flagship-01",
+        locationName: "Gazelle Coffee Flagship",
+        marketLabel: "Ann Arbor, MI"
+      },
+      theme: {
+        background: "#F7F4ED",
+        backgroundAlt: "#F0ECE4",
+        surface: "#FFFDF8",
+        surfaceMuted: "#F3EFE7",
+        foreground: "#171513",
+        foregroundMuted: "#605B55",
+        muted: "#9B9389",
+        border: "rgba(23, 21, 19, 0.08)",
+        primary: "#1E1B18",
+        accent: "#2D2823",
+        fontFamily: "System",
+        displayFontFamily: "Fraunces"
+      },
+      enabledTabs: ["home", "menu", "orders", "account"],
+      featureFlags: {
+        loyalty: true,
+        pushNotifications: true,
+        refunds: true,
+        orderTracking: true,
+        staffDashboard: false,
+        menuEditing: false
+      },
+      loyaltyEnabled: true,
+      paymentCapabilities: {
+        applePay: true,
+        card: true,
+        cash: false,
+        refunds: true,
+        clover: {
+          enabled: true,
+          merchantRef: "flagship-01"
+        }
+      }
+    });
+
+    expect(config.fulfillment.mode).toBe("time_based");
+    expect(config.fulfillment.timeBasedScheduleMinutes.ready).toBe(10);
+  });
+
+  it("exposes app-config contract metadata", () => {
+    expect(catalogContract.routes.appConfig.path).toBe("/app-config");
+  });
+
+  it("validates admin menu and store config payloads", () => {
+    const adminItem = adminMenuItemSchema.parse({
+      itemId: "latte",
+      categoryId: "espresso",
+      categoryTitle: "Espresso Bar",
+      name: "Honey Oat Latte",
+      description: "Espresso with oat milk",
+      priceCents: 675,
+      visible: true,
+      sortOrder: 0
+    });
+    const adminStoreConfig = adminStoreConfigSchema.parse({
+      locationId: "flagship-01",
+      storeName: "Gazelle Coffee Flagship",
+      hours: "Daily · 7:00 AM - 6:00 PM",
+      pickupInstructions: "Pickup at the flagship order counter."
+    });
+
+    expect(adminItem.categoryTitle).toBe("Espresso Bar");
+    expect(adminStoreConfig.storeName).toBe("Gazelle Coffee Flagship");
+  });
+
+  it("validates admin update payloads", () => {
+    const menuUpdate = adminMenuItemUpdateSchema.parse({
+      name: "Iced Cortado",
+      priceCents: 575,
+      visible: false
+    });
+    const storeUpdate = adminStoreConfigUpdateSchema.parse({
+      storeName: "Gazelle Coffee Downtown",
+      hours: "Weekdays · 6:30 AM - 5:00 PM",
+      pickupInstructions: "Use the front pickup shelves."
+    });
+
+    expect(menuUpdate.visible).toBe(false);
+    expect(storeUpdate.hours).toContain("Weekdays");
+    expect(catalogContract.routes.adminMenu.path).toBe("/admin/menu");
+    expect(catalogContract.routes.adminStoreConfig.path).toBe("/admin/store/config");
   });
 
   it("rejects invalid store tax rate", () => {

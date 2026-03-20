@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
 import {
   applePayWalletSchema,
@@ -813,6 +813,15 @@ type CloverWebhookResolution = {
   currency?: "USD";
 };
 
+type PaymentWebhookDispatchResult = {
+  accepted: true;
+  kind: "CHARGE" | "REFUND";
+  orderId: string;
+  paymentId: string;
+  status: "SUCCEEDED" | "DECLINED" | "TIMEOUT" | "REFUNDED" | "REJECTED";
+  orderApplied: boolean;
+};
+
 function normalizeWebhookKind(rawKind: string | undefined) {
   if (!rawKind) {
     return "CHARGE" as const;
@@ -966,6 +975,35 @@ function getHeaderValue(headers: Record<string, unknown>, key: string): string |
     }
   }
   return undefined;
+}
+
+function buildWebhookEventKey(params: {
+  resolved: CloverWebhookResolution;
+  kind: "CHARGE" | "REFUND";
+  orderId: string;
+  paymentId: string;
+  status: string;
+}) {
+  const { resolved, kind, orderId, paymentId, status } = params;
+  if (resolved.eventId) {
+    return `event:${kind}:${orderId}:${paymentId}:${resolved.eventId}`;
+  }
+
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        kind,
+        orderId,
+        paymentId,
+        status,
+        occurredAt: resolved.occurredAt,
+        message: resolved.message ?? "",
+        declineCode: resolved.declineCode ?? "",
+        amountCents: resolved.amountCents ?? null,
+        currency: resolved.currency ?? null
+      })
+    )
+    .digest("hex");
 }
 
 async function dispatchOrderReconciliation(params: {
@@ -1334,6 +1372,7 @@ export async function registerRoutes(app: FastifyInstance) {
     max: toPositiveInteger(process.env.PAYMENTS_RATE_LIMIT_WEBHOOK_MAX, defaultWebhookRateLimitMax),
     timeWindow: rateLimitWindowMs
   };
+  const webhookFinalizationCache = new Map<string, PaymentWebhookDispatchResult>();
 
   app.addHook("onClose", async () => {
     await repository.close();
@@ -1353,6 +1392,25 @@ export async function registerRoutes(app: FastifyInstance) {
     const existing = await repository.findChargeByIdempotency(input.orderId, input.idempotencyKey);
 
     if (existing) {
+      if (
+        existing.orderId !== input.orderId ||
+        existing.amountCents !== input.amountCents ||
+        existing.currency !== input.currency
+      ) {
+        return reply.status(409).send(
+          serviceErrorSchema.parse({
+            code: "IDEMPOTENCY_KEY_REUSE",
+            message: "Charge idempotency key was already used for a different payment request",
+            requestId: request.id,
+            details: {
+              orderId: input.orderId,
+              amountCents: input.amountCents,
+              currency: input.currency
+            }
+          })
+        );
+      }
+
       return existing;
     }
 
@@ -1404,6 +1462,27 @@ export async function registerRoutes(app: FastifyInstance) {
     const existingRefund = await repository.findRefundByIdempotency(input.orderId, input.idempotencyKey);
 
     if (existingRefund) {
+      if (
+        existingRefund.orderId !== input.orderId ||
+        existingRefund.paymentId !== input.paymentId ||
+        existingRefund.amountCents !== input.amountCents ||
+        existingRefund.currency !== input.currency
+      ) {
+        return reply.status(409).send(
+          serviceErrorSchema.parse({
+            code: "IDEMPOTENCY_KEY_REUSE",
+            message: "Refund idempotency key was already used for a different refund request",
+            requestId: request.id,
+            details: {
+              orderId: input.orderId,
+              paymentId: input.paymentId,
+              amountCents: input.amountCents,
+              currency: input.currency
+            }
+          })
+        );
+      }
+
       return existingRefund;
     }
 
@@ -1520,6 +1599,17 @@ export async function registerRoutes(app: FastifyInstance) {
 
     const orderId = resolved.orderId ?? chargeLookup.charge.orderId;
     const paymentId = chargeLookup.charge.paymentId;
+    const webhookEventKey = buildWebhookEventKey({
+      resolved,
+      kind: resolved.kind,
+      orderId,
+      paymentId,
+      status: resolved.statusHint ?? chargeLookup.charge.status
+    });
+    const cachedWebhookResult = webhookFinalizationCache.get(webhookEventKey);
+    if (cachedWebhookResult) {
+      return cachedWebhookResult;
+    }
 
     if (resolved.kind === "CHARGE") {
       const status = resolveChargeStatus({
@@ -1574,7 +1664,7 @@ export async function registerRoutes(app: FastifyInstance) {
         );
       }
 
-      return {
+      const response: PaymentWebhookDispatchResult = {
         accepted: true,
         kind: "CHARGE",
         orderId,
@@ -1582,6 +1672,8 @@ export async function registerRoutes(app: FastifyInstance) {
         status: reconciledCharge.status,
         orderApplied: dispatchResult.response.applied
       };
+      webhookFinalizationCache.set(webhookEventKey, response);
+      return response;
     }
 
     const refundStatus = resolveRefundStatus({
@@ -1634,10 +1726,10 @@ export async function registerRoutes(app: FastifyInstance) {
             upstreamBody: dispatchResult.body
           }
         })
-      );
-    }
+        );
+      }
 
-    return {
+    const response: PaymentWebhookDispatchResult = {
       accepted: true,
       kind: "REFUND",
       orderId,
@@ -1645,6 +1737,8 @@ export async function registerRoutes(app: FastifyInstance) {
       status: refundStatus,
       orderApplied: dispatchResult.response.applied
     };
+    webhookFinalizationCache.set(webhookEventKey, response);
+    return response;
   });
 
   app.post("/v1/payments/internal/ping", async (request) => {

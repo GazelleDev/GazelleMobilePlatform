@@ -13,7 +13,17 @@ import {
   passkeyVerifyRequestSchema,
   refreshRequestSchema
 } from "@gazelle/contracts-auth";
-import { catalogContract, menuResponseSchema, storeConfigResponseSchema } from "@gazelle/contracts-catalog";
+import {
+  adminMenuItemSchema,
+  adminMenuItemUpdateSchema,
+  adminMenuResponseSchema,
+  adminStoreConfigSchema,
+  adminStoreConfigUpdateSchema,
+  appConfigSchema,
+  catalogContract,
+  menuResponseSchema,
+  storeConfigResponseSchema
+} from "@gazelle/contracts-catalog";
 import {
   ordersContract,
   createOrderRequestSchema,
@@ -33,7 +43,13 @@ const authHeaderSchema = z.object({
   authorization: z.string().startsWith("Bearer ").optional()
 });
 const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
+const menuItemParamsSchema = z.object({ itemId: z.string().min(1) });
 const cancelOrderRequestSchema = z.object({ reason: z.string().min(1) });
+const staffHeaderSchema = z.object({ "x-staff-token": z.string().min(1).optional() });
+const adminOrderStatusUpdateSchema = z.object({
+  status: z.enum(["IN_PREP", "READY", "COMPLETED", "CANCELED"]),
+  note: z.string().min(1).optional()
+});
 const defaultRateLimitWindowMs = 60_000;
 const defaultUpstreamTimeoutMs = 5_000;
 
@@ -57,6 +73,47 @@ function ensureBearerAuth(request: FastifyRequest, reply: FastifyReply) {
 
 async function requireBearerAuth(request: FastifyRequest, reply: FastifyReply) {
   if (!ensureBearerAuth(request, reply)) {
+    return reply;
+  }
+
+  return undefined;
+}
+
+function staffAccessUnavailable(requestId: string) {
+  return apiErrorSchema.parse({
+    code: "STAFF_ACCESS_NOT_CONFIGURED",
+    message: "Staff access token is not configured",
+    requestId
+  });
+}
+
+function ensureStaffTokenAuth(request: FastifyRequest, reply: FastifyReply, staffToken: string | undefined) {
+  if (!staffToken) {
+    reply.status(503).send(staffAccessUnavailable(request.id));
+    return false;
+  }
+
+  const parsed = staffHeaderSchema.safeParse(request.headers);
+  if (!parsed.success || parsed.data["x-staff-token"] !== staffToken) {
+    reply.status(401).send(
+      apiErrorSchema.parse({
+        code: "UNAUTHORIZED_STAFF_REQUEST",
+        message: "Missing or invalid staff token",
+        requestId: request.id
+      })
+    );
+    return false;
+  }
+
+  return true;
+}
+
+async function requireStaffAccess(request: FastifyRequest, reply: FastifyReply, staffToken: string | undefined) {
+  if (!ensureBearerAuth(request, reply)) {
+    return reply;
+  }
+
+  if (!ensureStaffTokenAuth(request, reply, staffToken)) {
     return reply;
   }
 
@@ -253,10 +310,12 @@ async function proxyUpstream<TResponse>(params: {
 export async function registerRoutes(app: FastifyInstance) {
   const identityBaseUrl = process.env.IDENTITY_SERVICE_BASE_URL ?? "http://127.0.0.1:3000";
   const ordersBaseUrl = process.env.ORDERS_SERVICE_BASE_URL ?? "http://127.0.0.1:3001";
+  const ordersInternalApiToken = trimToUndefined(process.env.ORDERS_INTERNAL_API_TOKEN);
   const catalogBaseUrl = process.env.CATALOG_SERVICE_BASE_URL ?? "http://127.0.0.1:3002";
   const loyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL ?? "http://127.0.0.1:3004";
   const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
   const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
+  const gatewayStaffApiToken = trimToUndefined(process.env.GATEWAY_STAFF_API_TOKEN);
   const rateLimitWindowMs = toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const authWriteRateLimit = {
     max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_AUTH_WRITE_MAX, 24),
@@ -294,6 +353,16 @@ export async function registerRoutes(app: FastifyInstance) {
   };
   const pushTokenRateLimit = {
     max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_PUSH_TOKEN_MAX, 30),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const staffReadRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_STAFF_READ_MAX, 120),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const staffWriteRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_STAFF_WRITE_MAX, 60),
     timeWindow: rateLimitWindowMs,
     keyGenerator: userScopedRateLimitKey
   };
@@ -546,6 +615,18 @@ export async function registerRoutes(app: FastifyInstance) {
     })
   );
 
+  app.get("/v1/app-config", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
+    proxyUpstream({
+      request,
+      reply,
+      baseUrl: catalogBaseUrl,
+      serviceLabel: "Catalog",
+      method: "GET",
+      path: "/v1/app-config",
+      responseSchema: appConfigSchema
+    })
+  );
+
   app.get("/v1/store/config", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
     proxyUpstream({
       request,
@@ -667,6 +748,205 @@ export async function registerRoutes(app: FastifyInstance) {
       responseSchema: orderSchema
     });
   });
+
+  app.get(
+    "/v1/admin/orders",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "GET",
+        path: "/v1/orders",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: z.array(orderSchema)
+      })
+  );
+
+  app.get(
+    "/v1/admin/orders/:orderId",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "GET",
+        path: `/v1/orders/${orderId}`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: orderSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/admin/orders/:orderId/status",
+    {
+      preHandler: [
+        app.rateLimit(staffWriteRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const input = adminOrderStatusUpdateSchema.parse(request.body);
+
+      if (input.status === "CANCELED") {
+        const cancelPayload = cancelOrderRequestSchema.parse({
+          reason: input.note ?? "Canceled by staff"
+        });
+
+        return proxyUpstream({
+          request,
+          reply,
+          baseUrl: ordersBaseUrl,
+          serviceLabel: "Orders",
+          method: "POST",
+          path: `/v1/orders/${orderId}/cancel`,
+          body: cancelPayload,
+          additionalHeaders: {
+            "x-gateway-token": gatewayInternalApiToken,
+            "x-order-cancel-source": "staff"
+          },
+          responseSchema: orderSchema
+        });
+      }
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "POST",
+        path: `/v1/orders/${orderId}/status`,
+        body: input,
+        additionalHeaders: {
+          "x-internal-token": ordersInternalApiToken
+        },
+        responseSchema: orderSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/menu",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: "/v1/catalog/admin/menu",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMenuResponseSchema
+      })
+  );
+
+  app.put(
+    "/v1/admin/menu/:itemId",
+    {
+      preHandler: [
+        app.rateLimit(staffWriteRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const { itemId } = menuItemParamsSchema.parse(request.params);
+      const input = adminMenuItemUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PUT",
+        path: `/v1/catalog/admin/menu/${itemId}`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMenuItemSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/store/config",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: "/v1/catalog/admin/store/config",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminStoreConfigSchema
+      })
+  );
+
+  app.put(
+    "/v1/admin/store/config",
+    {
+      preHandler: [
+        app.rateLimit(staffWriteRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const input = adminStoreConfigUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PUT",
+        path: "/v1/catalog/admin/store/config",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminStoreConfigSchema
+      });
+    }
+  );
 
   app.get("/v1/loyalty/balance", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireBearerAuth] }, async (request, reply) => {
     return proxyUpstream({

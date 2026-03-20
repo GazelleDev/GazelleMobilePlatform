@@ -10,7 +10,7 @@ import {
   passkeyVerifyRequestSchema,
   refreshRequestSchema
 } from "@gazelle/contracts-auth";
-import { menuResponseSchema, storeConfigResponseSchema } from "@gazelle/contracts-catalog";
+import { appConfigSchema, menuResponseSchema, storeConfigResponseSchema } from "@gazelle/contracts-catalog";
 import { authSessionSchema } from "@gazelle/contracts-core";
 import {
   createOrderRequestSchema,
@@ -130,6 +130,11 @@ export class GazelleApiClient {
   async storeConfig(): Promise<z.output<typeof storeConfigResponseSchema>> {
     const data = await this.get<unknown>("/store/config");
     return storeConfigResponseSchema.parse(data);
+  }
+
+  async appConfig(): Promise<z.output<typeof appConfigSchema>> {
+    const data = await this.get<unknown>("/app-config");
+    return appConfigSchema.parse(data);
   }
 
   async quoteOrder(input: z.input<typeof quoteRequestSchema>): Promise<z.output<typeof orderQuoteSchema>> {

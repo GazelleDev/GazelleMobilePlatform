@@ -55,14 +55,73 @@ describe("sdk-mobile", () => {
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            brand: {
+              brandId: "gazelle-default",
+              brandName: "Gazelle Coffee",
+              locationId: "flagship-01",
+              locationName: "Gazelle Coffee Flagship",
+              marketLabel: "Ann Arbor, MI"
+            },
+            theme: {
+              background: "#F7F4ED",
+              backgroundAlt: "#F0ECE4",
+              surface: "#FFFDF8",
+              surfaceMuted: "#F3EFE7",
+              foreground: "#171513",
+              foregroundMuted: "#605B55",
+              muted: "#9B9389",
+              border: "rgba(23, 21, 19, 0.08)",
+              primary: "#1E1B18",
+              accent: "#2D2823",
+              fontFamily: "System",
+              displayFontFamily: "Fraunces"
+            },
+            enabledTabs: ["home", "menu", "orders", "account"],
+            featureFlags: {
+              loyalty: true,
+              pushNotifications: true,
+              refunds: true,
+              orderTracking: true,
+              staffDashboard: false,
+              menuEditing: false
+            },
+            loyaltyEnabled: true,
+            paymentCapabilities: {
+              applePay: true,
+              card: true,
+              cash: false,
+              refunds: true,
+              clover: {
+                enabled: true,
+                merchantRef: "flagship-01"
+              }
+            },
+            fulfillment: {
+              mode: "time_based",
+              timeBasedScheduleMinutes: {
+                inPrep: 5,
+                ready: 10,
+                completed: 15
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
       );
 
     const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
     const menu = await client.menu();
     const storeConfig = await client.storeConfig();
+    const appConfig = await client.appConfig();
 
     expect(menu.categories[0]?.items[0]?.name).toBe("Latte");
     expect(storeConfig.taxRateBasisPoints).toBe(600);
+    expect(appConfig.brand.brandName).toBe("Gazelle Coffee");
+    expect(appConfig.fulfillment.mode).toBe("time_based");
   });
 
   it("supports quote, create, and pay order flow", async () => {

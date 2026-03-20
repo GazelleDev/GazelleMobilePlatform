@@ -238,6 +238,138 @@ export const storeConfigResponseSchema = z.object({
   pickupInstructions: z.string()
 });
 
+export const adminMenuItemSchema = z.object({
+  itemId: z.string().min(1),
+  categoryId: z.string().min(1),
+  categoryTitle: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  priceCents: z.number().int().nonnegative(),
+  visible: z.boolean(),
+  sortOrder: z.number().int().nonnegative()
+});
+
+export const adminMenuCategorySchema = z.object({
+  categoryId: z.string().min(1),
+  title: z.string().min(1),
+  items: z.array(adminMenuItemSchema)
+});
+
+export const adminMenuResponseSchema = z.object({
+  locationId: z.string().min(1),
+  categories: z.array(adminMenuCategorySchema)
+});
+
+export const adminMenuItemUpdateSchema = z.object({
+  name: z.string().min(1),
+  priceCents: z.number().int().nonnegative(),
+  visible: z.boolean()
+});
+
+export const adminStoreConfigSchema = z.object({
+  locationId: z.string().min(1),
+  storeName: z.string().min(1),
+  hours: z.string().min(1),
+  pickupInstructions: z.string().min(1)
+});
+
+export const adminStoreConfigUpdateSchema = adminStoreConfigSchema.omit({
+  locationId: true
+});
+
+export const appConfigThemeSchema = z.object({
+  background: z.string().min(1),
+  backgroundAlt: z.string().min(1),
+  surface: z.string().min(1),
+  surfaceMuted: z.string().min(1),
+  foreground: z.string().min(1),
+  foregroundMuted: z.string().min(1),
+  muted: z.string().min(1),
+  border: z.string().min(1),
+  primary: z.string().min(1),
+  accent: z.string().min(1),
+  fontFamily: z.string().min(1).optional(),
+  displayFontFamily: z.string().min(1).optional()
+});
+
+export const appConfigBrandSchema = z.object({
+  brandId: z.string().min(1),
+  brandName: z.string().min(1),
+  locationId: z.string().min(1),
+  locationName: z.string().min(1),
+  marketLabel: z.string().min(1)
+});
+
+export const appConfigFeatureFlagsSchema = z.object({
+  loyalty: z.boolean(),
+  pushNotifications: z.boolean(),
+  refunds: z.boolean(),
+  orderTracking: z.boolean(),
+  staffDashboard: z.boolean(),
+  menuEditing: z.boolean()
+});
+
+export const appConfigPaymentCapabilitiesSchema = z.object({
+  applePay: z.boolean(),
+  card: z.boolean(),
+  cash: z.boolean(),
+  refunds: z.boolean(),
+  clover: z.object({
+    enabled: z.boolean(),
+    merchantRef: z.string().min(1).optional()
+  })
+});
+
+export const appConfigFulfillmentModeSchema = z.enum(["staff", "time_based"]);
+
+export const appConfigFulfillmentScheduleSchema = z
+  .object({
+    inPrep: z.number().int().nonnegative(),
+    ready: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative()
+  })
+  .superRefine((value, context) => {
+    if (value.ready <= value.inPrep) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ready"],
+        message: "ready must be greater than inPrep for time-based fulfillment."
+      });
+    }
+
+    if (value.completed <= value.ready) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["completed"],
+        message: "completed must be greater than ready for time-based fulfillment."
+      });
+    }
+  });
+
+export const appConfigFulfillmentSchema = z.object({
+  mode: appConfigFulfillmentModeSchema,
+  timeBasedScheduleMinutes: appConfigFulfillmentScheduleSchema
+});
+
+export const DEFAULT_APP_CONFIG_FULFILLMENT = appConfigFulfillmentSchema.parse({
+  mode: "time_based",
+  timeBasedScheduleMinutes: {
+    inPrep: 5,
+    ready: 10,
+    completed: 15
+  }
+});
+
+export const appConfigSchema = z.object({
+  brand: appConfigBrandSchema,
+  theme: appConfigThemeSchema,
+  enabledTabs: z.array(z.enum(["home", "menu", "orders", "account"])).min(1),
+  featureFlags: appConfigFeatureFlagsSchema,
+  loyaltyEnabled: z.boolean(),
+  paymentCapabilities: appConfigPaymentCapabilitiesSchema,
+  fulfillment: appConfigFulfillmentSchema.default(DEFAULT_APP_CONFIG_FULFILLMENT)
+});
+
 export type MenuItemCustomizationOption = z.output<typeof menuItemCustomizationOptionSchema>;
 export type MenuItemCustomizationGroup = z.output<typeof menuItemCustomizationGroupSchema>;
 export type MenuItemCustomizationSelection = z.output<typeof menuItemCustomizationSelectionSchema>;
@@ -246,6 +378,18 @@ export type MenuItem = z.output<typeof menuItemSchema>;
 export type MenuCategory = z.output<typeof menuCategorySchema>;
 export type MenuResponse = z.output<typeof menuResponseSchema>;
 export type StoreConfigResponse = z.output<typeof storeConfigResponseSchema>;
+export type AdminMenuItem = z.output<typeof adminMenuItemSchema>;
+export type AdminMenuCategory = z.output<typeof adminMenuCategorySchema>;
+export type AdminMenuResponse = z.output<typeof adminMenuResponseSchema>;
+export type AdminStoreConfig = z.output<typeof adminStoreConfigSchema>;
+export type AppConfigTheme = z.output<typeof appConfigThemeSchema>;
+export type AppConfigBrand = z.output<typeof appConfigBrandSchema>;
+export type AppConfigFeatureFlags = z.output<typeof appConfigFeatureFlagsSchema>;
+export type AppConfigPaymentCapabilities = z.output<typeof appConfigPaymentCapabilitiesSchema>;
+export type AppConfigFulfillmentMode = z.output<typeof appConfigFulfillmentModeSchema>;
+export type AppConfigFulfillmentSchedule = z.output<typeof appConfigFulfillmentScheduleSchema>;
+export type AppConfigFulfillment = z.output<typeof appConfigFulfillmentSchema>;
+export type AppConfig = z.output<typeof appConfigSchema>;
 
 export type CustomizationValidationIssueCode =
   | "unknown_group"
@@ -533,6 +677,12 @@ export function describeCustomizationSelection(input: {
 export const catalogContract = {
   basePath: "",
   routes: {
+    appConfig: {
+      method: "GET",
+      path: "/app-config",
+      request: z.undefined(),
+      response: appConfigSchema
+    },
     menu: {
       method: "GET",
       path: "/menu",
@@ -544,6 +694,30 @@ export const catalogContract = {
       path: "/store/config",
       request: z.undefined(),
       response: storeConfigResponseSchema
+    },
+    adminMenu: {
+      method: "GET",
+      path: "/admin/menu",
+      request: z.undefined(),
+      response: adminMenuResponseSchema
+    },
+    adminMenuUpdate: {
+      method: "PUT",
+      path: "/admin/menu/:itemId",
+      request: adminMenuItemUpdateSchema,
+      response: adminMenuItemSchema
+    },
+    adminStoreConfig: {
+      method: "GET",
+      path: "/admin/store/config",
+      request: z.undefined(),
+      response: adminStoreConfigSchema
+    },
+    adminStoreConfigUpdate: {
+      method: "PUT",
+      path: "/admin/store/config",
+      request: adminStoreConfigUpdateSchema,
+      response: adminStoreConfigSchema
     }
   }
 } as const;

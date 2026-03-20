@@ -1,5 +1,13 @@
 import type { FastifyBaseLogger } from "fastify";
 import {
+  adminMenuItemSchema,
+  adminMenuResponseSchema,
+  adminStoreConfigSchema,
+  appConfigSchema,
+  type AdminMenuItem,
+  type AdminMenuResponse,
+  type AdminStoreConfig,
+  type AppConfig,
   menuItemCustomizationGroupSchema,
   menuItemSchema,
   menuResponseSchema,
@@ -7,8 +15,13 @@ import {
 } from "@gazelle/contracts-catalog";
 import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl, type PersistenceDb } from "@gazelle/persistence";
 import { z } from "zod";
-
-const defaultLocationId = "flagship-01";
+import {
+  DEFAULT_BRAND_ID,
+  DEFAULT_LOCATION_NAME,
+  DEFAULT_LOCATION_ID,
+  DEFAULT_STORE_HOURS,
+  resolveDefaultAppConfigPayload
+} from "./tenant.js";
 
 const espressoCustomizationGroups = [
   {
@@ -129,7 +142,7 @@ const matchaCustomizationGroups = [
 ];
 
 const defaultMenuPayload = menuResponseSchema.parse({
-  locationId: defaultLocationId,
+  locationId: DEFAULT_LOCATION_ID,
   currency: "USD",
   categories: [
     {
@@ -181,7 +194,7 @@ const defaultMenuPayload = menuResponseSchema.parse({
 });
 
 const defaultStoreConfigPayload = storeConfigResponseSchema.parse({
-  locationId: defaultLocationId,
+  locationId: DEFAULT_LOCATION_ID,
   prepEtaMinutes: 12,
   taxRateBasisPoints: 600,
   pickupInstructions: "Pickup at the flagship order counter."
@@ -193,6 +206,20 @@ type MenuItem = z.output<typeof menuItemSchema>;
 
 type CatalogRepository = {
   backend: "memory" | "postgres";
+  getAppConfig(): Promise<AppConfig>;
+  getAdminMenu(): Promise<AdminMenuResponse>;
+  updateAdminMenuItem(input: {
+    itemId: string;
+    name: string;
+    priceCents: number;
+    visible: boolean;
+  }): Promise<AdminMenuItem | undefined>;
+  getAdminStoreConfig(): Promise<AdminStoreConfig>;
+  updateAdminStoreConfig(input: {
+    storeName: string;
+    hours: string;
+    pickupInstructions: string;
+  }): Promise<AdminStoreConfig>;
   getMenu(): Promise<MenuResponse>;
   getStoreConfig(): Promise<StoreConfigResponse>;
   close(): Promise<void>;
@@ -211,14 +238,164 @@ function toCustomizationGroups(value: unknown) {
   return parseJsonValue(z.array(menuItemCustomizationGroupSchema), value);
 }
 
+function toAdminMenuItem(input: {
+  itemId: string;
+  categoryId: string;
+  categoryTitle: string;
+  name: string;
+  description?: string;
+  priceCents: number;
+  visible: boolean;
+  sortOrder: number;
+}) {
+  return adminMenuItemSchema.parse(input);
+}
+
+function buildAdminMenuResponse(params: {
+  locationId: string;
+  categories: Array<{
+    categoryId: string;
+    title: string;
+    items: AdminMenuItem[];
+  }>;
+}) {
+  return adminMenuResponseSchema.parse({
+    locationId: params.locationId,
+    categories: params.categories.map((category) => ({
+      categoryId: category.categoryId,
+      title: category.title,
+      items: category.items
+    }))
+  });
+}
+
+function buildAdminStoreConfig(input: {
+  locationId: string;
+  storeName: string;
+  hours: string;
+  pickupInstructions: string;
+}) {
+  return adminStoreConfigSchema.parse(input);
+}
+
+function applyRuntimeFulfillmentMode(appConfig: AppConfig) {
+  const parsedConfig = appConfigSchema.parse(appConfig);
+  const runtimeFulfillment = resolveDefaultAppConfigPayload().fulfillment;
+
+  return appConfigSchema.parse({
+    ...parsedConfig,
+    fulfillment: {
+      ...parsedConfig.fulfillment,
+      mode: runtimeFulfillment.mode
+    }
+  });
+}
+
 function createInMemoryRepository(): CatalogRepository {
+  let appConfig = structuredClone(resolveDefaultAppConfigPayload());
+  let menu = structuredClone(defaultMenuPayload);
+  let storeConfig = structuredClone(defaultStoreConfigPayload);
+  let adminStoreConfig = buildAdminStoreConfig({
+    locationId: DEFAULT_LOCATION_ID,
+    storeName: DEFAULT_LOCATION_NAME,
+    hours: DEFAULT_STORE_HOURS,
+    pickupInstructions: defaultStoreConfigPayload.pickupInstructions
+  });
+
   return {
     backend: "memory",
+    async getAppConfig() {
+      return applyRuntimeFulfillmentMode(appConfig);
+    },
+    async getAdminMenu() {
+      return buildAdminMenuResponse({
+        locationId: menu.locationId,
+        categories: menu.categories.map((category) => ({
+          categoryId: category.id,
+          title: category.title,
+          items: category.items.map((item, index) =>
+            toAdminMenuItem({
+              itemId: item.id,
+              categoryId: category.id,
+              categoryTitle: category.title,
+              name: item.name,
+              description: item.description,
+              priceCents: item.priceCents,
+              visible: item.visible,
+              sortOrder: index
+            })
+          )
+        }))
+      });
+    },
+    async updateAdminMenuItem(input) {
+      let updatedItem: AdminMenuItem | undefined;
+      menu = menuResponseSchema.parse({
+        ...menu,
+        categories: menu.categories.map((category) => ({
+          ...category,
+          items: category.items.map((item, index) => {
+            if (item.id !== input.itemId) {
+              return item;
+            }
+
+            updatedItem = toAdminMenuItem({
+              itemId: item.id,
+              categoryId: category.id,
+              categoryTitle: category.title,
+              name: input.name,
+              description: item.description,
+              priceCents: input.priceCents,
+              visible: input.visible,
+              sortOrder: index
+            });
+
+            return {
+              ...item,
+              name: input.name,
+              priceCents: input.priceCents,
+              visible: input.visible
+            };
+          })
+        }))
+      });
+
+      return updatedItem;
+    },
+    async getAdminStoreConfig() {
+      return adminStoreConfig;
+    },
+    async updateAdminStoreConfig(input) {
+      adminStoreConfig = buildAdminStoreConfig({
+        locationId: DEFAULT_LOCATION_ID,
+        storeName: input.storeName,
+        hours: input.hours,
+        pickupInstructions: input.pickupInstructions
+      });
+      storeConfig = storeConfigResponseSchema.parse({
+        ...storeConfig,
+        pickupInstructions: input.pickupInstructions
+      });
+      appConfig = appConfigSchema.parse({
+        ...appConfig,
+        brand: {
+          ...appConfig.brand,
+          locationName: input.storeName
+        },
+        featureFlags: {
+          ...appConfig.featureFlags,
+          staffDashboard: true,
+          menuEditing: true
+        }
+      });
+
+      return adminStoreConfig;
+    },
     async getMenu() {
-      return defaultMenuPayload;
+      return menu;
     },
     async getStoreConfig() {
-      return defaultStoreConfigPayload;
+      return storeConfig;
     },
     async close() {
       // no-op
@@ -227,9 +404,11 @@ function createInMemoryRepository(): CatalogRepository {
 }
 
 async function seedCatalogDefaults(db: PersistenceDb) {
+  const defaultAppConfigPayload = resolveDefaultAppConfigPayload();
   const existingCategory = await db
     .selectFrom("catalog_menu_categories")
     .select("category_id")
+    .where("brand_id", "=", DEFAULT_BRAND_ID)
     .where("location_id", "=", defaultMenuPayload.locationId)
     .executeTakeFirst();
 
@@ -239,6 +418,7 @@ async function seedCatalogDefaults(db: PersistenceDb) {
         .insertInto("catalog_menu_categories")
         .values(
           defaultMenuPayload.categories.map((category, index) => ({
+            brand_id: DEFAULT_BRAND_ID,
             location_id: defaultMenuPayload.locationId,
             category_id: category.id,
             title: category.title,
@@ -253,6 +433,7 @@ async function seedCatalogDefaults(db: PersistenceDb) {
         .values(
           defaultMenuPayload.categories.flatMap((category) =>
             category.items.map((item, index) => ({
+              brand_id: DEFAULT_BRAND_ID,
               location_id: defaultMenuPayload.locationId,
               item_id: item.id,
               category_id: category.id,
@@ -275,26 +456,145 @@ async function seedCatalogDefaults(db: PersistenceDb) {
   await db
     .insertInto("catalog_store_configs")
     .values({
+      brand_id: DEFAULT_BRAND_ID,
       location_id: defaultStoreConfigPayload.locationId,
+      store_name: DEFAULT_LOCATION_NAME,
+      hours_text: DEFAULT_STORE_HOURS,
       prep_eta_minutes: defaultStoreConfigPayload.prepEtaMinutes,
       tax_rate_basis_points: defaultStoreConfigPayload.taxRateBasisPoints,
       pickup_instructions: defaultStoreConfigPayload.pickupInstructions
     })
     .onConflict((oc) => oc.column("location_id").doNothing())
     .execute();
+
+  await db
+    .insertInto("catalog_app_configs")
+    .values({
+      brand_id: DEFAULT_BRAND_ID,
+      location_id: defaultAppConfigPayload.brand.locationId,
+      app_config_json: defaultAppConfigPayload
+    })
+    .onConflict((oc) => oc.columns(["brand_id", "location_id"]).doNothing())
+    .execute();
 }
 
 async function createPostgresRepository(connectionString: string): Promise<CatalogRepository> {
   const db = createPostgresDb(connectionString);
+  const defaultAppConfigPayload = resolveDefaultAppConfigPayload();
   await ensurePersistenceTables(db);
   await seedCatalogDefaults(db);
 
   return {
     backend: "postgres",
+    async getAppConfig() {
+      const row = await db
+        .selectFrom("catalog_app_configs")
+        .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .executeTakeFirst();
+
+      if (!row) {
+        return applyRuntimeFulfillmentMode(defaultAppConfigPayload);
+      }
+
+      return applyRuntimeFulfillmentMode(appConfigSchema.parse(row.app_config_json));
+    },
+    async getAdminMenu() {
+      const categories = await db
+        .selectFrom("catalog_menu_categories")
+        .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", defaultMenuPayload.locationId)
+        .orderBy("sort_order", "asc")
+        .execute();
+
+      const items = await db
+        .selectFrom("catalog_menu_items")
+        .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", defaultMenuPayload.locationId)
+        .orderBy("category_id", "asc")
+        .orderBy("sort_order", "asc")
+        .execute();
+
+      const itemsByCategory = new Map<string, AdminMenuItem[]>();
+      const categoryTitles = new Map(categories.map((category) => [category.category_id, category.title]));
+      for (const item of items) {
+        const existing = itemsByCategory.get(item.category_id) ?? [];
+        existing.push(
+          toAdminMenuItem({
+            itemId: item.item_id,
+            categoryId: item.category_id,
+            categoryTitle: categoryTitles.get(item.category_id) ?? item.category_id,
+            name: item.name,
+            description: item.description,
+            priceCents: item.price_cents,
+            visible: item.visible,
+            sortOrder: item.sort_order
+          })
+        );
+        itemsByCategory.set(item.category_id, existing);
+      }
+
+      return buildAdminMenuResponse({
+        locationId: defaultMenuPayload.locationId,
+        categories: categories.map((category) => ({
+          categoryId: category.category_id,
+          title: category.title,
+          items: itemsByCategory.get(category.category_id) ?? []
+        }))
+      });
+    },
+    async updateAdminMenuItem(input) {
+      const existingRow = await db
+        .selectFrom("catalog_menu_items")
+        .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("item_id", "=", input.itemId)
+        .executeTakeFirst();
+
+      if (!existingRow) {
+        return undefined;
+      }
+
+      await db
+        .updateTable("catalog_menu_items")
+        .set({
+          name: input.name,
+          price_cents: input.priceCents,
+          visible: input.visible
+        })
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("item_id", "=", input.itemId)
+        .executeTakeFirst();
+
+      const category = await db
+        .selectFrom("catalog_menu_categories")
+        .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("category_id", "=", existingRow.category_id)
+        .executeTakeFirst();
+
+      return toAdminMenuItem({
+        itemId: existingRow.item_id,
+        categoryId: existingRow.category_id,
+        categoryTitle: category?.title ?? existingRow.category_id,
+        name: input.name,
+        description: existingRow.description,
+        priceCents: input.priceCents,
+        visible: input.visible,
+        sortOrder: existingRow.sort_order
+      });
+    },
     async getMenu() {
       const categories = await db
         .selectFrom("catalog_menu_categories")
         .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
         .where("location_id", "=", defaultMenuPayload.locationId)
         .orderBy("sort_order", "asc")
         .execute();
@@ -306,6 +606,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       const items = await db
         .selectFrom("catalog_menu_items")
         .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
         .where("location_id", "=", defaultMenuPayload.locationId)
         .orderBy("category_id", "asc")
         .orderBy("sort_order", "asc")
@@ -337,10 +638,108 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         }))
       });
     },
+    async getAdminStoreConfig() {
+      const row = await db
+        .selectFrom("catalog_store_configs")
+        .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", defaultStoreConfigPayload.locationId)
+        .executeTakeFirst();
+
+      if (!row) {
+        return buildAdminStoreConfig({
+          locationId: DEFAULT_LOCATION_ID,
+          storeName: DEFAULT_LOCATION_NAME,
+          hours: DEFAULT_STORE_HOURS,
+          pickupInstructions: defaultStoreConfigPayload.pickupInstructions
+        });
+      }
+
+      return buildAdminStoreConfig({
+        locationId: row.location_id,
+        storeName: row.store_name,
+        hours: row.hours_text,
+        pickupInstructions: row.pickup_instructions
+      });
+    },
+    async updateAdminStoreConfig(input) {
+      const existingAppConfigRow = await db
+        .selectFrom("catalog_app_configs")
+        .select("app_config_json")
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .executeTakeFirst();
+      const existingStoreConfigRow = await db
+        .selectFrom("catalog_store_configs")
+        .select(["prep_eta_minutes", "tax_rate_basis_points"])
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
+        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .executeTakeFirst();
+
+      const currentAppConfig = appConfigSchema.parse(existingAppConfigRow?.app_config_json ?? defaultAppConfigPayload);
+      const nextAppConfig = appConfigSchema.parse({
+        ...currentAppConfig,
+        brand: {
+          ...currentAppConfig.brand,
+          locationName: input.storeName
+        },
+        featureFlags: {
+          ...currentAppConfig.featureFlags,
+          staffDashboard: true,
+          menuEditing: true
+        }
+      });
+
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .insertInto("catalog_store_configs")
+          .values({
+            brand_id: DEFAULT_BRAND_ID,
+            location_id: defaultStoreConfigPayload.locationId,
+            store_name: input.storeName,
+            hours_text: input.hours,
+            prep_eta_minutes: existingStoreConfigRow?.prep_eta_minutes ?? defaultStoreConfigPayload.prepEtaMinutes,
+            tax_rate_basis_points:
+              existingStoreConfigRow?.tax_rate_basis_points ?? defaultStoreConfigPayload.taxRateBasisPoints,
+            pickup_instructions: input.pickupInstructions
+          })
+          .onConflict((oc) =>
+            oc.column("location_id").doUpdateSet({
+              brand_id: DEFAULT_BRAND_ID,
+              store_name: input.storeName,
+              hours_text: input.hours,
+              pickup_instructions: input.pickupInstructions
+            })
+          )
+          .execute();
+
+        await trx
+          .insertInto("catalog_app_configs")
+          .values({
+            brand_id: DEFAULT_BRAND_ID,
+            location_id: DEFAULT_LOCATION_ID,
+            app_config_json: nextAppConfig
+          })
+          .onConflict((oc) =>
+            oc.columns(["brand_id", "location_id"]).doUpdateSet({
+              app_config_json: nextAppConfig
+            })
+          )
+          .execute();
+      });
+
+      return buildAdminStoreConfig({
+        locationId: DEFAULT_LOCATION_ID,
+        storeName: input.storeName,
+        hours: input.hours,
+        pickupInstructions: input.pickupInstructions
+      });
+    },
     async getStoreConfig() {
       const row = await db
         .selectFrom("catalog_store_configs")
         .selectAll()
+        .where("brand_id", "=", DEFAULT_BRAND_ID)
         .where("location_id", "=", defaultStoreConfigPayload.locationId)
         .executeTakeFirst();
 
@@ -357,8 +756,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
     },
     async close() {
       await db.destroy();
-    }
-  };
+  }
+};
 }
 
 export async function createCatalogRepository(logger: FastifyBaseLogger): Promise<CatalogRepository> {

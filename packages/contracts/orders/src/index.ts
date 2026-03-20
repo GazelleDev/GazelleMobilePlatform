@@ -48,7 +48,8 @@ export const orderQuoteSchema = z.object({
 export const orderTimelineEntrySchema = z.object({
   status: orderStatusSchema,
   occurredAt: z.string().datetime(),
-  note: z.string().optional()
+  note: z.string().optional(),
+  source: z.enum(["system", "staff", "webhook", "customer"]).optional()
 });
 
 export const orderSchema = z.object({
@@ -119,6 +120,14 @@ export const payOrderRequestSchema = z.object({
     });
   }
 });
+
+export type OrderStatus = z.output<typeof orderStatusSchema>;
+export type OrderItemCustomizationSelectionSnapshot = z.output<typeof orderItemCustomizationSelectionSnapshotSchema>;
+export type OrderItemCustomizationSnapshot = z.output<typeof orderItemCustomizationSnapshotSchema>;
+export type OrderItem = z.output<typeof orderItemSchema>;
+export type OrderQuote = z.output<typeof orderQuoteSchema>;
+export type OrderTimelineEntry = z.output<typeof orderTimelineEntrySchema>;
+export type Order = z.output<typeof orderSchema>;
 
 export const paymentReconciliationProviderSchema = z.literal("CLOVER");
 

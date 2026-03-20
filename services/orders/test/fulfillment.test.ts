@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_APP_CONFIG_FULFILLMENT } from "@gazelle/contracts-catalog";
 import { orderSchema } from "@gazelle/contracts-orders";
 import { reconcileOrderFulfillmentState } from "../src/fulfillment.js";
+import { advanceOrderLifecycleToStatus, OrderTransitionError, transitionOrderStatus } from "../src/lifecycle.js";
 
 const paidAt = "2026-03-10T00:00:00.000Z";
 
@@ -72,11 +74,64 @@ function buildOrder(status: "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCEL
   });
 }
 
-describe("temporary fulfillment reconciliation", () => {
+describe("configured fulfillment reconciliation", () => {
+  it("applies a single lifecycle transition with source attribution", () => {
+    const order = buildOrder("PAID");
+
+    const result = transitionOrderStatus(order, "IN_PREP", {
+      source: "staff"
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.order.status).toBe("IN_PREP");
+    expect(result.appliedTransitions).toHaveLength(1);
+    expect(result.order.timeline.at(-1)).toMatchObject({
+      status: "IN_PREP",
+      source: "staff"
+    });
+  });
+
+  it("advances sequentially when asked to reach a later lifecycle target", () => {
+    const order = buildOrder("PAID");
+
+    const result = advanceOrderLifecycleToStatus(order, "READY", {
+      resolveStepMetadata: ({ nextStatus }) => ({
+        source: "system",
+        occurredAt:
+          nextStatus === "IN_PREP"
+            ? "2026-03-10T00:05:00.000Z"
+            : "2026-03-10T00:10:00.000Z"
+      })
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.order.status).toBe("READY");
+    expect(result.appliedTransitions.map((transition) => transition.toStatus)).toEqual(["IN_PREP", "READY"]);
+    expect(result.order.timeline.at(-1)).toMatchObject({
+      status: "READY",
+      source: "system"
+    });
+  });
+
+  it("rejects invalid regressions and keeps same-status calls idempotent", () => {
+    const order = buildOrder("READY");
+
+    expect(() => transitionOrderStatus(order, "PAID")).toThrow(OrderTransitionError);
+
+    const sameStatus = transitionOrderStatus(order, "READY", {
+      source: "staff"
+    });
+
+    expect(sameStatus.changed).toBe(false);
+    expect(sameStatus.order.timeline).toHaveLength(order.timeline.length);
+  });
+
   it("keeps PAID orders as PAID before five minutes", () => {
     const order = buildOrder("PAID");
 
-    const result = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:04:59.000Z"));
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:04:59.000Z")
+    });
 
     expect(result.changed).toBe(false);
     expect(result.order.status).toBe("PAID");
@@ -86,7 +141,9 @@ describe("temporary fulfillment reconciliation", () => {
   it("advances PAID orders to IN_PREP at five minutes", () => {
     const order = buildOrder("PAID");
 
-    const result = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:05:00.000Z"));
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:05:00.000Z")
+    });
 
     expect(result.changed).toBe(true);
     expect(result.order.status).toBe("IN_PREP");
@@ -100,7 +157,9 @@ describe("temporary fulfillment reconciliation", () => {
   it("advances IN_PREP orders to READY at ten minutes from PAID", () => {
     const order = buildOrder("IN_PREP");
 
-    const result = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:10:00.000Z"));
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:10:00.000Z")
+    });
 
     expect(result.changed).toBe(true);
     expect(result.order.status).toBe("READY");
@@ -114,7 +173,9 @@ describe("temporary fulfillment reconciliation", () => {
   it("advances READY orders to COMPLETED at fifteen minutes from PAID", () => {
     const order = buildOrder("READY");
 
-    const result = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:15:00.000Z"));
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:15:00.000Z")
+    });
 
     expect(result.changed).toBe(true);
     expect(result.order.status).toBe("COMPLETED");
@@ -128,7 +189,9 @@ describe("temporary fulfillment reconciliation", () => {
   it("does not advance canceled orders", () => {
     const order = buildOrder("CANCELED");
 
-    const result = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:30:00.000Z"));
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:30:00.000Z")
+    });
 
     expect(result.changed).toBe(false);
     expect(result.order.status).toBe("CANCELED");
@@ -138,7 +201,9 @@ describe("temporary fulfillment reconciliation", () => {
   it("does not advance completed orders", () => {
     const order = buildOrder("COMPLETED");
 
-    const result = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:30:00.000Z"));
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:30:00.000Z")
+    });
 
     expect(result.changed).toBe(false);
     expect(result.order.status).toBe("COMPLETED");
@@ -148,8 +213,12 @@ describe("temporary fulfillment reconciliation", () => {
   it("is idempotent across duplicate reconciliation calls", () => {
     const order = buildOrder("PAID");
 
-    const firstResult = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:10:00.000Z"));
-    const secondResult = reconcileOrderFulfillmentState(firstResult.order, new Date("2026-03-10T00:10:00.000Z"));
+    const firstResult = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:10:00.000Z")
+    });
+    const secondResult = reconcileOrderFulfillmentState(firstResult.order, {
+      now: new Date("2026-03-10T00:10:00.000Z")
+    });
 
     expect(firstResult.order.status).toBe("READY");
     expect(firstResult.order.timeline.map((entry) => entry.status)).toEqual([
@@ -170,7 +239,9 @@ describe("temporary fulfillment reconciliation", () => {
   it("never regresses an order that is already further along the lifecycle", () => {
     const order = buildOrder("IN_PREP");
 
-    const result = reconcileOrderFulfillmentState(order, new Date("2026-03-10T00:04:00.000Z"));
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:04:00.000Z")
+    });
 
     expect(result.changed).toBe(false);
     expect(result.order.status).toBe("IN_PREP");
@@ -179,5 +250,21 @@ describe("temporary fulfillment reconciliation", () => {
       "PAID",
       "IN_PREP"
     ]);
+  });
+
+  it("does not auto-advance reads when fulfillment mode is staff", () => {
+    const order = buildOrder("PAID");
+
+    const result = reconcileOrderFulfillmentState(order, {
+      now: new Date("2026-03-10T00:30:00.000Z"),
+      fulfillment: {
+        ...DEFAULT_APP_CONFIG_FULFILLMENT,
+        mode: "staff"
+      }
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.order.status).toBe("PAID");
+    expect(result.order.timeline).toHaveLength(order.timeline.length);
   });
 });

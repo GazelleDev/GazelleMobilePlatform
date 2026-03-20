@@ -11,7 +11,15 @@ import { ClearCartSheet } from "../src/cart/ClearCartSheet";
 import { buildPricingSummary, describeCustomization } from "../src/cart/model";
 import { RemoveItemSheet } from "../src/cart/RemoveItemSheet";
 import { useCart } from "../src/cart/store";
-import { formatUsd, resolveMenuData, resolveStoreConfigData, useMenuQuery, useStoreConfigQuery } from "../src/menu/catalog";
+import {
+  formatUsd,
+  resolveAppConfigData,
+  resolveMenuData,
+  resolveStoreConfigData,
+  useAppConfigQuery,
+  useMenuQuery,
+  useStoreConfigQuery
+} from "../src/menu/catalog";
 import { canAttemptNativeApplePay, requestNativeApplePayWallet, type ApplePayWalletPayload } from "../src/orders/applePay";
 import {
   CheckoutSubmissionError,
@@ -260,13 +268,15 @@ export default function CartModalScreen() {
   const { isAuthenticated } = useAuthSession();
   const { items, itemCount, subtotalCents, setQuantity, removeItem, clear } = useCart();
   const { retryOrder, clearRetryOrder, clearFailure, setConfirmation, setFailure } = useCheckoutFlow();
+  const appConfigQuery = useAppConfigQuery();
   const menuQuery = useMenuQuery();
   const menu = resolveMenuData(menuQuery.data);
   const storeConfigQuery = useStoreConfigQuery();
+  const appConfig = resolveAppConfigData(appConfigQuery.data);
   const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
   const pricingSummary = buildPricingSummary(subtotalCents, storeConfig.taxRateBasisPoints);
   const checkoutMutation = useApplePayCheckoutMutation();
-  const nativeApplePayAvailable = canAttemptNativeApplePay();
+  const nativeApplePayAvailable = canAttemptNativeApplePay() && appConfig.paymentCapabilities.applePay;
   const showDevFallback = __DEV__;
   const quoteItems = useMemo(() => toQuoteItems(items), [items]);
   const retryableOrder = retryOrder && quoteItemsEqual(quoteItems, retryOrder.quoteItems) ? retryOrder : undefined;
@@ -399,7 +409,7 @@ export default function CartModalScreen() {
         amountCents: pricingSummary.totalCents,
         currencyCode: "USD",
         countryCode: "US",
-        label: "Gazelle Coffee"
+        label: appConfig.brand.brandName
       });
       submitCheckout({ applePayWallet: walletPayload });
     } catch (error) {

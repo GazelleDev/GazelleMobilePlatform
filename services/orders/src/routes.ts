@@ -11,11 +11,13 @@ import {
   ordersPaymentReconciliationSchema,
   orderQuoteSchema,
   orderSchema,
+  orderTimelineEntrySchema,
   payOrderRequestSchema,
   quoteRequestSchema
 } from "@gazelle/contracts-orders";
 import { z } from "zod";
-import { reconcileOrderFulfillmentState } from "./fulfillment.js";
+import { reconcileOrderFulfillmentState, resolveConfiguredOrderFulfillment } from "./fulfillment.js";
+import { createOrderTimelineEntry, transitionOrderStatus, OrderTransitionError } from "./lifecycle.js";
 import { createOrdersRepository, type OrdersRepository, type QuoteCatalogItem } from "./repository.js";
 
 const payloadSchema = z.object({
@@ -51,6 +53,11 @@ const orderIdParamsSchema = z.object({
   orderId: z.string().uuid()
 });
 
+const orderStatusUpdateRequestSchema = z.object({
+  status: z.enum(["IN_PREP", "READY", "COMPLETED"]),
+  note: z.string().min(1).optional()
+});
+
 const cancelOrderRequestSchema = z.object({
   reason: z.string().min(1)
 });
@@ -72,6 +79,10 @@ const internalHeadersSchema = z.object({
 
 const gatewayHeadersSchema = z.object({
   "x-gateway-token": z.string().optional()
+});
+
+const cancelSourceHeadersSchema = z.object({
+  "x-order-cancel-source": z.enum(["customer", "staff"]).optional()
 });
 
 const paymentsChargeRequestSchema = z.object({
@@ -240,6 +251,18 @@ function sendError(
   );
 }
 
+function rejectManualStaffFulfillmentChange(reply: FastifyReply, requestId: string, fulfillmentMode: string) {
+  return sendError(reply, {
+    statusCode: 409,
+    code: "STAFF_FULFILLMENT_DISABLED",
+    message: "Staff-driven order status changes are only allowed when fulfillment mode is staff",
+    requestId,
+    details: {
+      fulfillmentMode
+    }
+  });
+}
+
 function parseJsonSafely(rawBody: string): unknown {
   if (!rawBody) {
     return undefined;
@@ -388,13 +411,14 @@ async function sendOrderStateNotification(params: {
   notificationsBaseUrl: string;
   userId: string;
   order: Order;
+  timelineEntry?: z.output<typeof orderTimelineEntrySchema>;
 }) {
   const { request, notificationsBaseUrl, userId, order } = params;
-  const latestTimelineEntry = order.timeline[order.timeline.length - 1];
+  const latestTimelineEntry = params.timelineEntry ?? order.timeline[order.timeline.length - 1];
   const payload = orderStateNotificationSchema.parse({
     userId,
     orderId: order.id,
-    status: order.status,
+    status: latestTimelineEntry?.status ?? order.status,
     pickupCode: order.pickupCode,
     locationId: order.locationId,
     occurredAt: latestTimelineEntry?.occurredAt ?? new Date().toISOString(),
@@ -447,6 +471,24 @@ async function sendOrderStateNotification(params: {
       "notifications service returned invalid order-state response"
     );
     return;
+  }
+}
+
+async function sendOrderStateNotifications(params: {
+  request: FastifyRequest;
+  notificationsBaseUrl: string;
+  userId: string;
+  order: Order;
+  timelineEntries: Array<z.output<typeof orderTimelineEntrySchema>>;
+}) {
+  for (const timelineEntry of params.timelineEntries) {
+    await sendOrderStateNotification({
+      request: params.request,
+      notificationsBaseUrl: params.notificationsBaseUrl,
+      userId: params.userId,
+      order: params.order,
+      timelineEntry
+    });
   }
 }
 
@@ -618,43 +660,42 @@ function buildPickupCode(seed: string) {
   return createHash("sha256").update(seed).digest("hex").slice(0, 6).toUpperCase();
 }
 
-function appendOrderStatus(order: Order, status: z.output<typeof orderSchema>["status"], note?: string): Order {
-  return orderSchema.parse({
-    ...order,
-    status,
-    timeline: [
-      ...order.timeline,
-      {
-        status,
-        occurredAt: new Date().toISOString(),
-        ...(note ? { note } : {})
-      }
-    ]
-  });
-}
-
 async function reconcilePersistedOrderFulfillmentState(params: {
   order: Order;
   repository: OrdersRepository;
   request: FastifyRequest;
+  notificationsBaseUrl: string;
+  fulfillment: ReturnType<typeof resolveConfiguredOrderFulfillment>;
 }): Promise<Order> {
-  const { order, repository, request } = params;
+  const { order, repository, request, notificationsBaseUrl, fulfillment } = params;
 
-  // TODO(platform): Replace this temporary time-based fulfillment progression with authoritative order state transitions driven by staff actions, POS/webhook events, or kitchen workflow. This stopgap exists only to unblock the mobile active-order experience until real fulfillment writers are implemented.
-  const reconciliation = reconcileOrderFulfillmentState(order, new Date());
+  const reconciliation = reconcileOrderFulfillmentState(order, {
+    now: new Date(),
+    fulfillment
+  });
   if (!reconciliation.changed) {
     return order;
   }
 
-  const reconciledOrder = await repository.updateOrder(order.id, reconciliation.order);
+    const reconciledOrder = await repository.updateOrder(order.id, reconciliation.order);
+    const appliedTimelineEntries = reconciledOrder.timeline.slice(-reconciliation.appendedStatuses.length);
+    const orderUserId = await resolveStoredOrderUserId({ orderId: order.id, repository });
+    await sendOrderStateNotifications({
+      request,
+      notificationsBaseUrl,
+      userId: orderUserId,
+      order: reconciledOrder,
+      timelineEntries: appliedTimelineEntries
+    });
   request.log.info(
     {
       orderId: order.id,
       fromStatus: order.status,
       toStatus: reconciledOrder.status,
+      fulfillmentMode: fulfillment.mode,
       appendedStatuses: reconciliation.appendedStatuses
     },
-    "reconciled temporary fulfillment state on order read"
+    "reconciled configured fulfillment state on order read"
   );
   return reconciledOrder;
 }
@@ -670,11 +711,11 @@ function createOrderFromQuote(quote: OrderQuote): Order {
     total: quote.total,
     pickupCode: buildPickupCode(orderId),
     timeline: [
-      {
+      createOrderTimelineEntry({
         status: "PENDING_PAYMENT",
-        occurredAt: new Date().toISOString(),
-        note: "Order created from quote"
-      }
+        note: "Order created from quote",
+        source: "customer"
+      })
     ]
   });
 }
@@ -697,6 +738,7 @@ export async function registerRoutes(app: FastifyInstance) {
     timeWindow: ordersRateLimitWindowMs
   };
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
+  const fulfillmentConfig = resolveConfiguredOrderFulfillment();
   const repository = await createOrdersRepository(app.log);
 
   app.addHook("onClose", async () => {
@@ -819,23 +861,23 @@ export async function registerRoutes(app: FastifyInstance) {
         orderQuote.pointsToRedeem > 0 ? `redeemed ${orderQuote.pointsToRedeem} loyalty points` : undefined,
         `Earned ${existingOrder.total.amountCents} loyalty points`
       ].filter((value): value is string => Boolean(value));
-      const paidOrder = appendOrderStatus(
-        existingOrder,
-        "PAID",
-        `${loyaltyParts.join("; ")}.`
-      );
-      await repository.updateOrder(input.orderId, paidOrder);
-      await sendOrderStateNotification({
+      const paidTransition = transitionOrderStatus(existingOrder, "PAID", {
+        note: `${loyaltyParts.join("; ")}.`,
+        source: "webhook"
+      });
+      await repository.updateOrder(input.orderId, paidTransition.order);
+      await sendOrderStateNotifications({
         request,
         notificationsBaseUrl,
         userId: orderUserId,
-        order: paidOrder
+        order: paidTransition.order,
+        timelineEntries: paidTransition.appliedTransitions.map((transition) => transition.timelineEntry)
       });
 
       return ordersPaymentReconciliationResultSchema.parse({
         accepted: true,
         applied: true,
-        orderStatus: paidOrder.status
+        orderStatus: paidTransition.order.status
       });
     }
 
@@ -865,12 +907,31 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
 
-    if (existingOrder.status !== "PAID") {
+    if (existingOrder.status === "PENDING_PAYMENT") {
       return ordersPaymentReconciliationResultSchema.parse({
         accepted: true,
         applied: false,
         orderStatus: existingOrder.status,
-        note: "Order is not in PAID state for refund reconciliation"
+        note: "Order is not in a refund-eligible state"
+      });
+    }
+
+    if (existingOrder.status === "CANCELED") {
+      return ordersPaymentReconciliationResultSchema.parse({
+        accepted: true,
+        applied: false,
+        orderStatus: existingOrder.status,
+        note: "Order is already canceled"
+      });
+    }
+
+    if (existingOrder.status === "COMPLETED") {
+      return sendError(reply, {
+        statusCode: 409,
+        code: "ORDER_NOT_CANCELABLE",
+        message: "Completed orders cannot be canceled",
+        requestId: request.id,
+        details: { orderId: input.orderId, status: existingOrder.status }
       });
     }
 
@@ -931,23 +992,23 @@ export async function registerRoutes(app: FastifyInstance) {
       orderQuote.pointsToRedeem > 0 ? `refunded ${orderQuote.pointsToRedeem} redeemed points` : undefined
     ].filter((value): value is string => Boolean(value));
     const eventNote = input.eventId ? `event ${input.eventId}` : "webhook event";
-    const canceledOrder = appendOrderStatus(
-      existingOrder,
-      "CANCELED",
-      `Refund reconciled from Clover ${eventNote}; ${reversalParts.join("; ")}.`
-    );
-    await repository.updateOrder(input.orderId, canceledOrder);
+    const canceledTransition = transitionOrderStatus(existingOrder, "CANCELED", {
+      note: `Refund reconciled from Clover ${eventNote}; ${reversalParts.join("; ")}.`,
+      source: "webhook"
+    });
+    await repository.updateOrder(input.orderId, canceledTransition.order);
     await sendOrderStateNotification({
       request,
       notificationsBaseUrl,
       userId: orderUserId,
-      order: canceledOrder
+      order: canceledTransition.order,
+      timelineEntry: canceledTransition.appliedTransitions[0]?.timelineEntry
     });
 
       return ordersPaymentReconciliationResultSchema.parse({
         accepted: true,
         applied: true,
-        orderStatus: canceledOrder.status
+        orderStatus: canceledTransition.order.status
       });
     }
   );
@@ -1246,18 +1307,22 @@ export async function registerRoutes(app: FastifyInstance) {
       `Earned ${existingOrder.total.amountCents} loyalty points`
     ].filter((value): value is string => Boolean(value));
 
-    const paidOrder = appendOrderStatus(existingOrder, "PAID", `${loyaltyParts.join("; ")}.`);
-    await repository.updateOrder(orderId, paidOrder);
+    const paidTransition = transitionOrderStatus(existingOrder, "PAID", {
+      note: `${loyaltyParts.join("; ")}.`,
+      source: "customer"
+    });
+    await repository.updateOrder(orderId, paidTransition.order);
     await repository.setPaymentId(orderId, successfulCharge.paymentId);
     await repository.savePaymentIdempotency(orderId, input.idempotencyKey);
     await sendOrderStateNotification({
       request,
       notificationsBaseUrl,
       userId: orderUserId,
-      order: paidOrder
+      order: paidTransition.order,
+      timelineEntry: paidTransition.appliedTransitions[0]?.timelineEntry
     });
 
-      return paidOrder;
+      return paidTransition.order;
     }
   );
 
@@ -1267,13 +1332,14 @@ export async function registerRoutes(app: FastifyInstance) {
     }
 
     const orders = await repository.listOrders();
-    // TODO(platform): Replace this temporary time-based fulfillment progression with authoritative order state transitions driven by staff actions, POS/webhook events, or kitchen workflow. This stopgap exists only to unblock the mobile active-order experience until real fulfillment writers are implemented.
     const reconciledOrders = await Promise.all(
       orders.map((order) =>
         reconcilePersistedOrderFulfillmentState({
           order,
           repository,
-          request
+          request,
+          notificationsBaseUrl,
+          fulfillment: fulfillmentConfig
         })
       )
     );
@@ -1298,11 +1364,12 @@ export async function registerRoutes(app: FastifyInstance) {
       });
     }
 
-    // TODO(platform): Replace this temporary time-based fulfillment progression with authoritative order state transitions driven by staff actions, POS/webhook events, or kitchen workflow. This stopgap exists only to unblock the mobile active-order experience until real fulfillment writers are implemented.
     const reconciledOrder = await reconcilePersistedOrderFulfillmentState({
       order,
       repository,
-      request
+      request,
+      notificationsBaseUrl,
+      fulfillment: fulfillmentConfig
     });
     return orderSchema.parse(reconciledOrder);
   });
@@ -1343,13 +1410,23 @@ export async function registerRoutes(app: FastifyInstance) {
 
     if (existingOrder.status === "CANCELED") {
       return existingOrder;
-    }
+      }
 
-    let refundNote = "";
-    if (existingOrder.status === "PAID") {
-      const paymentId = await repository.getPaymentId(orderId);
-      if (!paymentId) {
-        return sendError(reply, {
+      const parsedCancelHeaders = cancelSourceHeadersSchema.safeParse(request.headers);
+      const cancelSource = parsedCancelHeaders.success
+        ? parsedCancelHeaders.data["x-order-cancel-source"] ?? "customer"
+        : "customer";
+      const cancelActorLabel = cancelSource === "staff" ? "staff" : "customer";
+
+      if (cancelSource === "staff" && fulfillmentConfig.mode !== "staff") {
+        return rejectManualStaffFulfillmentChange(reply, request.id, fulfillmentConfig.mode);
+      }
+
+      let refundNote = "";
+      if (existingOrder.status !== "PENDING_PAYMENT") {
+        const paymentId = await repository.getPaymentId(orderId);
+        if (!paymentId) {
+          return sendError(reply, {
           statusCode: 409,
           code: "REFUND_REFERENCE_MISSING",
           message: "Unable to locate payment reference for refund",
@@ -1502,14 +1579,13 @@ export async function registerRoutes(app: FastifyInstance) {
       ].filter((value): value is string => Boolean(value));
 
       refundNote = ` Refund submitted: ${successfulRefund.refundId}. Loyalty updated: ${loyaltyReversalParts.join("; ")}.`;
-    }
+      }
 
-    const canceledOrder = appendOrderStatus(
-      existingOrder,
-      "CANCELED",
-      `Canceled by customer: ${input.reason}.${refundNote}`
-    );
-    await repository.updateOrder(orderId, canceledOrder);
+    const canceledTransition = transitionOrderStatus(existingOrder, "CANCELED", {
+      note: `Canceled by ${cancelActorLabel}: ${input.reason}.${refundNote}`,
+      source: cancelSource
+    });
+    await repository.updateOrder(orderId, canceledTransition.order);
     let notificationUserId = await repository.getOrderUserId(orderId);
     if (!notificationUserId) {
       const fallbackUserId = resolveRequestUserId(request, reply);
@@ -1523,10 +1599,77 @@ export async function registerRoutes(app: FastifyInstance) {
       request,
       notificationsBaseUrl,
       userId: notificationUserId,
-      order: canceledOrder
+      order: canceledTransition.order,
+      timelineEntry: canceledTransition.appliedTransitions[0]?.timelineEntry
     });
 
-      return canceledOrder;
+      return canceledTransition.order;
+    }
+  );
+
+  app.post(
+    "/v1/orders/:orderId/status",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeInternalRequest(request, reply, internalApiToken)) {
+        return;
+      }
+
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const input = orderStatusUpdateRequestSchema.parse(request.body);
+      const existingOrder = await repository.getOrder(orderId);
+
+      if (!existingOrder) {
+        return sendError(reply, {
+          statusCode: 404,
+          code: "ORDER_NOT_FOUND",
+          message: "Order not found",
+          requestId: request.id,
+          details: { orderId }
+        });
+      }
+
+      if (fulfillmentConfig.mode !== "staff") {
+        return rejectManualStaffFulfillmentChange(reply, request.id, fulfillmentConfig.mode);
+      }
+
+      let transitionResult: ReturnType<typeof transitionOrderStatus>;
+      try {
+        transitionResult = transitionOrderStatus(existingOrder, input.status, {
+          note: input.note,
+          source: "staff"
+        });
+      } catch (error) {
+        if (error instanceof OrderTransitionError) {
+          return sendError(reply, {
+            statusCode: error.statusCode,
+            code: error.code,
+            message: error.message,
+            requestId: request.id,
+            details: error.details
+          });
+        }
+
+        throw error;
+      }
+
+      if (!transitionResult.changed) {
+        return existingOrder;
+      }
+
+      await repository.updateOrder(orderId, transitionResult.order);
+      const orderUserId = await resolveStoredOrderUserId({ orderId, repository });
+      await sendOrderStateNotification({
+        request,
+        notificationsBaseUrl,
+        userId: orderUserId,
+        order: transitionResult.order,
+        timelineEntry: transitionResult.appliedTransitions[0]?.timelineEntry
+      });
+
+      return transitionResult.order;
     }
   );
 
