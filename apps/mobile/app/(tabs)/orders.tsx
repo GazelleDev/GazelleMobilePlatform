@@ -509,6 +509,7 @@ export default function OrdersScreen() {
   const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
   const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
 
   const orders = ordersQuery.data ?? [];
   const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
@@ -525,6 +526,7 @@ export default function OrdersScreen() {
   const contentBottomInset = Math.max(getTabBarBottomOffset(insets.bottom > 0) + TAB_BAR_HEIGHT + 24 - insets.bottom, 24);
   const isInitialOrdersLoading = isAuthenticated && ordersQuery.isLoading && !ordersQuery.data;
   const shouldShowInitialLoading = !didFinishInitialReveal && (isHydrating || isInitialOrdersLoading);
+  const showDevConfirmationPreview = __DEV__;
 
   useEffect(() => {
     if (didFinishInitialReveal) return;
@@ -555,8 +557,12 @@ export default function OrdersScreen() {
   }, [didFinishInitialReveal, loadingOpacity, shouldShowInitialLoading, showLoadingOverlay]);
 
   const refreshOrders = () => {
-    void ordersQuery.refetch();
-    void loyaltyLedgerQuery.refetch();
+    if (isManualRefresh) return;
+
+    setIsManualRefresh(true);
+    void Promise.allSettled([ordersQuery.refetch(), loyaltyLedgerQuery.refetch()]).finally(() => {
+      setIsManualRefresh(false);
+    });
   };
 
   if (!isAuthenticated) {
@@ -564,30 +570,51 @@ export default function OrdersScreen() {
       <View style={styles.screenShell}>
         <ScreenScroll
           bottomInset={contentBottomInset}
-          contentContainerStyle={[styles.screenContentNoTopPadding, { paddingTop: headerOffset }]}
+          contentContainerStyle={[styles.screenContentNoTopPadding, styles.signedOutScrollContent, { paddingTop: headerOffset }]}
         >
-          <View style={styles.sectionBlock}>
-            <OrdersSectionHeader label="Sign in required" />
-            <View style={styles.supportPanel}>
-              <Text style={styles.stateTitle}>Order tracking lives here.</Text>
-              <Text style={styles.stateBody}>
-                Current status, pickup codes, and previous orders stay attached to your account so they are available whenever you return.
-              </Text>
-              <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/orders" } }} asChild>
-                <Pressable>
-                  <Button
-                    label="Sign In"
-                    style={styles.authButton}
-                    left={<Ionicons name="log-in-outline" size={16} color={uiPalette.primaryText} />}
-                  />
-                </Pressable>
-              </Link>
+          {showDevConfirmationPreview ? (
+            <View style={styles.devPreviewWrap}>
+              <Button label="Preview Confirmation" variant="secondary" onPress={() => router.push("/checkout-success")} />
             </View>
+          ) : null}
+
+          <View style={styles.signedOutState}>
+            <Text style={styles.stateTitle}>Track pickup and revisit past orders.</Text>
+            <Text style={styles.signedOutBody}>
+              Sign in to keep live status, pickup codes, and previous receipts attached to one account every time you come back.
+            </Text>
+
+            <View style={styles.signedOutFeatureList}>
+              <View style={styles.signedOutFeatureRow}>
+                <Text style={styles.signedOutFeatureLabel}>Live status</Text>
+                <Text style={styles.signedOutFeatureValue}>Confirmed, in prep, and ready updates appear here.</Text>
+              </View>
+              <View style={styles.signedOutFeatureDivider} />
+              <View style={styles.signedOutFeatureRow}>
+                <Text style={styles.signedOutFeatureLabel}>Pickup codes</Text>
+                <Text style={styles.signedOutFeatureValue}>Every active order keeps its handoff code in one place.</Text>
+              </View>
+              <View style={styles.signedOutFeatureDivider} />
+              <View style={styles.signedOutFeatureRow}>
+                <Text style={styles.signedOutFeatureLabel}>Past orders</Text>
+                <Text style={styles.signedOutFeatureValue}>Completed orders stay available after the visit is over.</Text>
+              </View>
+            </View>
+
+            <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/orders" } }} asChild>
+              <Pressable>
+                <Button
+                  label="Sign In"
+                  style={styles.authButton}
+                  left={<Ionicons name="log-in-outline" size={16} color={uiPalette.primaryText} />}
+                />
+              </Pressable>
+            </Link>
           </View>
         </ScreenScroll>
 
         <View pointerEvents="none" style={[styles.pageHeaderFloating, { paddingTop: insets.top, height: insets.top + ORDERS_HEADER_HEIGHT }]}>
-          <OrdersHeader title="Live pickup status and recent history." />
+          <OrdersHeader title="Orders" />
         </View>
 
         {showLoadingOverlay ? (
@@ -603,10 +630,16 @@ export default function OrdersScreen() {
     <View style={styles.screenShell}>
       <ScreenScroll
         bottomInset={contentBottomInset}
-        refreshing={ordersQuery.isRefetching || loyaltyLedgerQuery.isRefetching}
+        refreshing={isManualRefresh}
         onRefresh={refreshOrders}
         contentContainerStyle={[styles.screenContentNoTopPadding, { paddingTop: headerOffset }]}
       >
+        {showDevConfirmationPreview ? (
+          <View style={styles.devPreviewWrap}>
+            <Button label="Preview Confirmation" variant="secondary" onPress={() => router.push("/checkout-success")} />
+          </View>
+        ) : null}
+
         {activeOrder ? (
           <View style={styles.sectionBlock}>
             <ActiveOrderPill>
@@ -729,6 +762,13 @@ const styles = StyleSheet.create({
   },
   screenContentNoTopPadding: {
     paddingTop: 0
+  },
+  signedOutScrollContent: {
+    flexGrow: 1
+  },
+  devPreviewWrap: {
+    marginTop: 18,
+    alignSelf: "flex-start"
   },
   sectionBlock: {
     marginTop: 28
@@ -936,9 +976,12 @@ const styles = StyleSheet.create({
     marginTop: 22,
     alignSelf: "flex-start"
   },
-  supportPanel: {
-    marginTop: 18,
-    paddingTop: 18
+  signedOutState: {
+    flex: 1,
+    justifyContent: "flex-start",
+    alignItems: "center",
+    paddingTop: 20,
+    paddingBottom: 24
   },
   stateTitle: {
     fontSize: 28,
@@ -948,16 +991,46 @@ const styles = StyleSheet.create({
     fontFamily: uiTypography.displayFamily,
     fontWeight: "700"
   },
-  stateBody: {
+  signedOutBody: {
     marginTop: 10,
-    maxWidth: 520,
+    maxWidth: 560,
     fontSize: 15,
     lineHeight: 24,
-    color: uiPalette.textSecondary
+    color: uiPalette.textSecondary,
+    textAlign: "center"
+  },
+  signedOutFeatureList: {
+    width: "100%",
+    maxWidth: 560,
+    marginTop: 28,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: uiPalette.border
+  },
+  signedOutFeatureRow: {
+    paddingVertical: 16,
+    gap: 4
+  },
+  signedOutFeatureDivider: {
+    height: 1,
+    backgroundColor: uiPalette.border
+  },
+  signedOutFeatureLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    color: uiPalette.textMuted,
+    fontWeight: "700"
+  },
+  signedOutFeatureValue: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: uiPalette.text
   },
   authButton: {
-    marginTop: 18,
-    alignSelf: "flex-start"
+    marginTop: 26,
+    alignSelf: "center"
   },
   sectionMessage: {
     marginTop: 18,

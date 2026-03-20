@@ -63,7 +63,14 @@ export default function RootLayout() {
                         contentStyle: { backgroundColor: "transparent" }
                       }}
                     />
-                    <Stack.Screen name="checkout-success" />
+                    <Stack.Screen
+                      name="checkout-success"
+                      options={{
+                        presentation: "modal",
+                        animation: "slide_from_bottom",
+                        contentStyle: { backgroundColor: uiPalette.surfaceStrong }
+                      }}
+                    />
                     <Stack.Screen name="checkout-failure" />
                     <Stack.Screen name="refunds/[orderId]" />
                   </Stack>

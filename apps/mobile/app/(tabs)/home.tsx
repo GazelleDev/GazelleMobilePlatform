@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import Animated, { Extrapolation, interpolate, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -48,6 +48,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const storeConfigQuery = useStoreConfigQuery();
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
   const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const scrollY = useSharedValue(0);
@@ -160,6 +161,15 @@ export default function HomeScreen() {
     [snapHeader]
   );
 
+  const handleRefresh = useCallback(() => {
+    if (isManualRefresh) return;
+
+    setIsManualRefresh(true);
+    void storeConfigQuery.refetch().finally(() => {
+      setIsManualRefresh(false);
+    });
+  }, [isManualRefresh, storeConfigQuery]);
+
   return (
     <View style={styles.screen}>
       <ScreenBackdrop />
@@ -173,8 +183,8 @@ export default function HomeScreen() {
         scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
-            refreshing={storeConfigQuery.isRefetching}
-            onRefresh={() => void storeConfigQuery.refetch()}
+            refreshing={isManualRefresh}
+            onRefresh={handleRefresh}
             tintColor={uiPalette.primary}
             colors={[uiPalette.primary]}
             progressBackgroundColor={uiPalette.surfaceStrong}

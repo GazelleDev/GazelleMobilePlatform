@@ -267,6 +267,7 @@ export default function MenuScreen() {
   const [loadedImageIds, setLoadedImageIds] = useState<Set<string>>(() => new Set());
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(true);
   const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
 
   const sections = useMemo(() => buildSections(menu?.categories ?? []), [menu?.categories]);
   const menuItems = useMemo(() => menu?.categories.flatMap((category) => category.items) ?? [], [menu?.categories]);
@@ -400,6 +401,15 @@ export default function MenuScreen() {
     [snapHeader]
   );
 
+  const handleRefresh = useCallback(() => {
+    if (isManualRefresh) return;
+
+    setIsManualRefresh(true);
+    void menuQuery.refetch().finally(() => {
+      setIsManualRefresh(false);
+    });
+  }, [isManualRefresh, menuQuery]);
+
   return (
     <View style={styles.screen}>
       <ScreenBackdrop />
@@ -413,8 +423,8 @@ export default function MenuScreen() {
         scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
-            refreshing={menuQuery.isRefetching}
-            onRefresh={() => void menuQuery.refetch()}
+            refreshing={isManualRefresh}
+            onRefresh={handleRefresh}
             tintColor={uiPalette.primary}
             colors={[uiPalette.primary]}
             progressBackgroundColor={uiPalette.surfaceStrong}

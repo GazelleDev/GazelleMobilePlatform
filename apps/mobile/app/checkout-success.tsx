@@ -1,171 +1,221 @@
-import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useEffect } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { useCheckoutFlow } from "../src/orders/flow";
-import { formatOrderDateTime, formatOrderStatus } from "../src/orders/history";
-import { Button, Card, GlassCard, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../src/ui/system";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { GlassActionPill } from "../src/cart/GlassActionPill";
+import { formatUsd } from "../src/menu/catalog";
+import { useCheckoutFlow, type CheckoutConfirmation } from "../src/orders/flow";
+import { formatOrderStatus } from "../src/orders/history";
+import { uiPalette, uiTypography } from "../src/ui/system";
 
-function MetricTile({
+const DEV_PREVIEW_CONFIRMATION: CheckoutConfirmation = {
+  orderId: "dev-order-confirmation-preview",
+  pickupCode: "47311C",
+  status: "PAID",
+  total: { amountCents: 795, currency: "USD" },
+  occurredAt: "2026-03-20T09:15:00.000Z"
+};
+
+function SummaryRow({
   label,
-  value
+  value,
+  emphasized = false
 }: {
   label: string;
   value: string;
+  emphasized?: boolean;
 }) {
   return (
-    <View style={styles.metricTile}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <Text style={styles.metricValue}>{value}</Text>
+    <View style={styles.summaryRow}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={[styles.summaryValue, emphasized ? styles.summaryValueStrong : null]}>{value}</Text>
     </View>
   );
 }
 
 export default function CheckoutSuccessScreen() {
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { confirmation, clearConfirmation } = useCheckoutFlow();
+  const resolvedConfirmation = confirmation ?? (__DEV__ ? DEV_PREVIEW_CONFIRMATION : null);
 
-  if (!confirmation) {
-    return (
-      <ScreenScroll>
-        <TitleBlock title="Order Confirmed" subtitle="Your last checkout finished, but this screen no longer has the confirmation payload in memory." />
-        <Card style={{ marginTop: 16 }}>
-          <Text style={styles.bodyText}>You can still review the latest order from the Orders tab.</Text>
-          <Button
-            label="Go to Orders"
-            onPress={() => router.replace("/(tabs)/orders")}
-            style={{ marginTop: 14, alignSelf: "flex-start" }}
-          />
-        </Card>
-      </ScreenScroll>
-    );
+  useEffect(() => {
+    return () => {
+      clearConfirmation();
+    };
+  }, [clearConfirmation]);
+
+  function goToOrders() {
+    clearConfirmation();
+    router.dismissTo("/(tabs)/orders");
+  }
+
+  function goToMenu() {
+    clearConfirmation();
+    router.dismissTo("/(tabs)/menu");
   }
 
   return (
-    <ScreenScroll>
-      <TitleBlock title="Order Confirmed" subtitle="Payment completed successfully and the order is now in your live timeline." />
+    <View style={styles.screen}>
+      <View style={styles.content}>
+        <View style={styles.mainContent}>
+          {resolvedConfirmation ? (
+            <>
+              <View style={styles.heroBlock}>
+                <Text style={styles.title}>Order Confirmed</Text>
+                <Text style={styles.body}>Your pickup code is below. Track live progress anytime from Orders.</Text>
+              </View>
 
-      <GlassCard style={{ marginTop: 16 }}>
-        <SectionLabel label="Pickup Ready" />
-        <View style={styles.heroHeader}>
-          <View style={styles.heroIconWrap}>
-            <Ionicons name="checkmark-outline" size={22} color={uiPalette.primaryText} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.heroTitle}>Your order is in.</Text>
-            <Text style={styles.heroCopy}>
-              Save the pickup code below, then follow progress from Orders.
-            </Text>
-          </View>
+              <View style={styles.pickupCodeStage}>
+                <View style={styles.pickupCodeBlock}>
+                  <Text style={styles.pickupCodeLabel}>Pickup code</Text>
+                  <Text style={styles.pickupCodeValue}>{resolvedConfirmation.pickupCode}</Text>
+                  <Text style={styles.pickupCodeFootnote}>Show this at the counter when your order is ready.</Text>
+                </View>
+              </View>
+
+              <View style={styles.summarySection}>
+                <SummaryRow label="Status" value={formatOrderStatus(resolvedConfirmation.status)} />
+                <SummaryRow label="Total" value={formatUsd(resolvedConfirmation.total.amountCents)} emphasized />
+              </View>
+            </>
+          ) : (
+            <View style={styles.heroBlockEmpty}>
+              <Text style={styles.title}>Confirmation unavailable.</Text>
+              <Text style={styles.body}>
+                This checkout finished, but the in-memory confirmation is no longer available. You can still review the latest order from Orders.
+              </Text>
+            </View>
+          )}
         </View>
 
-        <Text style={styles.pickupCodeLabel}>Pickup code</Text>
-        <Text style={styles.pickupCodeValue}>{confirmation.pickupCode}</Text>
-
-        <View style={styles.metricGrid}>
-          <MetricTile label="Status" value={formatOrderStatus(confirmation.status)} />
-          <MetricTile label="Total" value={`$${(confirmation.total.amountCents / 100).toFixed(2)}`} />
-          <MetricTile label="Updated" value={formatOrderDateTime(confirmation.occurredAt)} />
+        <View style={[styles.footerContent, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {resolvedConfirmation ? (
+            <>
+              <GlassActionPill label="Track Order" onPress={goToOrders} tone="dark" />
+              <GlassActionPill label="Back to Menu" onPress={goToMenu} />
+            </>
+          ) : (
+            <>
+              <GlassActionPill label="View Orders" onPress={goToOrders} tone="dark" />
+              <GlassActionPill label="Back to Menu" onPress={goToMenu} />
+            </>
+          )}
         </View>
-      </GlassCard>
-
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Next Step" />
-        <Text style={styles.bodyText}>
-          Orders will now show the live status of this pickup, while the cart stays clear for the next order.
-        </Text>
-        <Button
-          label="View Orders"
-          onPress={() => {
-            clearConfirmation();
-            router.replace("/(tabs)/orders");
-          }}
-          style={{ marginTop: 14 }}
-          left={<Ionicons name="receipt-outline" size={16} color={uiPalette.primaryText} />}
-        />
-        <Button
-          label="Back to Menu"
-          variant="ghost"
-          onPress={() => {
-            clearConfirmation();
-            router.replace("/(tabs)/menu");
-          }}
-          style={{ marginTop: 10 }}
-        />
-      </Card>
-    </ScreenScroll>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  heroHeader: {
-    marginTop: 8,
-    flexDirection: "row",
-    gap: 16,
-    alignItems: "flex-start"
+  screen: {
+    flex: 1,
+    backgroundColor: uiPalette.surfaceStrong
   },
-  heroIconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: uiPalette.primary
+  content: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 40,
+    justifyContent: "space-between"
   },
-  heroTitle: {
-    fontSize: 28,
-    fontWeight: "700",
+  mainContent: {
+    flex: 1
+  },
+  heroBlock: {
+    paddingBottom: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: uiPalette.border
+  },
+  heroBlockEmpty: {
+    paddingBottom: 0
+  },
+  title: {
+    fontSize: 19,
+    lineHeight: 24,
+    letterSpacing: 2,
+    textTransform: "uppercase",
     color: uiPalette.text,
-    letterSpacing: -0.8
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
   },
-  heroCopy: {
+  body: {
     marginTop: 8,
-    fontSize: 14,
+    maxWidth: 520,
+    fontSize: 15,
     lineHeight: 22,
     color: uiPalette.textSecondary
   },
+  pickupCodeStage: {
+    flex: 1,
+    justifyContent: "center"
+  },
+  pickupCodeBlock: {
+    paddingTop: 18,
+    paddingBottom: 18,
+    alignItems: "center",
+    justifyContent: "center"
+  },
   pickupCodeLabel: {
-    marginTop: 18,
-    fontSize: 12,
-    fontWeight: "700",
-    color: uiPalette.textMuted,
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 1.1,
     textTransform: "uppercase",
-    letterSpacing: 1
+    color: uiPalette.textMuted,
+    fontWeight: "700",
+    textAlign: "center"
   },
   pickupCodeValue: {
+    marginTop: 8,
+    fontSize: 34,
+    lineHeight: 40,
+    letterSpacing: 1.2,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700",
+    textAlign: "center"
+  },
+  pickupCodeFootnote: {
     marginTop: 6,
-    fontSize: 32,
-    fontWeight: "700",
-    letterSpacing: 2.4,
-    color: uiPalette.walnut
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.textSecondary,
+    textAlign: "center"
   },
-  metricGrid: {
-    marginTop: 18,
-    gap: 10
+  summarySection: {
+    paddingTop: 2
   },
-  metricTile: {
-    borderRadius: 18,
-    padding: 14,
-    backgroundColor: "rgba(255, 248, 240, 0.76)",
-    borderWidth: 1,
-    borderColor: uiPalette.border
+  summaryRow: {
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: uiPalette.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16
   },
-  metricLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: uiPalette.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.8
-  },
-  metricValue: {
-    marginTop: 8,
-    fontSize: 16,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-  bodyText: {
-    marginTop: 8,
-    fontSize: 13,
+  summaryLabel: {
+    fontSize: 14,
     lineHeight: 20,
     color: uiPalette.textSecondary
+  },
+  summaryValue: {
+    flexShrink: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.text,
+    textAlign: "right"
+  },
+  summaryValueStrong: {
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600",
+    letterSpacing: 1,
+    textTransform: "uppercase"
+  },
+  footerContent: {
+    marginTop: "auto",
+    paddingTop: 18,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: uiPalette.border,
+    gap: 12
   }
 });

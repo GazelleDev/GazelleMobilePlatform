@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useAuthSession } from "../../src/auth/session";
 import { useLoyaltyLedgerQuery, useOrderHistoryQuery } from "../../src/account/data";
@@ -20,7 +21,7 @@ export default function RefundDetailScreen() {
   const { isAuthenticated } = useAuthSession();
   const ordersQuery = useOrderHistoryQuery(isAuthenticated);
   const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
-  const isPullRefreshing = ordersQuery.isRefetching || loyaltyLedgerQuery.isRefetching;
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
 
   const order = (ordersQuery.data ?? []).find((entry) => entry.id === orderId);
   const refundEntries = orderId ? findRefundEntriesForOrder(orderId, loyaltyLedgerQuery.data ?? []) : [];
@@ -52,8 +53,12 @@ export default function RefundDetailScreen() {
     <ScreenScroll
       refreshing={isPullRefreshing}
       onRefresh={() => {
-        void ordersQuery.refetch();
-        void loyaltyLedgerQuery.refetch();
+        if (isPullRefreshing) return;
+
+        setIsPullRefreshing(true);
+        void Promise.allSettled([ordersQuery.refetch(), loyaltyLedgerQuery.refetch()]).finally(() => {
+          setIsPullRefreshing(false);
+        });
       }}
     >
       <TitleBlock title="Refund Details" subtitle="Refund and cancellation context stays attached to the original order instead of disappearing into support email." />

@@ -40,6 +40,7 @@ export default function AccountScreen() {
   const showNotificationTesting = __DEV__;
   const [statusMessage, setStatusMessage] = useState("");
   const [signOutPending, setSignOutPending] = useState(false);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
 
   const loyaltyBalance = loyaltyBalanceQuery.data;
   const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
@@ -54,8 +55,12 @@ export default function AccountScreen() {
   }
 
   function handleRefresh() {
-    void loyaltyBalanceQuery.refetch();
-    void loyaltyLedgerQuery.refetch();
+    if (isManualRefresh) return;
+
+    setIsManualRefresh(true);
+    void Promise.allSettled([loyaltyBalanceQuery.refetch(), loyaltyLedgerQuery.refetch()]).finally(() => {
+      setIsManualRefresh(false);
+    });
   }
 
   function handleSignIn() {
@@ -110,7 +115,7 @@ export default function AccountScreen() {
   return (
     <ScreenScroll
       bottomInset={156}
-      refreshing={loyaltyBalanceQuery.isRefetching || loyaltyLedgerQuery.isRefetching}
+      refreshing={isManualRefresh}
       onRefresh={handleRefresh}
     >
       <TitleBlock
