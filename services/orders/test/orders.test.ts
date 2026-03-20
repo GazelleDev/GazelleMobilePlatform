@@ -29,6 +29,39 @@ function paymentsResponse(payload: unknown, status = 200) {
   });
 }
 
+async function createQuotedOrder(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  options: {
+    userId?: string;
+    payload?: typeof sampleQuotePayload;
+  } = {}
+) {
+  const payload = options.payload ?? sampleQuotePayload;
+  const quoteResponse = await app.inject({
+    method: "POST",
+    url: "/v1/orders/quote",
+    payload
+  });
+  expect(quoteResponse.statusCode).toBe(200);
+  const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/orders",
+    headers: options.userId ? { "x-user-id": options.userId } : undefined,
+    payload: {
+      quoteId: quote.quoteId,
+      quoteHash: quote.quoteHash
+    }
+  });
+  expect(createResponse.statusCode).toBe(200);
+
+  return {
+    quote,
+    order: orderSchema.parse(createResponse.json())
+  };
+}
+
 describe("orders service", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -264,6 +297,8 @@ describe("orders service", () => {
     expect(quoteResponse.statusCode).toBe(200);
     const quote = orderQuoteSchema.parse(quoteResponse.json());
     expect(quote.total.amountCents).toBeGreaterThan(0);
+    expect(quote.tax.amountCents).toBe(99);
+    expect(quote.total.amountCents).toBe(1749);
     expect(quote.items[0]).toMatchObject({
       itemId: "latte",
       itemName: "Honey Oat Latte",
@@ -302,6 +337,63 @@ describe("orders service", () => {
     expect(listResponse.statusCode).toBe(200);
     const listed = listResponse.json() as Array<{ id: string }>;
     expect(listed.some((entry) => entry.id === order.id)).toBe(true);
+
+    await app.close();
+  });
+
+  it("scopes order history to the provided x-user-id header", async () => {
+    const app = await buildApp();
+    const firstUserId = "123e4567-e89b-12d3-a456-426614174001";
+    const secondUserId = "123e4567-e89b-12d3-a456-426614174002";
+
+    const firstOrder = await createQuotedOrder(app, { userId: firstUserId });
+    const secondOrder = await createQuotedOrder(app, { userId: secondUserId });
+
+    const firstUserListResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders",
+      headers: {
+        "x-user-id": firstUserId
+      }
+    });
+    const secondUserListResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders",
+      headers: {
+        "x-user-id": secondUserId
+      }
+    });
+
+    expect(firstUserListResponse.statusCode).toBe(200);
+    expect(secondUserListResponse.statusCode).toBe(200);
+    expect(firstUserListResponse.json()).toEqual([expect.objectContaining({ id: firstOrder.order.id })]);
+    expect(secondUserListResponse.json()).toEqual([expect.objectContaining({ id: secondOrder.order.id })]);
+
+    await app.close();
+  });
+
+  it("preserves unscoped order history when x-user-id is not provided", async () => {
+    const app = await buildApp();
+
+    const firstOrder = await createQuotedOrder(app, {
+      userId: "123e4567-e89b-12d3-a456-426614174011"
+    });
+    const secondOrder = await createQuotedOrder(app, {
+      userId: "123e4567-e89b-12d3-a456-426614174012"
+    });
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders"
+    });
+
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: firstOrder.order.id }),
+        expect.objectContaining({ id: secondOrder.order.id })
+      ])
+    );
 
     await app.close();
   });

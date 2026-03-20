@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appleExchangeRequestSchema, passkeyVerifyRequestSchema } from "../src";
+import { appleExchangeRequestSchema, magicLinkRequestSchema, passkeyVerifyRequestSchema } from "../src";
 
 describe("contracts-auth", () => {
   it("validates apple exchange payload", () => {
@@ -10,6 +10,14 @@ describe("contracts-auth", () => {
     });
 
     expect(data.authorizationCode).toBe("code");
+  });
+
+  it("accepts legacy apple exchange payloads that only provide nonce", () => {
+    const data = appleExchangeRequestSchema.parse({
+      nonce: "legacy-nonce"
+    });
+
+    expect(data.nonce).toBe("legacy-nonce");
   });
 
   it("accepts passkey register verify payload", () => {
@@ -53,5 +61,13 @@ describe("contracts-auth", () => {
         }
       })
     ).toThrowError();
+  });
+
+  it("trims magic-link email input before validation", () => {
+    const payload = magicLinkRequestSchema.parse({
+      email: " owner@gazellecoffee.com "
+    });
+
+    expect(payload.email).toBe("owner@gazellecoffee.com");
   });
 });

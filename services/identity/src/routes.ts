@@ -20,6 +20,7 @@ import {
 } from "@gazelle/contracts-auth";
 import { apiErrorSchema, authSessionSchema } from "@gazelle/contracts-core";
 import { createIdentityRepository, type IdentityRepository } from "./repository.js";
+import { createMailSender, type MailSender } from "./mail.js";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
@@ -62,6 +63,30 @@ function toPositiveInteger(value: string | undefined, fallback: number) {
   }
 
   return Math.floor(parsed);
+}
+
+function extractAppleTokenClaims(identityToken: string): { sub?: string; email?: string } {
+  try {
+    const parts = identityToken.split(".");
+    if (parts.length !== 3 || !parts[1]) {
+      return {};
+    }
+
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
+
+    return {
+      sub: typeof payload.sub === "string" ? payload.sub : undefined,
+      email: typeof payload.email === "string" ? payload.email : undefined
+    };
+  } catch {
+    return {};
+  }
+}
+
+function buildMagicLinkUrl(baseUrl: string, token: string) {
+  const url = new URL("/auth/magic-link", baseUrl);
+  url.searchParams.set("token", token);
+  return url.toString();
 }
 
 function loadPasskeyConfig() {
@@ -142,10 +167,19 @@ function buildApiError(requestId: string, code: string, message: string) {
   });
 }
 
-export async function registerRoutes(app: FastifyInstance) {
-  const repository = await createIdentityRepository(app.log);
+export type RegisterRoutesOptions = {
+  mailSender?: MailSender;
+  repository?: IdentityRepository;
+};
+
+export async function registerRoutes(app: FastifyInstance, options: RegisterRoutesOptions = {}) {
+  const repository = options.repository ?? (await createIdentityRepository(app.log));
+  const mailSender = options.mailSender ?? createMailSender({ logger: app.log });
   const passkeyConfig = loadPasskeyConfig();
   const rateLimitWindowMs = toPositiveInteger(process.env.IDENTITY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
+  const magicLinkExpiryMinutes = toPositiveInteger(process.env.MAGIC_LINK_EXPIRY_MINUTES, 15);
+  const magicLinkBaseUrl = process.env.MAGIC_LINK_BASE_URL?.trim() || "http://localhost:8080";
+  const appleSignInVerificationEnabled = process.env.APPLE_SIGN_IN_VERIFY === "true";
   const authWriteRateLimit = {
     max: toPositiveInteger(process.env.IDENTITY_RATE_LIMIT_AUTH_WRITE_MAX, defaultAuthWriteRateLimitMax),
     timeWindow: rateLimitWindowMs
@@ -178,8 +212,53 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(authWriteRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
       const input = appleExchangeRequestSchema.parse(request.body);
+
+      if (appleSignInVerificationEnabled) {
+        // TODO(identity): Implement full Apple JWKS signature verification when APPLE_SIGN_IN_VERIFY=true.
+        app.log.warn(
+          {
+            requestId: request.id
+          },
+          "Apple Sign-In verification is enabled, but full JWT verification has not been implemented yet"
+        );
+        return reply.status(503).send(
+          buildApiError(
+            request.id,
+            "APPLE_VERIFICATION_UNAVAILABLE",
+            "Apple Sign-In verification is enabled but not yet implemented"
+          )
+        );
+      }
+
+      if (input.identityToken) {
+        const claims = extractAppleTokenClaims(input.identityToken);
+        if (claims.sub) {
+          const userId = await repository.findOrCreateUserByAppleSub(claims.sub, claims.email);
+          return issueSession({
+            repository,
+            seed: input.nonce,
+            userId,
+            authMethod: "apple"
+          });
+        }
+
+        app.log.warn(
+          {
+            requestId: request.id
+          },
+          "Apple Sign-In token was present but did not contain a usable sub claim; using compatibility fallback"
+        );
+      } else {
+        app.log.warn(
+          {
+            requestId: request.id
+          },
+          "Apple Sign-In request omitted identityToken; using compatibility fallback"
+        );
+      }
+
       return issueSession({
         repository,
         seed: input.nonce,
@@ -460,9 +539,34 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(authWriteRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
       const input = magicLinkRequestSchema.parse(request.body);
-      app.log.info({ email: input.email }, "magic link requested");
+      const token = randomUUID();
+      const expiresAt = new Date(Date.now() + magicLinkExpiryMinutes * 60 * 1000).toISOString();
+      const magicLinkUrl = buildMagicLinkUrl(magicLinkBaseUrl, token);
+
+      await repository.saveMagicLink({
+        token,
+        email: input.email,
+        expiresAt
+      });
+
+      try {
+        await mailSender.sendMagicLink({
+          to: input.email,
+          magicLinkUrl
+        });
+      } catch (error) {
+        app.log.error({ error, email: input.email, requestId: request.id }, "magic link delivery failed");
+        return reply.status(503).send(
+          buildApiError(
+            request.id,
+            "MAGIC_LINK_DELIVERY_FAILED",
+            "Unable to deliver magic link at this time"
+          )
+        );
+      }
+
       return { success: true as const };
     }
   );
@@ -472,11 +576,29 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(authWriteRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
       const input = magicLinkVerifySchema.parse(request.body);
+
+      const magicLink = await repository.getMagicLink(input.token);
+      if (!magicLink) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_MAGIC_LINK", "Magic link is invalid or unavailable"));
+      }
+
+      if (magicLink.consumedAt || Date.parse(magicLink.expiresAt) <= Date.now()) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "MAGIC_LINK_EXPIRED", "Magic link has expired or was already used"));
+      }
+
+      const userId = magicLink.userId ?? (await repository.findOrCreateUserByEmail(magicLink.email));
+      await repository.consumeMagicLink(input.token, userId);
+
       return issueSession({
         repository,
         seed: input.token,
+        userId,
         authMethod: "magic-link"
       });
     }

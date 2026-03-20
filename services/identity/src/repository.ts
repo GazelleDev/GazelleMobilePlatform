@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { authSessionSchema } from "@gazelle/contracts-core";
 import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
@@ -39,6 +40,14 @@ type PersistedPasskeyCredentialRow = {
   backed_up: boolean;
 };
 
+type PersistedMagicLinkRow = {
+  token: string;
+  email: string;
+  user_id: string | null;
+  expires_at: string | Date;
+  consumed_at: string | Date | null;
+};
+
 export type PasskeyChallengeRecord = {
   challenge: string;
   flow: "register" | "auth";
@@ -60,12 +69,28 @@ export type PasskeyCredentialRecord = {
   backedUp: boolean;
 };
 
+export type IdentityUserRecord = {
+  userId: string;
+  appleSub?: string;
+  email?: string;
+};
+
+export type MagicLinkRecord = {
+  token: string;
+  email: string;
+  userId: string | null;
+  expiresAt: string;
+  consumedAt: string | null;
+};
+
 export type IdentityRepository = {
   backend: "memory" | "postgres";
   saveSession(
     session: StoredSession,
     authMethod: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh"
   ): Promise<void>;
+  findOrCreateUserByAppleSub(appleSub: string, email?: string): Promise<string>;
+  findOrCreateUserByEmail(email: string): Promise<string>;
   rotateRefreshSession(
     refreshToken: string,
     createNextSession: (userId: string) => StoredSession,
@@ -81,6 +106,9 @@ export type IdentityRepository = {
   getPasskeyCredential(credentialId: string): Promise<PasskeyCredentialRecord | undefined>;
   savePasskeyCredential(input: PasskeyCredentialRecord): Promise<void>;
   updatePasskeyCredentialCounter(credentialId: string, counter: number): Promise<void>;
+  saveMagicLink(input: { token: string; email: string; expiresAt: string }): Promise<void>;
+  getMagicLink(token: string): Promise<MagicLinkRecord | undefined>;
+  consumeMagicLink(token: string, userId: string): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -112,6 +140,10 @@ function toPublicSession(session: StoredSession): AuthSession {
   return authSessionSchema.parse(session);
 }
 
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
 function toPasskeyChallengeRecord(row: PersistedPasskeyChallengeRow): PasskeyChallengeRecord {
   return {
     challenge: row.challenge,
@@ -140,17 +172,71 @@ function toPasskeyCredentialRecord(row: PersistedPasskeyCredentialRow): PasskeyC
   };
 }
 
-function createInMemoryRepository(): IdentityRepository {
+function toMagicLinkRecord(row: PersistedMagicLinkRow): MagicLinkRecord {
+  return {
+    token: row.token,
+    email: row.email,
+    userId: row.user_id ?? null,
+    expiresAt: parseIsoDate(row.expires_at),
+    consumedAt: row.consumed_at ? parseIsoDate(row.consumed_at) : null
+  };
+}
+
+export function createInMemoryIdentityRepository(): IdentityRepository {
   const sessionsByAccessToken = new Map<string, { session: StoredSession; revokedAt?: string }>();
   const accessTokenByRefreshToken = new Map<string, string>();
   const passkeyChallengesByFlow = new Map<"register" | "auth", PasskeyChallengeRecord[]>();
   const passkeyCredentialsById = new Map<string, PasskeyCredentialRecord>();
+  const usersById = new Map<string, IdentityUserRecord>();
+  const userIdByAppleSub = new Map<string, string>();
+  const userIdByEmail = new Map<string, string>();
+  const magicLinksByToken = new Map<string, MagicLinkRecord>();
 
   return {
     backend: "memory",
     async saveSession(session) {
       sessionsByAccessToken.set(session.accessToken, { session });
       accessTokenByRefreshToken.set(session.refreshToken, session.accessToken);
+    },
+    async findOrCreateUserByAppleSub(appleSub, email) {
+      const normalizedEmail = email ? normalizeEmail(email) : undefined;
+      const existingUserId =
+        userIdByAppleSub.get(appleSub) ?? (normalizedEmail ? userIdByEmail.get(normalizedEmail) : undefined);
+      const userId = existingUserId ?? randomUUID();
+      const existingUser = usersById.get(userId);
+
+      usersById.set(userId, {
+        userId,
+        appleSub,
+        email: normalizedEmail ?? existingUser?.email
+      });
+      userIdByAppleSub.set(appleSub, userId);
+      if (normalizedEmail) {
+        userIdByEmail.set(normalizedEmail, userId);
+      }
+
+      return userId;
+    },
+    async findOrCreateUserByEmail(email) {
+      const normalizedEmail = normalizeEmail(email);
+      const existingUserId = userIdByEmail.get(normalizedEmail);
+      if (existingUserId) {
+        const existingUser = usersById.get(existingUserId);
+        usersById.set(existingUserId, {
+          userId: existingUserId,
+          appleSub: existingUser?.appleSub,
+          email: normalizedEmail
+        });
+        return existingUserId;
+      }
+
+      const userId = randomUUID();
+      usersById.set(userId, {
+        userId,
+        email: normalizedEmail
+      });
+      userIdByEmail.set(normalizedEmail, userId);
+      return userId;
     },
     async rotateRefreshSession(refreshToken, createNextSession) {
       const accessToken = accessTokenByRefreshToken.get(refreshToken);
@@ -256,6 +342,31 @@ function createInMemoryRepository(): IdentityRepository {
         counter
       });
     },
+    async saveMagicLink(input) {
+      magicLinksByToken.set(input.token, {
+        token: input.token,
+        email: normalizeEmail(input.email),
+        userId: null,
+        expiresAt: input.expiresAt,
+        consumedAt: null
+      });
+    },
+    async getMagicLink(token) {
+      const record = magicLinksByToken.get(token);
+      return record ? { ...record } : undefined;
+    },
+    async consumeMagicLink(token, userId) {
+      const record = magicLinksByToken.get(token);
+      if (!record) {
+        return;
+      }
+
+      magicLinksByToken.set(token, {
+        ...record,
+        userId,
+        consumedAt: new Date().toISOString()
+      });
+    },
     async close() {
       // no-op
     }
@@ -298,6 +409,175 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
           .where("access_token", "=", session.accessToken)
           .execute();
       }
+    },
+    async findOrCreateUserByAppleSub(appleSub, email) {
+      const normalizedEmail = email ? normalizeEmail(email) : undefined;
+      const now = new Date().toISOString();
+
+      return db.transaction().execute(async (trx) => {
+        const existingAppleRow = await trx
+          .selectFrom("identity_users")
+          .select(["user_id", "email"])
+          .where("apple_sub", "=", appleSub)
+          .executeTakeFirst();
+
+        if (existingAppleRow) {
+          if (normalizedEmail) {
+            const existingEmailRow = await trx
+              .selectFrom("identity_users")
+              .select(["user_id"])
+              .where("email", "=", normalizedEmail)
+              .executeTakeFirst();
+
+            if (!existingEmailRow || existingEmailRow.user_id === existingAppleRow.user_id) {
+              await trx
+                .updateTable("identity_users")
+                .set({
+                  email: normalizedEmail,
+                  updated_at: now
+                })
+                .where("user_id", "=", existingAppleRow.user_id)
+                .execute();
+            }
+          } else {
+            await trx
+              .updateTable("identity_users")
+              .set({
+                updated_at: now
+              })
+              .where("user_id", "=", existingAppleRow.user_id)
+              .execute();
+          }
+
+          return existingAppleRow.user_id;
+        }
+
+        if (normalizedEmail) {
+          const existingEmailRow = await trx
+            .selectFrom("identity_users")
+            .select(["user_id"])
+            .where("email", "=", normalizedEmail)
+            .executeTakeFirst();
+
+          if (existingEmailRow) {
+            await trx
+              .updateTable("identity_users")
+              .set({
+                apple_sub: appleSub,
+                updated_at: now
+              })
+              .where("user_id", "=", existingEmailRow.user_id)
+              .execute();
+
+            return existingEmailRow.user_id;
+          }
+        }
+
+        const userId = randomUUID();
+
+        try {
+          await trx
+            .insertInto("identity_users")
+            .values({
+              user_id: userId,
+              apple_sub: appleSub,
+              email: normalizedEmail ?? null
+            })
+            .execute();
+          return userId;
+        } catch {
+          const concurrentAppleRow = await trx
+            .selectFrom("identity_users")
+            .select(["user_id"])
+            .where("apple_sub", "=", appleSub)
+            .executeTakeFirst();
+
+          if (concurrentAppleRow) {
+            return concurrentAppleRow.user_id;
+          }
+
+          if (normalizedEmail) {
+            const concurrentEmailRow = await trx
+              .selectFrom("identity_users")
+              .select(["user_id"])
+              .where("email", "=", normalizedEmail)
+              .executeTakeFirst();
+
+            if (concurrentEmailRow) {
+              await trx
+                .updateTable("identity_users")
+                .set({
+                  apple_sub: appleSub,
+                  updated_at: now
+                })
+                .where("user_id", "=", concurrentEmailRow.user_id)
+                .execute();
+
+              return concurrentEmailRow.user_id;
+            }
+          }
+
+          throw new Error("Failed to resolve identity user for Apple Sign-In");
+        }
+      });
+    },
+    async findOrCreateUserByEmail(email) {
+      const normalizedEmail = normalizeEmail(email);
+      const now = new Date().toISOString();
+
+      return db.transaction().execute(async (trx) => {
+        const existingRow = await trx
+          .selectFrom("identity_users")
+          .select(["user_id"])
+          .where("email", "=", normalizedEmail)
+          .executeTakeFirst();
+
+        if (existingRow) {
+          await trx
+            .updateTable("identity_users")
+            .set({
+              updated_at: now
+            })
+            .where("user_id", "=", existingRow.user_id)
+            .execute();
+
+          return existingRow.user_id;
+        }
+
+        const userId = randomUUID();
+
+        try {
+          await trx
+            .insertInto("identity_users")
+            .values({
+              user_id: userId,
+              apple_sub: null,
+              email: normalizedEmail
+            })
+            .execute();
+          return userId;
+        } catch {
+          const concurrentRow = await trx
+            .selectFrom("identity_users")
+            .select(["user_id"])
+            .where("email", "=", normalizedEmail)
+            .executeTakeFirst();
+
+          if (!concurrentRow) {
+            throw new Error("Failed to resolve identity user for email");
+          }
+
+          await trx
+            .updateTable("identity_users")
+            .set({
+              updated_at: now
+            })
+            .where("user_id", "=", concurrentRow.user_id)
+            .execute();
+
+          return concurrentRow.user_id;
+        }
+      });
     },
     async rotateRefreshSession(refreshToken, createNextSession, authMethod) {
       return db.transaction().execute(async (trx) => {
@@ -512,6 +792,41 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
         .where("credential_id", "=", credentialId)
         .execute();
     },
+    async saveMagicLink(input) {
+      await db
+        .insertInto("identity_magic_links")
+        .values({
+          token: input.token,
+          email: normalizeEmail(input.email),
+          user_id: null,
+          expires_at: input.expiresAt,
+          consumed_at: null
+        })
+        .execute();
+    },
+    async getMagicLink(token) {
+      const row = await db
+        .selectFrom("identity_magic_links")
+        .selectAll()
+        .where("token", "=", token)
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      return toMagicLinkRecord(row as PersistedMagicLinkRow);
+    },
+    async consumeMagicLink(token, userId) {
+      await db
+        .updateTable("identity_magic_links")
+        .set({
+          user_id: userId,
+          consumed_at: new Date().toISOString()
+        })
+        .where("token", "=", token)
+        .execute();
+    },
     async close() {
       await db.destroy();
     }
@@ -522,7 +837,7 @@ export async function createIdentityRepository(logger: FastifyBaseLogger): Promi
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
     logger.info({ backend: "memory" }, "identity persistence backend selected");
-    return createInMemoryRepository();
+    return createInMemoryIdentityRepository();
   }
 
   try {
@@ -531,6 +846,6 @@ export async function createIdentityRepository(logger: FastifyBaseLogger): Promi
     return repository;
   } catch (error) {
     logger.error({ error }, "failed to initialize postgres persistence; falling back to in-memory");
-    return createInMemoryRepository();
+    return createInMemoryIdentityRepository();
   }
 }

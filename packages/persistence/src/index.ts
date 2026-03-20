@@ -32,6 +32,16 @@ export interface PaymentsRefundTable {
   created_at: Generated<string>;
 }
 
+export interface PaymentsWebhookDeduplicationTable {
+  event_key: string;
+  kind: "CHARGE" | "REFUND";
+  order_id: string;
+  payment_id: string;
+  status: string;
+  order_applied: boolean;
+  created_at: Generated<string>;
+}
+
 export interface LoyaltyBalanceTable {
   user_id: string;
   available_points: number;
@@ -86,6 +96,23 @@ export interface OrdersCreateIdempotencyTable {
 export interface OrdersPaymentIdempotencyTable {
   order_id: string;
   idempotency_key: string;
+  created_at: Generated<string>;
+}
+
+export interface IdentityUserTable {
+  user_id: string;
+  apple_sub: string | null;
+  email: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface IdentityMagicLinkTable {
+  token: string;
+  email: string;
+  user_id: string | null;
+  expires_at: string;
+  consumed_at: string | null;
   created_at: Generated<string>;
 }
 
@@ -209,6 +236,7 @@ export interface CatalogAppConfigTable {
 export interface PersistenceDatabase {
   payments_charges: PaymentsChargeTable;
   payments_refunds: PaymentsRefundTable;
+  payments_webhook_deduplication: PaymentsWebhookDeduplicationTable;
   loyalty_balances: LoyaltyBalanceTable;
   loyalty_ledger_entries: LoyaltyLedgerEntryTable;
   loyalty_idempotency_keys: LoyaltyIdempotencyKeyTable;
@@ -216,6 +244,8 @@ export interface PersistenceDatabase {
   orders: OrdersTable;
   orders_create_idempotency: OrdersCreateIdempotencyTable;
   orders_payment_idempotency: OrdersPaymentIdempotencyTable;
+  identity_users: IdentityUserTable;
+  identity_magic_links: IdentityMagicLinkTable;
   identity_sessions: IdentitySessionTable;
   identity_passkey_challenges: IdentityPasskeyChallengeTable;
   identity_passkey_credentials: IdentityPasskeyCredentialTable;
@@ -296,6 +326,18 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
   await sql`
     CREATE INDEX IF NOT EXISTS payments_refunds_order_created_at_idx
     ON payments_refunds (order_id, created_at DESC)
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS payments_webhook_deduplication (
+      event_key TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      order_id UUID NOT NULL,
+      payment_id UUID NOT NULL,
+      status TEXT NOT NULL,
+      order_applied BOOLEAN NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
   `.execute(trx);
 
   await sql`
@@ -380,6 +422,45 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (order_id, idempotency_key)
     )
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS identity_users (
+      user_id UUID PRIMARY KEY,
+      apple_sub TEXT UNIQUE,
+      email TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `.execute(trx);
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS identity_users_apple_sub_idx
+    ON identity_users (apple_sub)
+    WHERE apple_sub IS NOT NULL
+  `.execute(trx);
+
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS identity_users_email_unique_idx
+    ON identity_users (email)
+    WHERE email IS NOT NULL
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS identity_magic_links (
+      token TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      user_id UUID,
+      expires_at TIMESTAMPTZ NOT NULL,
+      consumed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `.execute(trx);
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS identity_magic_links_email_idx
+    ON identity_magic_links (email, created_at DESC)
+    WHERE consumed_at IS NULL
   `.execute(trx);
 
   await sql`

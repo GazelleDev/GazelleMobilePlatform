@@ -759,6 +759,37 @@ describe("gateway", () => {
     await app.close();
   });
 
+  it("derives authenticated user context for customer order routes and forwards x-user-id upstream", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/orders",
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const meCall = fetchMock.mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://identity.internal/v1/auth/me" && (init?.method ?? "GET") === "GET";
+    });
+    expect(meCall).toBeDefined();
+
+    const ordersCall = fetchMock.mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://orders.internal/v1/orders" && (init?.method ?? "GET") === "GET";
+    });
+    expect(ordersCall).toBeDefined();
+    if (ordersCall) {
+      const upstreamHeaders = new Headers((ordersCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-user-id")).toBe("123e4567-e89b-12d3-a456-426614174000");
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
+    }
+
+    await app.close();
+  });
+
   it("requires a valid staff token before proxying admin routes", async () => {
     const app = await buildApp();
     const response = await app.inject({
@@ -779,7 +810,10 @@ describe("gateway", () => {
     const ordersResponse = await app.inject({
       method: "GET",
       url: "/v1/admin/orders",
-      headers: staffHeaders
+      headers: {
+        ...staffHeaders,
+        "x-user-id": "123e4567-e89b-12d3-a456-426614174099"
+      }
     });
     expect(ordersResponse.statusCode).toBe(200);
     expect(ordersResponse.json()).toEqual(
@@ -810,6 +844,16 @@ describe("gateway", () => {
     expect(requestedUrls).toContain("http://orders.internal/v1/orders");
     expect(requestedUrls).toContain("http://catalog.internal/v1/catalog/admin/menu");
     expect(requestedUrls).toContain("http://catalog.internal/v1/catalog/admin/store/config");
+
+    const adminOrdersCall = fetchMock.mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://orders.internal/v1/orders" && (init?.method ?? "GET") === "GET";
+    });
+    expect(adminOrdersCall).toBeDefined();
+    if (adminOrdersCall) {
+      const upstreamHeaders = new Headers((adminOrdersCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-user-id")).toBeNull();
+    }
 
     await app.close();
   });

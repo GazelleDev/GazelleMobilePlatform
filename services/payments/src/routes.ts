@@ -7,6 +7,10 @@ import {
   ordersPaymentReconciliationResultSchema,
   ordersPaymentReconciliationSchema
 } from "@gazelle/contracts-orders";
+import {
+  paymentWebhookDispatchResultSchema,
+  type PaymentWebhookDispatchResult
+} from "./types.js";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
@@ -122,6 +126,16 @@ type PersistedRefundRow = {
   message: string | null;
 };
 
+type PersistedWebhookDedupRow = {
+  event_key: string;
+  kind: "CHARGE" | "REFUND";
+  order_id: string;
+  payment_id: string;
+  status: string;
+  order_applied: boolean;
+  created_at: string;
+};
+
 type PaymentsRepository = {
   backend: "memory" | "postgres";
   findChargeByIdempotency(orderId: string, idempotencyKey: string): Promise<ChargeResponse | undefined>;
@@ -153,6 +167,8 @@ type PaymentsRepository = {
     message?: string;
     occurredAt: string;
   }): Promise<RefundResponse | undefined>;
+  findWebhookResult(eventKey: string): Promise<PaymentWebhookDispatchResult | undefined>;
+  saveWebhookResult(eventKey: string, result: PaymentWebhookDispatchResult): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -192,6 +208,17 @@ function toRefundResponse(row: PersistedRefundRow): RefundResponse {
   });
 }
 
+function toWebhookDispatchResult(row: PersistedWebhookDedupRow): PaymentWebhookDispatchResult {
+  return paymentWebhookDispatchResultSchema.parse({
+    accepted: true,
+    kind: row.kind,
+    orderId: row.order_id,
+    paymentId: row.payment_id,
+    status: row.status,
+    orderApplied: row.order_applied
+  });
+}
+
 function createInMemoryRepository(): PaymentsRepository {
   const chargeResultsByIdempotency = new Map<string, ChargeResponse>();
   const chargeResultByOrderId = new Map<string, ChargeResponse>();
@@ -201,6 +228,7 @@ function createInMemoryRepository(): PaymentsRepository {
   const refundResultsByIdempotency = new Map<string, RefundResponse>();
   const refundResultByRefundId = new Map<string, RefundResponse>();
   const latestRefundIdByOrderPayment = new Map<string, string>();
+  const webhookResultsByEventKey = new Map<string, PaymentWebhookDispatchResult>();
 
   return {
     backend: "memory",
@@ -306,6 +334,12 @@ function createInMemoryRepository(): PaymentsRepository {
       });
       latestRefundIdByOrderPayment.set(`${next.orderId}:${next.paymentId}`, next.refundId);
       return next;
+    },
+    async findWebhookResult(eventKey) {
+      return webhookResultsByEventKey.get(eventKey);
+    },
+    async saveWebhookResult(eventKey, result) {
+      webhookResultsByEventKey.set(eventKey, result);
     },
     async close() {
       // no-op
@@ -503,6 +537,33 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
         .where("refund_id", "=", refundId)
         .executeTakeFirstOrThrow();
       return toRefundResponse(updated as PersistedRefundRow);
+    },
+    async findWebhookResult(eventKey) {
+      // TODO(payments): Remove this cast once @gazelle/persistence exposes the new dedup table
+      // through the workspace package boundary without requiring rebuilt declarations.
+      const dedupDb = db as any;
+      const row = await dedupDb
+        .selectFrom("payments_webhook_deduplication")
+        .selectAll()
+        .where("event_key", "=", eventKey)
+        .executeTakeFirst();
+
+      return row ? toWebhookDispatchResult(row as PersistedWebhookDedupRow) : undefined;
+    },
+    async saveWebhookResult(eventKey, result) {
+      const dedupDb = db as any;
+      await dedupDb
+        .insertInto("payments_webhook_deduplication")
+        .values({
+          event_key: eventKey,
+          kind: result.kind,
+          order_id: result.orderId,
+          payment_id: result.paymentId,
+          status: result.status,
+          order_applied: result.orderApplied
+        })
+        .onConflict((oc: any) => oc.column("event_key").doNothing())
+        .execute();
     },
     async close() {
       await db.destroy();
@@ -813,15 +874,6 @@ type CloverWebhookResolution = {
   currency?: "USD";
 };
 
-type PaymentWebhookDispatchResult = {
-  accepted: true;
-  kind: "CHARGE" | "REFUND";
-  orderId: string;
-  paymentId: string;
-  status: "SUCCEEDED" | "DECLINED" | "TIMEOUT" | "REFUNDED" | "REJECTED";
-  orderApplied: boolean;
-};
-
 function normalizeWebhookKind(rawKind: string | undefined) {
   if (!rawKind) {
     return "CHARGE" as const;
@@ -1123,8 +1175,9 @@ async function executeLiveCharge(params: {
   config: CloverProviderConfig;
   request: ChargeRequest;
   requestId: string;
+  logger: FastifyBaseLogger;
 }): Promise<{ response: ChargeResponse; providerPaymentId?: string }> {
-  const { config, request, requestId } = params;
+  const { config, request, requestId, logger } = params;
   if (!config.configured || !config.apiKey || !config.chargeEndpoint || !config.merchantId) {
     throw new Error(config.misconfigurationReason ?? "Clover provider is not configured");
   }
@@ -1156,6 +1209,15 @@ async function executeLiveCharge(params: {
 
     const tokenizeBody = parseJsonSafely(await tokenizeResponse.text());
     if (!tokenizeResponse.ok) {
+      logger.error(
+        {
+          orderId: request.orderId,
+          internalPaymentId,
+          tokenizeStatus: tokenizeResponse.status,
+          tokenizeBody
+        },
+        "Clover Apple Pay wallet tokenization failed"
+      );
       throw new Error(`Clover wallet tokenization failed with status ${tokenizeResponse.status}`);
     }
 
@@ -1171,8 +1233,25 @@ async function executeLiveCharge(params: {
     ]);
 
     if (!sourceToken) {
+      logger.error(
+        {
+          orderId: request.orderId,
+          internalPaymentId,
+          tokenizeStatus: tokenizeResponse.status,
+          tokenizeBody
+        },
+        "Clover Apple Pay wallet tokenization failed"
+      );
       throw new Error("Clover wallet tokenization did not return a source token");
     }
+
+    logger.info(
+      {
+        orderId: request.orderId,
+        internalPaymentId
+      },
+      "Clover Apple Pay wallet tokenization succeeded"
+    );
   }
 
   if (!sourceToken) {
@@ -1372,20 +1451,27 @@ export async function registerRoutes(app: FastifyInstance) {
     max: toPositiveInteger(process.env.PAYMENTS_RATE_LIMIT_WEBHOOK_MAX, defaultWebhookRateLimitMax),
     timeWindow: rateLimitWindowMs
   };
-  const webhookFinalizationCache = new Map<string, PaymentWebhookDispatchResult>();
 
   app.addHook("onClose", async () => {
     await repository.close();
   });
 
   app.get("/health", async () => ({ status: "ok", service: "payments" }));
-  app.get("/ready", async () => ({
-    status: "ready",
-    service: "payments",
-    persistence: repository.backend,
-    providerMode: cloverProvider.mode,
-    providerConfigured: cloverProvider.configured
-  }));
+  app.get("/ready", async (_request, reply) => {
+    const status = {
+      status: cloverProvider.configured || cloverProvider.mode === "simulated" ? "ready" : "degraded",
+      service: "payments",
+      persistence: repository.backend,
+      providerMode: cloverProvider.mode,
+      providerConfigured: cloverProvider.configured
+    } as const;
+
+    if (cloverProvider.mode === "live" && !cloverProvider.configured) {
+      return reply.status(503).send(status);
+    }
+
+    return status;
+  });
 
   app.post("/v1/payments/charges", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
     const input = chargeRequestSchema.parse(request.body);
@@ -1437,7 +1523,8 @@ export async function registerRoutes(app: FastifyInstance) {
       const result = await executeLiveCharge({
         config: cloverProvider,
         request: input,
-        requestId: request.id
+        requestId: request.id,
+        logger: request.log
       });
 
       return repository.saveCharge({
@@ -1606,7 +1693,7 @@ export async function registerRoutes(app: FastifyInstance) {
       paymentId,
       status: resolved.statusHint ?? chargeLookup.charge.status
     });
-    const cachedWebhookResult = webhookFinalizationCache.get(webhookEventKey);
+    const cachedWebhookResult = await repository.findWebhookResult(webhookEventKey);
     if (cachedWebhookResult) {
       return cachedWebhookResult;
     }
@@ -1672,7 +1759,7 @@ export async function registerRoutes(app: FastifyInstance) {
         status: reconciledCharge.status,
         orderApplied: dispatchResult.response.applied
       };
-      webhookFinalizationCache.set(webhookEventKey, response);
+      await repository.saveWebhookResult(webhookEventKey, response);
       return response;
     }
 
@@ -1737,7 +1824,7 @@ export async function registerRoutes(app: FastifyInstance) {
       status: refundStatus,
       orderApplied: dispatchResult.response.applied
     };
-    webhookFinalizationCache.set(webhookEventKey, response);
+    await repository.saveWebhookResult(webhookEventKey, response);
     return response;
   });
 

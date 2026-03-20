@@ -32,6 +32,8 @@ type PersistedQuoteRow = {
   quote_json: unknown;
 };
 
+const defaultTaxRateBasisPoints = 600;
+
 export type QuoteCatalogItem = {
   itemId: string;
   itemName: string;
@@ -46,6 +48,7 @@ export type OrdersRepository = {
   createOrder(input: { order: Order; quoteId: string; userId: string }): Promise<void>;
   getOrder(orderId: string): Promise<Order | undefined>;
   listOrders(): Promise<Order[]>;
+  listOrdersByUser(userId: string): Promise<Order[]>;
   getOrderForCreateIdempotency(quoteId: string, quoteHash: string): Promise<Order | undefined>;
   saveCreateOrderIdempotency(quoteId: string, quoteHash: string, orderId: string): Promise<void>;
   getPaymentOrderByIdempotency(orderId: string, idempotencyKey: string): Promise<Order | undefined>;
@@ -61,6 +64,7 @@ export type OrdersRepository = {
   getSuccessfulRefund(orderId: string): Promise<unknown | undefined>;
   updateOrder(orderId: string, order: Order): Promise<Order>;
   getCatalogItemsForQuote(locationId: string, itemIds: string[]): Promise<Map<string, QuoteCatalogItem>>;
+  getTaxRateBasisPoints(locationId: string): Promise<number>;
   close(): Promise<void>;
 };
 
@@ -213,6 +217,12 @@ function createInMemoryRepository(): OrdersRepository {
       const orders = [...ordersById.values()].map((entry) => entry.order);
       return sortOrdersDescendingByCreatedAt(orders);
     },
+    async listOrdersByUser(userId) {
+      const orders = [...ordersById.values()]
+        .filter((entry) => entry.userId === userId)
+        .map((entry) => entry.order);
+      return sortOrdersDescendingByCreatedAt(orders);
+    },
     async getOrderForCreateIdempotency(quoteId, quoteHash) {
       const orderId = createOrderIdempotency.get(`${quoteId}:${quoteHash}`);
       if (!orderId) {
@@ -313,13 +323,19 @@ function createInMemoryRepository(): OrdersRepository {
       }
       return items;
     },
+    async getTaxRateBasisPoints() {
+      return defaultTaxRateBasisPoints;
+    },
     async close() {
       // no-op
     }
   };
 }
 
-async function createPostgresRepository(connectionString: string): Promise<OrdersRepository> {
+async function createPostgresRepository(
+  connectionString: string,
+  logger: FastifyBaseLogger
+): Promise<OrdersRepository> {
   const db = createPostgresDb(connectionString);
   await ensurePersistenceTables(db);
 
@@ -399,6 +415,15 @@ async function createPostgresRepository(connectionString: string): Promise<Order
     },
     async listOrders() {
       const rows = await db.selectFrom("orders").selectAll().orderBy("created_at", "desc").execute();
+      return rows.map((row) => parseOrder((row as PersistedOrderRow).order_json));
+    },
+    async listOrdersByUser(userId) {
+      const rows = await db
+        .selectFrom("orders")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .orderBy("created_at", "desc")
+        .execute();
       return rows.map((row) => parseOrder((row as PersistedOrderRow).order_json));
     },
     async getOrderForCreateIdempotency(quoteId, quoteHash) {
@@ -560,6 +585,26 @@ async function createPostgresRepository(connectionString: string): Promise<Order
 
       return items;
     },
+    async getTaxRateBasisPoints(locationId) {
+      const row = await db
+        .selectFrom("catalog_store_configs")
+        .select("tax_rate_basis_points")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
+
+      if (!row) {
+        logger.warn(
+          {
+            locationId,
+            fallbackTaxRateBasisPoints: defaultTaxRateBasisPoints
+          },
+          "catalog store config tax rate missing for location; using default"
+        );
+        return defaultTaxRateBasisPoints;
+      }
+
+      return row.tax_rate_basis_points;
+    },
     async close() {
       await db.destroy();
     }
@@ -574,7 +619,7 @@ export async function createOrdersRepository(logger: FastifyBaseLogger): Promise
   }
 
   try {
-    const repository = await createPostgresRepository(databaseUrl);
+    const repository = await createPostgresRepository(databaseUrl, logger);
     logger.info({ backend: "postgres" }, "orders persistence backend selected");
     return repository;
   } catch (error) {

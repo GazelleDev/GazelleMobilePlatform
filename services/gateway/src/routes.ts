@@ -198,6 +198,7 @@ async function proxyUpstream<TResponse>(params: {
   path: string;
   body?: unknown;
   additionalHeaders?: Record<string, string | undefined>;
+  forwardUserIdHeader?: boolean;
   timeoutMs?: number;
   responseSchema: z.ZodType<TResponse>;
 }) {
@@ -210,6 +211,7 @@ async function proxyUpstream<TResponse>(params: {
     path,
     body,
     additionalHeaders,
+    forwardUserIdHeader = true,
     timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs),
     responseSchema
   } = params;
@@ -223,7 +225,7 @@ async function proxyUpstream<TResponse>(params: {
   if (typeof authorization === "string") {
     headers.authorization = authorization;
   }
-  if (typeof userIdHeader === "string") {
+  if (forwardUserIdHeader && typeof userIdHeader === "string") {
     headers["x-user-id"] = userIdHeader;
   }
   if (additionalHeaders) {
@@ -305,6 +307,99 @@ async function proxyUpstream<TResponse>(params: {
   }
 
   return reply.status(upstreamResponse.status).send(parsedResponse.data);
+}
+
+async function resolveAuthenticatedUserId(params: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  identityBaseUrl: string;
+  timeoutMs?: number;
+}) {
+  const {
+    request,
+    reply,
+    identityBaseUrl,
+    timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs)
+  } = params;
+  const authorization = request.headers.authorization;
+
+  if (typeof authorization !== "string") {
+    reply.status(401).send(unauthorized(request.id));
+    return undefined;
+  }
+
+  let upstreamResponse: Response;
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  try {
+    upstreamResponse = await fetch(`${identityBaseUrl}/v1/auth/me`, {
+      method: "GET",
+      headers: {
+        authorization,
+        "x-request-id": request.id
+      },
+      signal: timeoutController.signal
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      reply.status(504).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_TIMEOUT",
+          message: "Identity service timed out",
+          requestId: request.id
+        })
+      );
+      return undefined;
+    }
+
+    reply.status(502).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Identity service is unavailable",
+        requestId: request.id
+      })
+    );
+    return undefined;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  const rawBody = await upstreamResponse.text();
+  const parsedBody = parseJsonSafely(rawBody);
+
+  if (!upstreamResponse.ok) {
+    const upstreamError = apiErrorSchema.safeParse(parsedBody);
+    if (upstreamError.success) {
+      reply.status(upstreamResponse.status).send(upstreamError.data);
+      return undefined;
+    }
+
+    reply.status(upstreamResponse.status).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_ERROR",
+        message: `Identity request failed with status ${upstreamResponse.status}`,
+        requestId: request.id,
+        details: toErrorDetails(parsedBody)
+      })
+    );
+    return undefined;
+  }
+
+  const parsedResponse = meResponseSchema.safeParse(parsedBody);
+  if (!parsedResponse.success) {
+    reply.status(502).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_INVALID_RESPONSE",
+        message: "Identity response did not match contract",
+        requestId: request.id,
+        details: parsedResponse.error.flatten()
+      })
+    );
+    return undefined;
+  }
+
+  return parsedResponse.data.userId;
 }
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -663,6 +758,14 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.post("/v1/orders", { preHandler: [app.rateLimit(ordersWriteRateLimit), requireBearerAuth] }, async (request, reply) => {
     const input = createOrderRequestSchema.parse(request.body);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -673,7 +776,8 @@ export async function registerRoutes(app: FastifyInstance) {
       path: "/v1/orders",
       body: input,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
@@ -682,6 +786,14 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/orders/:orderId/pay", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = payOrderRequestSchema.parse(request.body);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -692,13 +804,23 @@ export async function registerRoutes(app: FastifyInstance) {
       path: `/v1/orders/${orderId}/pay`,
       body: input,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
   });
 
   app.get("/v1/orders", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl
+    });
+    if (!userId) {
+      return;
+    }
+
     return proxyUpstream({
       request,
       reply,
@@ -707,7 +829,8 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: "/v1/orders",
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: z.array(orderSchema)
     });
@@ -715,6 +838,14 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.get("/v1/orders/:orderId", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -724,7 +855,8 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: `/v1/orders/${orderId}`,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
@@ -733,6 +865,14 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post("/v1/orders/:orderId/cancel", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = cancelOrderRequestSchema.parse(request.body);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -743,7 +883,8 @@ export async function registerRoutes(app: FastifyInstance) {
       path: `/v1/orders/${orderId}/cancel`,
       body: input,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
@@ -768,6 +909,7 @@ export async function registerRoutes(app: FastifyInstance) {
         additionalHeaders: {
           "x-gateway-token": gatewayInternalApiToken
         },
+        forwardUserIdHeader: false,
         responseSchema: z.array(orderSchema)
       })
   );
@@ -793,6 +935,7 @@ export async function registerRoutes(app: FastifyInstance) {
         additionalHeaders: {
           "x-gateway-token": gatewayInternalApiToken
         },
+        forwardUserIdHeader: false,
         responseSchema: orderSchema
       });
     }
@@ -827,6 +970,7 @@ export async function registerRoutes(app: FastifyInstance) {
             "x-gateway-token": gatewayInternalApiToken,
             "x-order-cancel-source": "staff"
           },
+          forwardUserIdHeader: false,
           responseSchema: orderSchema
         });
       }
@@ -842,6 +986,7 @@ export async function registerRoutes(app: FastifyInstance) {
         additionalHeaders: {
           "x-internal-token": ordersInternalApiToken
         },
+        forwardUserIdHeader: false,
         responseSchema: orderSchema
       });
     }

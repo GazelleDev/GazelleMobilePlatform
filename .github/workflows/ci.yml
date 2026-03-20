@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - production-readiness
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

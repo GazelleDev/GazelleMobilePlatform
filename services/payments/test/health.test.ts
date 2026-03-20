@@ -15,10 +15,31 @@ describe("payments service", () => {
     expect(response.statusCode).toBe(200);
     expect(ready.statusCode).toBe(200);
     expect(ready.json()).toMatchObject({
+      status: "ready",
       service: "payments",
       persistence: expect.any(String),
-      providerMode: expect.any(String),
-      providerConfigured: expect.any(Boolean)
+      providerMode: "simulated",
+      providerConfigured: true
+    });
+    await app.close();
+  });
+
+  it("returns degraded readiness when live Clover mode is misconfigured", async () => {
+    vi.stubEnv("CLOVER_PROVIDER_MODE", "live");
+    vi.stubEnv("CLOVER_API_KEY", "");
+    vi.stubEnv("CLOVER_MERCHANT_ID", "");
+    vi.stubEnv("CLOVER_CHARGE_ENDPOINT", "");
+    vi.stubEnv("CLOVER_REFUND_ENDPOINT", "");
+
+    const app = await buildApp();
+    const ready = await app.inject({ method: "GET", url: "/ready" });
+
+    expect(ready.statusCode).toBe(503);
+    expect(ready.json()).toMatchObject({
+      status: "degraded",
+      service: "payments",
+      providerMode: "live",
+      providerConfigured: false
     });
     await app.close();
   });
