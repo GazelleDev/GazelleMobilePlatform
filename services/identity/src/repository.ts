@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { authSessionSchema } from "@gazelle/contracts-core";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import { createPostgresDb, getDatabaseUrl, runMigrations } from "@gazelle/persistence";
 import { z } from "zod";
 
 type AuthSession = z.output<typeof authSessionSchema>;
@@ -375,7 +375,7 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
 
 async function createPostgresRepository(connectionString: string): Promise<IdentityRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   return {
     backend: "postgres",

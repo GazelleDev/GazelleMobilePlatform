@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { orderStateNotificationSchema, pushTokenUpsertSchema } from "@gazelle/contracts-notifications";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import { createPostgresDb, getDatabaseUrl, runMigrations } from "@gazelle/persistence";
 import { z } from "zod";
 
 type PushTokenInput = z.output<typeof pushTokenUpsertSchema>;
@@ -151,7 +151,7 @@ function createInMemoryRepository(): NotificationsRepository {
 
 async function createPostgresRepository(connectionString: string): Promise<NotificationsRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   async function getAttempts(id: string) {
     const row = await db

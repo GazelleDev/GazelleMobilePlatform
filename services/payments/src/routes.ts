@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash, randomUUID } from "node:crypto";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import { createPostgresDb, getDatabaseUrl, runMigrations } from "@gazelle/persistence";
 import {
   applePayWalletSchema,
   ordersPaymentReconciliationResultSchema,
@@ -349,7 +349,7 @@ function createInMemoryRepository(): PaymentsRepository {
 
 async function createPostgresRepository(connectionString: string): Promise<PaymentsRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   return {
     backend: "postgres",

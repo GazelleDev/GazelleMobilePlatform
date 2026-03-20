@@ -6,6 +6,7 @@
   "types": "dist/index.d.ts",
   "files": ["dist"],
   "scripts": {
+    "migrate": "tsx src/migrate-cli.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test --max-warnings=0",
@@ -21,6 +22,7 @@
     "@types/node": "^22.13.8",
     "@types/pg": "^8.15.6",
     "eslint": "^9.21.0",
+    "tsx": "^4.20.5",
     "typescript": "^5.8.2",
     "vitest": "^3.0.8"
   }

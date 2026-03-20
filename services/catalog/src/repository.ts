@@ -13,7 +13,7 @@ import {
   menuResponseSchema,
   storeConfigResponseSchema
 } from "@gazelle/contracts-catalog";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl, type PersistenceDb } from "@gazelle/persistence";
+import { createPostgresDb, getDatabaseUrl, runMigrations, type PersistenceDb } from "@gazelle/persistence";
 import { z } from "zod";
 import {
   DEFAULT_BRAND_ID,
@@ -481,7 +481,7 @@ async function seedCatalogDefaults(db: PersistenceDb) {
 async function createPostgresRepository(connectionString: string): Promise<CatalogRepository> {
   const db = createPostgresDb(connectionString);
   const defaultAppConfigPayload = resolveDefaultAppConfigPayload();
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
   await seedCatalogDefaults(db);
 
   return {

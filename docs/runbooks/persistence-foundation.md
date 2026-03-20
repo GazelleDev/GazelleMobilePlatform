@@ -19,9 +19,10 @@ It provides:
 
 - `createPostgresDb(connectionString)`
 - `getDatabaseUrl()`
-- `ensurePersistenceTables(db)`
+- `runMigrations(db)`
+- `ensurePersistenceTables(db)` (deprecated compatibility export)
 
-`ensurePersistenceTables` currently provisions foundational tables for:
+`runMigrations` applies the numbered persistence migration history for:
 
 - `payments_charges`
 - `payments_refunds`
@@ -87,9 +88,15 @@ Set for DB-backed mode:
 DATABASE_URL=postgres://user:password@host:5432/gazelle
 ```
 
+Run migrations manually:
+
+```bash
+pnpm --filter @gazelle/persistence migrate
+```
+
 Without `DATABASE_URL`, service behavior remains unchanged from prior local/dev simulation mode.
 
 ## Next Work
 
 - Add transactional boundaries for cross-service side effects.
-- Introduce dedicated migration runner and versioned migrations.
+- Expand migration coverage as new persistence-backed features land.

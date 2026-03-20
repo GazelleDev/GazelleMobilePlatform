@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { loyaltyBalanceSchema, loyaltyLedgerEntrySchema } from "@gazelle/contracts-loyalty";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import { createPostgresDb, getDatabaseUrl, runMigrations } from "@gazelle/persistence";
 import { z } from "zod";
 
 const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
@@ -325,7 +325,7 @@ function createInMemoryRepository(): LoyaltyRepository {
 
 async function createPostgresRepository(connectionString: string): Promise<LoyaltyRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   return {
     backend: "postgres",

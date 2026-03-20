@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import { normalizeCustomizationGroups, type MenuItemCustomizationGroup } from "@gazelle/contracts-catalog";
 import { orderQuoteSchema, orderSchema } from "@gazelle/contracts-orders";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import { createPostgresDb, getDatabaseUrl, runMigrations } from "@gazelle/persistence";
 import { z } from "zod";
 
 type OrderQuote = z.output<typeof orderQuoteSchema>;
@@ -337,7 +337,7 @@ async function createPostgresRepository(
   logger: FastifyBaseLogger
 ): Promise<OrdersRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   async function getPersistedOrder(orderId: string): Promise<PersistedOrderRow | undefined> {
     const row = await db.selectFrom("orders").selectAll().where("order_id", "=", orderId).executeTakeFirst();

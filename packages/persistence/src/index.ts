@@ -2,6 +2,8 @@ import { Kysely, PostgresDialect, sql } from "kysely";
 import type { Generated } from "kysely";
 import { Pool } from "pg";
 
+export { runMigrations } from "./migrate.js";
+
 export interface PaymentsChargeTable {
   payment_id: string;
   provider_payment_id: string | null;
@@ -273,6 +275,7 @@ export function getDatabaseUrl(env: NodeJS.ProcessEnv = process.env) {
   return value && value.length > 0 ? value : undefined;
 }
 
+/** @deprecated Use runMigrations instead. Will be removed in a future release. */
 export async function ensurePersistenceTables(db: PersistenceDb) {
   await db.transaction().execute(async (trx) => {
   await sql`SELECT pg_advisory_xact_lock(947531, 1)`.execute(trx);
