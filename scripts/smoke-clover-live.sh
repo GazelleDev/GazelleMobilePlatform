@@ -3,20 +3,35 @@
 set -euo pipefail
 
 # Usage:
-# - expects gateway to be running
-# - expects live Clover env vars to be configured for the payments service
-# - intended for manual sandbox/live validation, not CI
+# - expects the payments service to be running in Clover live mode
+# - uses PAYMENTS_URL, not the gateway URL
+# - intended for manual sandbox verification only, not CI
 
-GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:8080}"
-PAYMENTS_READY_URL="${GATEWAY_URL%/v1}/payments/ready"
+PAYMENTS_URL="${PAYMENTS_URL:-http://127.0.0.1:3003}"
+HEALTH_URL="${PAYMENTS_URL%/}/health"
+READY_URL="${PAYMENTS_URL%/}/ready"
 
-echo "[smoke-clover-live] checking payments readiness at ${PAYMENTS_READY_URL}"
-response="$(curl --silent --show-error --fail "${PAYMENTS_READY_URL}")"
+print_response() {
+  local label="$1"
+  local url="$2"
+  local body_file
+  body_file="$(mktemp)"
 
-if command -v jq >/dev/null 2>&1; then
-  printf '%s\n' "${response}" | jq .
-else
-  printf '%s\n' "${response}"
-fi
+  local status
+  status="$(curl --silent --show-error --output "${body_file}" --write-out "%{http_code}" "${url}")"
 
-echo "[smoke-clover-live] real checkout is still required to validate live Clover charges end to end"
+  echo "[smoke-clover-live] ${label} ${url} -> HTTP ${status}"
+  if command -v jq >/dev/null 2>&1; then
+    jq . "${body_file}" 2>/dev/null || cat "${body_file}"
+  else
+    cat "${body_file}"
+  fi
+  rm -f "${body_file}"
+  echo
+}
+
+print_response "health" "${HEALTH_URL}"
+print_response "ready" "${READY_URL}"
+
+echo "[smoke-clover-live] readiness is only a preflight"
+echo "[smoke-clover-live] use scripts/test-clover-live-charge.sh for a manual sandbox charge attempt"

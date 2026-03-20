@@ -19,6 +19,7 @@ const operatorOrderSchema = orderSchema.extend({
 
 export type OperatorOrder = z.output<typeof operatorOrderSchema>;
 export type OperatorOrderStatus = z.output<typeof orderStatusSchema>;
+export type OperatorOrderFilter = "all" | "active" | "completed";
 export type OperatorOrderAction = {
   status: "IN_PREP" | "READY" | "COMPLETED";
   label: string;
@@ -147,6 +148,18 @@ export function isActiveOrder(order: OperatorOrder) {
 
 export function filterActiveOrders(orders: readonly OperatorOrder[]) {
   return orders.filter(isActiveOrder);
+}
+
+export function filterOrdersByView(orders: readonly OperatorOrder[], filter: OperatorOrderFilter) {
+  switch (filter) {
+    case "active":
+      return filterActiveOrders(orders);
+    case "completed":
+      return orders.filter((order) => !isActiveOrder(order));
+    case "all":
+    default:
+      return [...orders];
+  }
 }
 
 export function getOrderCustomerLabel(order: OperatorOrder) {

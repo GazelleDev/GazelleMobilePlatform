@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
+import { summarizeCloverResponseForLogs } from "../src/routes.js";
 
 describe("payments service", () => {
   afterEach(() => {
@@ -42,6 +43,45 @@ describe("payments service", () => {
       providerConfigured: false
     });
     await app.close();
+  });
+
+  it("reports ready when live Clover mode is fully configured", async () => {
+    vi.stubEnv("CLOVER_PROVIDER_MODE", "live");
+    vi.stubEnv("CLOVER_API_KEY", "test-api-key");
+    vi.stubEnv("CLOVER_MERCHANT_ID", "merchant-123");
+    vi.stubEnv("CLOVER_CHARGE_ENDPOINT", "https://sandbox.clover.example/merchants/{merchantId}/charges");
+    vi.stubEnv("CLOVER_REFUND_ENDPOINT", "https://sandbox.clover.example/merchants/{merchantId}/payments/{paymentId}/refunds");
+
+    const app = await buildApp();
+    const ready = await app.inject({ method: "GET", url: "/ready" });
+
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json()).toMatchObject({
+      status: "ready",
+      service: "payments",
+      providerMode: "live",
+      providerConfigured: true
+    });
+    await app.close();
+  });
+
+  it("summarizes Clover tokenization responses without leaking sensitive tokens", () => {
+    expect(
+      summarizeCloverResponseForLogs({
+        status: "AUTHORIZED",
+        id: "secret-token-value",
+        token: "another-secret-token",
+        errorCode: "CARD_DECLINED",
+        message: "Card was declined",
+        data: {
+          token: "nested-secret-token"
+        }
+      })
+    ).toEqual({
+      status: "AUTHORIZED",
+      code: "CARD_DECLINED",
+      message: "Card was declined"
+    });
   });
 
   it("supports Clover charge success, decline, and timeout outcomes", async () => {

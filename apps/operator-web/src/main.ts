@@ -10,12 +10,13 @@ import {
 } from "./api.js";
 import {
   canManageOrderStatus,
-  filterActiveOrders,
+  filterOrdersByView,
   formatOrderStatus,
   getAppConfigCapabilityLabels,
   getOrderActions,
   getOrderCustomerLabel,
   isActiveOrder,
+  type OperatorOrderFilter,
   type OperatorOrder
 } from "./model.js";
 import {
@@ -37,12 +38,18 @@ type AppState = {
   selectedOrderId: string | null;
   appConfig: AppConfig | null;
   orders: OperatorOrder[];
+  ordersFilter: OperatorOrderFilter;
   menuCategories: AdminMenuCategory[];
   storeConfig: AdminStoreConfig | null;
   busyOrderId: string | null;
   busyMenuItemId: string | null;
   savingStore: boolean;
+  lastOrdersLoadedAtMs: number | null;
+  pendingCancelOrderId: string | null;
 };
+
+const ordersRefreshIntervalMs = 30_000;
+const cancelConfirmTimeoutMs = 5_000;
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) {
@@ -59,12 +66,19 @@ const state: AppState = {
   selectedOrderId: null,
   appConfig: null,
   orders: [],
+  ordersFilter: "active",
   menuCategories: [],
   storeConfig: null,
   busyOrderId: null,
   busyMenuItemId: null,
-  savingStore: false
+  savingStore: false,
+  lastOrdersLoadedAtMs: null,
+  pendingCancelOrderId: null
 };
+
+let ordersRefreshIntervalId: number | null = null;
+let ordersFreshnessIntervalId: number | null = null;
+let cancelConfirmTimeoutId: number | null = null;
 
 function escapeHtml(value: string | undefined | null) {
   return String(value ?? "")
@@ -99,8 +113,91 @@ function setError(message: string | null) {
   state.errorMessage = message;
 }
 
+function getVisibleOrders() {
+  return filterOrdersByView(state.orders, state.ordersFilter);
+}
+
+function formatOrdersFreshnessLabel() {
+  if (state.lastOrdersLoadedAtMs === null) {
+    return state.loading ? "Last refreshed: loading…" : "Last refreshed: not yet";
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - state.lastOrdersLoadedAtMs) / 1000));
+  return state.loading ? `Last refreshed: ${elapsedSeconds}s ago · refreshing…` : `Last refreshed: ${elapsedSeconds}s ago`;
+}
+
+function updateOrdersFreshnessIndicator() {
+  const indicator = root.querySelector<HTMLElement>('[data-role="orders-last-refreshed"]');
+  if (indicator) {
+    indicator.textContent = formatOrdersFreshnessLabel();
+  }
+}
+
+function stopOrdersRefreshTimers() {
+  if (ordersRefreshIntervalId !== null) {
+    window.clearInterval(ordersRefreshIntervalId);
+    ordersRefreshIntervalId = null;
+  }
+
+  if (ordersFreshnessIntervalId !== null) {
+    window.clearInterval(ordersFreshnessIntervalId);
+    ordersFreshnessIntervalId = null;
+  }
+}
+
+function syncOrdersRefreshTimers() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (!state.session || state.section !== "orders") {
+    stopOrdersRefreshTimers();
+    return;
+  }
+
+  if (ordersRefreshIntervalId === null) {
+    ordersRefreshIntervalId = window.setInterval(() => {
+      void loadDashboard();
+    }, ordersRefreshIntervalMs);
+  }
+
+  if (ordersFreshnessIntervalId === null) {
+    ordersFreshnessIntervalId = window.setInterval(() => {
+      updateOrdersFreshnessIndicator();
+    }, 1000);
+  }
+
+  updateOrdersFreshnessIndicator();
+}
+
+function clearCancelConfirmation(renderAfterClear = false) {
+  if (cancelConfirmTimeoutId !== null) {
+    window.clearTimeout(cancelConfirmTimeoutId);
+    cancelConfirmTimeoutId = null;
+  }
+
+  const changed = state.pendingCancelOrderId !== null;
+  state.pendingCancelOrderId = null;
+
+  if (renderAfterClear && changed) {
+    render();
+  }
+}
+
+function armCancelConfirmation(orderId: string) {
+  clearCancelConfirmation(false);
+  state.pendingCancelOrderId = orderId;
+  cancelConfirmTimeoutId = window.setTimeout(() => {
+    if (state.pendingCancelOrderId === orderId) {
+      state.pendingCancelOrderId = null;
+      cancelConfirmTimeoutId = null;
+      render();
+    }
+  }, cancelConfirmTimeoutMs);
+}
+
 function getSelectedOrder() {
-  const availableOrders = state.orders;
+  const availableOrders = getVisibleOrders();
   if (availableOrders.length === 0) {
     return null;
   }
@@ -114,11 +211,25 @@ function getSelectedOrder() {
 
 function selectOrder(orderId: string | null) {
   state.selectedOrderId = orderId;
+
+  if (state.pendingCancelOrderId && state.pendingCancelOrderId !== orderId) {
+    clearCancelConfirmation();
+  }
+}
+
+function reconcileSelectedOrder() {
+  const selectedOrder = getSelectedOrder();
+  selectOrder(selectedOrder?.id ?? null);
 }
 
 async function loadDashboard() {
   if (!state.session) {
+    state.loading = false;
     render();
+    return;
+  }
+
+  if (state.loading) {
     return;
   }
 
@@ -132,9 +243,12 @@ async function loadDashboard() {
     state.orders = snapshot.orders;
     state.menuCategories = snapshot.menu.categories;
     state.storeConfig = snapshot.storeConfig;
+    state.lastOrdersLoadedAtMs = Date.now();
+    reconcileSelectedOrder();
 
-    const selectedOrder = getSelectedOrder();
-    selectOrder(selectedOrder?.id ?? null);
+    if (state.pendingCancelOrderId && !getVisibleOrders().some((order) => order.id === state.pendingCancelOrderId)) {
+      clearCancelConfirmation();
+    }
   } catch (error) {
     setError(error instanceof Error ? error.message : "Unable to load operator data.");
   } finally {
@@ -226,11 +340,19 @@ function renderRuntimeSummary(appConfig: AppConfig | null) {
 }
 
 function renderOrdersSection() {
-  const activeOrders = filterActiveOrders(state.orders);
+  const activeOrders = filterOrdersByView(state.orders, "active");
+  const completedOrders = filterOrdersByView(state.orders, "completed");
+  const visibleOrders = getVisibleOrders();
   const selectedOrder = getSelectedOrder();
-  const activeRows =
-    activeOrders.length > 0
-      ? activeOrders
+  const emptyMessage =
+    state.ordersFilter === "active"
+      ? "No active orders right now."
+      : state.ordersFilter === "completed"
+        ? "No completed or canceled orders are loaded yet."
+        : "No orders are loaded yet.";
+  const orderRows =
+    visibleOrders.length > 0
+      ? visibleOrders
           .map(
             (order) => `
             <button class="list-row ${selectedOrder?.id === order.id ? "list-row--selected" : ""}" type="button" data-action="select-order" data-order-id="${order.id}">
@@ -243,7 +365,28 @@ function renderOrdersSection() {
           `
           )
           .join("")
-      : `<p class="empty-copy">No active orders right now.</p>`;
+      : `<p class="empty-copy">${escapeHtml(emptyMessage)}</p>`;
+
+  const filterButtons = (
+    [
+      { key: "all", label: "All", count: state.orders.length },
+      { key: "active", label: "Active", count: activeOrders.length },
+      { key: "completed", label: "Completed", count: completedOrders.length }
+    ] as const
+  )
+    .map(
+      (filter) => `
+        <button
+          class="filter-chip ${state.ordersFilter === filter.key ? "filter-chip--active" : ""}"
+          type="button"
+          data-action="set-order-filter"
+          data-order-filter="${filter.key}"
+        >
+          ${escapeHtml(filter.label)} (${filter.count})
+        </button>
+      `
+    )
+    .join("");
 
   const orderDetail = selectedOrder
     ? renderOrderDetail(selectedOrder, state.appConfig)
@@ -254,12 +397,17 @@ function renderOrdersSection() {
       <article class="panel">
         <div class="panel-header">
           <div>
-            <p class="eyebrow">Active Orders</p>
-            <h2>${activeOrders.length} live</h2>
+            <p class="eyebrow">Orders</p>
+            <h2>${visibleOrders.length} in view</h2>
+            <p class="subtle-copy" data-role="orders-last-refreshed">${escapeHtml(formatOrdersFreshnessLabel())}</p>
           </div>
-          <span class="metric">${state.orders.length} total loaded</span>
+          <div class="metric-stack">
+            <span class="metric">${activeOrders.length} active</span>
+            <span class="metric">${state.orders.length} total loaded</span>
+          </div>
         </div>
-        <div class="list-stack">${activeRows}</div>
+        <div class="filter-row">${filterButtons}</div>
+        <div class="list-stack">${orderRows}</div>
       </article>
 
       <article class="panel">
@@ -328,8 +476,27 @@ function renderOrderDetail(order: OperatorOrder, appConfig: AppConfig | null) {
           data-order-id="${order.id}"
           ${state.busyOrderId === order.id ? "disabled" : ""}
         >
-          Cancel
+          ${state.pendingCancelOrderId === order.id ? "Confirm Cancel" : "Cancel"}
         </button>
+      `
+      : "";
+  const cancelConfirmation =
+    state.pendingCancelOrderId === order.id
+      ? `
+        <div class="inline-confirm">
+          <p class="subtle-copy">Confirm cancellation within 5 seconds or keep the order active.</p>
+          <div class="button-row">
+            <button
+              class="button button--secondary"
+              type="button"
+              data-action="dismiss-cancel"
+              data-order-id="${order.id}"
+              ${state.busyOrderId === order.id ? "disabled" : ""}
+            >
+              Keep Order
+            </button>
+          </div>
+        </div>
       `
       : "";
   const fulfillmentMessage = manualStatusControlsEnabled
@@ -350,6 +517,7 @@ function renderOrderDetail(order: OperatorOrder, appConfig: AppConfig | null) {
     <div class="detail-stack">${items}</div>
     ${fulfillmentMessage}
     <div class="button-row">${actionButtons}${cancelButton}</div>
+    ${cancelConfirmation}
     <div class="timeline-stack">${timeline}</div>
   `;
 }
@@ -498,6 +666,8 @@ function renderDashboard() {
 
 function render() {
   root.innerHTML = state.session ? renderDashboard() : renderUnlockScreen();
+  syncOrdersRefreshTimers();
+  updateOrdersFreshnessIndicator();
 }
 
 async function handleUnlockSubmit(form: HTMLFormElement) {
@@ -547,7 +717,6 @@ async function handleMenuItemSubmit(form: HTMLFormElement) {
     await loadDashboard();
   } catch (error) {
     setError(error instanceof Error ? error.message : "Unable to save menu item.");
-    render();
   } finally {
     state.busyMenuItemId = null;
     render();
@@ -573,7 +742,6 @@ async function handleStoreSubmit(form: HTMLFormElement) {
     await loadDashboard();
   } catch (error) {
     setError(error instanceof Error ? error.message : "Unable to save store configuration.");
-    render();
   } finally {
     state.savingStore = false;
     render();
@@ -593,6 +761,7 @@ async function handleOrderAdvance(orderId: string, status: "IN_PREP" | "READY" |
 
   try {
     state.busyOrderId = orderId;
+    clearCancelConfirmation();
     setError(null);
     render();
     await updateOperatorOrderStatus(state.session, orderId, {
@@ -603,7 +772,6 @@ async function handleOrderAdvance(orderId: string, status: "IN_PREP" | "READY" |
     await loadDashboard();
   } catch (error) {
     setError(error instanceof Error ? error.message : "Unable to update order.");
-    render();
   } finally {
     state.busyOrderId = null;
     render();
@@ -649,13 +817,20 @@ root.addEventListener("click", (event) => {
   }
 
   if (action === "sign-out") {
+    stopOrdersRefreshTimers();
+    clearCancelConfirmation();
     clearStoredSession();
     state.session = null;
+    state.loading = false;
     state.appConfig = null;
     state.orders = [];
     state.menuCategories = [];
     state.storeConfig = null;
     state.selectedOrderId = null;
+    state.lastOrdersLoadedAtMs = null;
+    state.busyOrderId = null;
+    state.busyMenuItemId = null;
+    state.savingStore = false;
     setError(null);
     setNotice("Signed out of the operator workspace.");
     render();
@@ -666,7 +841,21 @@ root.addEventListener("click", (event) => {
     const section = actionElement.dataset.section;
     if (section === "orders" || section === "menu" || section === "store") {
       state.section = section;
+      if (section !== "orders") {
+        clearCancelConfirmation();
+      }
       persistSection(section);
+      render();
+    }
+    return;
+  }
+
+  if (action === "set-order-filter") {
+    const filter = actionElement.dataset.orderFilter;
+    if (filter === "all" || filter === "active" || filter === "completed") {
+      state.ordersFilter = filter;
+      reconcileSelectedOrder();
+      clearCancelConfirmation();
       render();
     }
     return;
@@ -696,9 +885,22 @@ root.addEventListener("click", (event) => {
 
   if (action === "cancel-order") {
     const orderId = actionElement.dataset.orderId;
-    if (orderId && window.confirm("Cancel this order and trigger the refund-aware backend path?")) {
-      void handleOrderAdvance(orderId, "CANCELED", "Canceled by staff.");
+    if (!orderId) {
+      return;
     }
+
+    if (state.pendingCancelOrderId === orderId) {
+      void handleOrderAdvance(orderId, "CANCELED", "Canceled by staff.");
+      return;
+    }
+
+    armCancelConfirmation(orderId);
+    render();
+    return;
+  }
+
+  if (action === "dismiss-cancel") {
+    clearCancelConfirmation(true);
   }
 });
 

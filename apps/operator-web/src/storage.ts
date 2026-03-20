@@ -1,6 +1,7 @@
 import { normalizeApiBaseUrl, resolveDefaultApiBaseUrl, type OperatorSession } from "./api.js";
 
 const API_BASE_URL_STORAGE_KEY = "gazelle.operator.api-base-url.v1";
+// Staff tokens are intentionally persisted in localStorage only for trusted internal operator devices.
 const STAFF_TOKEN_STORAGE_KEY = "gazelle.operator.staff-token.v1";
 const DASHBOARD_SECTION_STORAGE_KEY = "gazelle.operator.section.v1";
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canManageOrderStatus,
   filterActiveOrders,
+  filterOrdersByView,
   formatOrderStatus,
   getAppConfigCapabilityLabels,
   getOrderActions,
@@ -106,6 +107,11 @@ describe("operator-web model", () => {
     expect(filterActiveOrders([sampleOrder, { ...sampleOrder, status: "COMPLETED" }]).map((order) => order.status)).toEqual([
       "PAID"
     ]);
+    expect(
+      filterOrdersByView([sampleOrder, { ...sampleOrder, status: "COMPLETED" }, { ...sampleOrder, status: "CANCELED" }], "completed").map(
+        (order) => order.status
+      )
+    ).toEqual(["COMPLETED", "CANCELED"]);
   });
 
   it("formats order statuses and customer labels", () => {

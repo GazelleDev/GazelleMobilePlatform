@@ -770,6 +770,39 @@ function firstIsoDateAtPaths(value: unknown, paths: string[][]): string | undefi
   return undefined;
 }
 
+export function summarizeCloverResponseForLogs(value: unknown): Record<string, string> {
+  const summary = {
+    status: firstStringAtPaths(value, [
+      ["status"],
+      ["result", "status"],
+      ["data", "status"],
+      ["payment", "status"],
+      ["charge", "status"],
+      ["refund", "status"]
+    ]),
+    code: firstStringAtPaths(value, [
+      ["code"],
+      ["errorCode"],
+      ["error_code"],
+      ["reasonCode"],
+      ["reason_code"],
+      ["result", "code"],
+      ["data", "code"]
+    ]),
+    message: firstStringAtPaths(value, [
+      ["message"],
+      ["description"],
+      ["reason"],
+      ["error"],
+      ["result", "message"],
+      ["data", "message"]
+    ])
+  };
+
+  const entries = Object.entries(summary).filter((entry): entry is [string, string] => entry[1] !== undefined);
+  return Object.fromEntries(entries);
+}
+
 function toTemplatedUrl(template: string, variables: Record<string, string>) {
   let resolved = template;
   for (const [key, value] of Object.entries(variables)) {
@@ -1204,13 +1237,14 @@ async function executeLiveCharge(params: {
     );
 
     const tokenizeBody = parseJsonSafely(await tokenizeResponse.text());
+    const tokenizeSummary = summarizeCloverResponseForLogs(tokenizeBody);
     if (!tokenizeResponse.ok) {
       logger.error(
         {
           orderId: request.orderId,
           internalPaymentId,
           tokenizeStatus: tokenizeResponse.status,
-          tokenizeBody
+          tokenizeSummary
         },
         "Clover Apple Pay wallet tokenization failed"
       );
@@ -1234,7 +1268,7 @@ async function executeLiveCharge(params: {
           orderId: request.orderId,
           internalPaymentId,
           tokenizeStatus: tokenizeResponse.status,
-          tokenizeBody
+          tokenizeSummary
         },
         "Clover Apple Pay wallet tokenization failed"
       );
@@ -1244,7 +1278,9 @@ async function executeLiveCharge(params: {
     logger.info(
       {
         orderId: request.orderId,
-        internalPaymentId
+        internalPaymentId,
+        tokenizeStatus: tokenizeResponse.status,
+        tokenizeSummary
       },
       "Clover Apple Pay wallet tokenization succeeded"
     );
