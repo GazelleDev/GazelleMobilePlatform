@@ -1,6 +1,6 @@
 # Production Prerequisites Checklist
 
-Last reviewed: `2026-03-11`
+Last reviewed: `2026-03-21`
 
 ## Purpose
 
@@ -32,7 +32,11 @@ Hard-gate checklist before enabling real passkey auth, Apple Pay, and Clover pro
 
 - [ ] Clover sandbox account enabled.
 - [ ] Clover production account enabled.
-- [ ] App credentials created for ecommerce flow.
+- [ ] Clover app created with OAuth redirect URI configured.
+- [ ] Clover app credentials (`appId`, `appSecret`) stored in vault.
+- [ ] Merchant OAuth approval succeeds in sandbox.
+- [ ] PAKMS/apiAccessKey retrieval succeeds after OAuth callback.
+- [ ] Sandbox merchantId confirmed.
 - [ ] Webhook endpoint URL and signing secret configured.
 - [ ] Idempotency behavior validated in sandbox.
 
@@ -48,7 +52,12 @@ Set in GitHub Environments (`dev`, `staging`, `prod`) and documented in internal
 - [ ] `APPLE_PRIVATE_KEY`
 - [ ] `APPLE_SERVICE_ID`
 - [ ] `APPLE_MERCHANT_ID`
-- [ ] `CLOVER_API_KEY`
+- [ ] `CLOVER_APP_ID`
+- [ ] `CLOVER_APP_SECRET`
+- [ ] `CLOVER_OAUTH_REDIRECT_URI`
+- [ ] `CLOVER_OAUTH_STATE_SECRET`
+- [ ] `CLOVER_BEARER_TOKEN`
+- [ ] `CLOVER_API_ACCESS_KEY`
 - [ ] `CLOVER_MERCHANT_ID`
 - [ ] `CLOVER_WEBHOOK_SHARED_SECRET`
 - [ ] `JWT_PRIVATE_KEY`

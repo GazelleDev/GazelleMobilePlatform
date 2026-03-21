@@ -44,6 +44,19 @@ export interface PaymentsWebhookDeduplicationTable {
   created_at: Generated<string>;
 }
 
+export interface PaymentsCloverConnectionTable {
+  merchant_id: string;
+  access_token: string;
+  refresh_token: string | null;
+  access_token_expires_at: string | null;
+  refresh_token_expires_at: string | null;
+  api_access_key: string | null;
+  token_type: string | null;
+  scope: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface LoyaltyBalanceTable {
   user_id: string;
   available_points: number;
@@ -239,6 +252,7 @@ export interface PersistenceDatabase {
   payments_charges: PaymentsChargeTable;
   payments_refunds: PaymentsRefundTable;
   payments_webhook_deduplication: PaymentsWebhookDeduplicationTable;
+  payments_clover_connections: PaymentsCloverConnectionTable;
   loyalty_balances: LoyaltyBalanceTable;
   loyalty_ledger_entries: LoyaltyLedgerEntryTable;
   loyalty_idempotency_keys: LoyaltyIdempotencyKeyTable;

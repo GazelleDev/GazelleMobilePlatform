@@ -1,6 +1,6 @@
 # Clover Payment Integration Path
 
-Last reviewed: `2026-03-11`
+Last reviewed: `2026-03-21`
 
 ## Scope
 
@@ -23,8 +23,18 @@ M4.3 introduces Clover charge and refund paths across `orders` and `payments`:
 Live mode env:
 
 - `CLOVER_PROVIDER_MODE=live`
-- `CLOVER_API_KEY`
+- `CLOVER_BEARER_TOKEN` or `CLOVER_API_KEY` legacy fallback
+- `CLOVER_API_ACCESS_KEY` (required when charging with `applePayWallet` unless Clover OAuth is connected)
 - `CLOVER_MERCHANT_ID`
+- `CLOVER_OAUTH_ENVIRONMENT=sandbox|production`
+- `CLOVER_APP_ID`
+- `CLOVER_APP_SECRET`
+- `CLOVER_OAUTH_REDIRECT_URI`
+- `CLOVER_OAUTH_STATE_SECRET` (optional; defaults to `CLOVER_APP_SECRET`)
+- `CLOVER_OAUTH_AUTHORIZE_ENDPOINT` (optional override)
+- `CLOVER_OAUTH_TOKEN_ENDPOINT` (optional override)
+- `CLOVER_OAUTH_REFRESH_ENDPOINT` (optional override)
+- `CLOVER_OAUTH_PAKMS_ENDPOINT` (optional override; sandbox default is `https://scl-sandbox.dev.clover.com/pakms/apikey`)
 - `CLOVER_CHARGE_ENDPOINT` (supports `{merchantId}` template)
 - `CLOVER_REFUND_ENDPOINT` (supports `{merchantId}` and `{paymentId}` templates)
 - `CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` (required when charging with `applePayWallet`)
@@ -42,9 +52,40 @@ For Clover sandbox ecommerce:
 
 Token roles:
 
-- `CLOVER_API_KEY` in service runtime should be the Clover private/ecommerce bearer token.
-- Tokenization endpoint uses `apikey` header value from Clover `apiAccessKey` (public key), when calling directly.
-- `CLOVER_MERCHANT_ID` must be Clover merchant UUID (for example from `GET /v3/merchants/current`), not external MID labels.
+- `CLOVER_BEARER_TOKEN` in service runtime is the Clover Bearer credential used for `/v1/charges` and `/v1/refunds`.
+  - for single-merchant ecommerce setups, this can be the Clover private ecommerce token
+  - for app-based OAuth setups, the service stores and refreshes the Clover OAuth access token and uses that instead
+- `CLOVER_API_ACCESS_KEY` is the Clover public `apiAccessKey` used as the `apikey` header on `/v1/tokens`.
+  - for app-based OAuth setups, the service fetches and stores this from Clover PAKMS after OAuth callback/refresh
+- `CLOVER_API_KEY` remains supported as a legacy alias for `CLOVER_BEARER_TOKEN` while existing environments migrate.
+- `CLOVER_MERCHANT_ID` should be Clover `merchantId` (for sandbox this is commonly a 13-character alphanumeric value), not an external MID label.
+
+## OAuth Connection Flow
+
+When merchant ecommerce tokens are not sufficient, `payments` supports Clover OAuth app connection endpoints:
+
+- `GET /v1/payments/clover/oauth/status`
+- `GET /v1/payments/clover/oauth/connect`
+- `GET /v1/payments/clover/oauth/callback`
+- `POST /v1/payments/clover/oauth/refresh`
+
+Recommended sandbox flow:
+
+1. Configure `CLOVER_APP_ID`, `CLOVER_APP_SECRET`, `CLOVER_OAUTH_REDIRECT_URI`, and `CLOVER_PROVIDER_MODE=live`.
+2. Open `GET /v1/payments/clover/oauth/connect` and follow the returned `authorizeUrl`.
+3. Complete Clover approval and land on `GET /v1/payments/clover/oauth/callback`.
+4. Confirm `GET /v1/payments/clover/oauth/status` reports `connected: true` and `credentialSource: "oauth"`.
+5. Verify `GET /ready` reports `providerConfigured: true`.
+
+Direct Clover app-launch note:
+
+- Clover can launch your app before `code` and `state` exist. In that case Clover typically sends merchant context first, and your app must start the `/oauth/v2/authorize` step from there.
+- `payments` now treats callback hits that only include `merchant_id` as an OAuth launch and immediately redirects into Clover authorization instead of returning `CLOVER_OAUTH_INVALID_CALLBACK`.
+
+Connection persistence:
+
+- OAuth access token, refresh token, expiry times, and PAKMS `apiAccessKey` are stored in `payments_clover_connections`.
+- When the stored access token is near expiry, the service refreshes it automatically before live charge/refund calls.
 
 ## Webhook Reconciliation
 
@@ -101,6 +142,7 @@ For dev simulation, a cancel reason containing `reject` returns a rejected refun
 ## Verification
 
 ```bash
+pnpm --filter @gazelle/persistence build
 pnpm --filter @gazelle/payments lint
 pnpm --filter @gazelle/payments typecheck
 pnpm --filter @gazelle/payments test
