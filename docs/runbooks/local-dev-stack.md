@@ -62,6 +62,12 @@ Optional DB-backed payments persistence:
 DATABASE_URL=postgres://user:password@127.0.0.1:5432/gazelle pnpm dev:services
 ```
 
+Explicit non-durable in-memory mode when you do not have Postgres running:
+
+```bash
+ALLOW_IN_MEMORY_PERSISTENCE=true pnpm dev:services
+```
+
 ### LAN Mode (Physical Device)
 
 ```bash
@@ -153,11 +159,11 @@ If unreachable:
 - Loyalty APIs:
   - `GET /v1/loyalty/balance`
   - `GET /v1/loyalty/ledger`
-  - `POST /v1/loyalty/internal/ledger/apply` (service-level internal endpoint for local testing)
+  - `POST /v1/loyalty/internal/ledger/apply` (service-level internal endpoint for local testing; requires `LOYALTY_INTERNAL_API_TOKEN`)
 - Notifications:
   - `PUT /v1/devices/push-token` through gateway (proxied to notifications service)
   - Orders emits internal order-state notifications on `PENDING_PAYMENT`, `PAID`, and `CANCELED` transitions
-  - Use `POST /v1/notifications/internal/outbox/process` (or run dispatch worker) to process queued outbox events
+  - Use `POST /v1/notifications/internal/outbox/process` (or run dispatch worker) to process queued outbox events; requires `NOTIFICATIONS_INTERNAL_API_TOKEN`
 
 ## Current Limits (Expected)
 

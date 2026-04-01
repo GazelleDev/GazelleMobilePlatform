@@ -2,8 +2,8 @@ import { z } from "zod";
 import { authSessionSchema } from "@gazelle/contracts-core";
 
 export const appleExchangeRequestSchema = z.object({
-  identityToken: z.string().min(1),
-  authorizationCode: z.string().min(1),
+  identityToken: z.string().min(1).optional(),
+  authorizationCode: z.string().min(1).optional(),
   nonce: z.string().min(1)
 });
 
@@ -49,7 +49,7 @@ export const passkeyVerifyRequestSchema = z.object({
 });
 
 export const magicLinkRequestSchema = z.object({
-  email: z.string().email()
+  email: z.string().trim().email()
 });
 
 export const magicLinkVerifySchema = z.object({

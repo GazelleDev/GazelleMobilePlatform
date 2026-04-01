@@ -1,42 +1,37 @@
-export const SIZE_PRICE_DELTA_CENTS = {
-  Regular: 0,
-  Large: 100
-} as const;
+import {
+  buildDefaultCustomizationInput,
+  describeCustomizationSelection,
+  EMPTY_MENU_ITEM_CUSTOMIZATION,
+  normalizeCustomizationInput,
+  priceMenuItemCustomization,
+  resolveMenuItemCustomization,
+  type CustomizationGroupSelectionSnapshot,
+  type MenuItemCustomizationGroup,
+  type MenuItemCustomizationInput
+} from "@gazelle/contracts-catalog";
 
-export const MILK_PRICE_DELTA_CENTS = {
-  Whole: 0,
-  Oat: 75,
-  Almond: 75
-} as const;
-
-export const EXTRA_SHOT_PRICE_DELTA_CENTS = 125;
-
-export type CartDrinkSize = keyof typeof SIZE_PRICE_DELTA_CENTS;
-export type CartMilkOption = keyof typeof MILK_PRICE_DELTA_CENTS;
-
-export type CartCustomization = {
-  size: CartDrinkSize;
-  milk: CartMilkOption;
-  extraShot: boolean;
-  notes?: string;
-};
+export type CartCustomization = MenuItemCustomizationInput;
+export type CartCustomizationGroupSelection = CustomizationGroupSelectionSnapshot;
 
 export type CartItemInput = {
   menuItemId: string;
-  name: string;
+  itemName: string;
   basePriceCents: number;
-  customization: CartCustomization;
+  customizationGroups: MenuItemCustomizationGroup[];
+  customization?: CartCustomization;
   quantity?: number;
 };
 
 export type CartItem = {
   lineId: string;
   menuItemId: string;
-  name: string;
+  itemName: string;
   basePriceCents: number;
   unitPriceCents: number;
+  lineTotalCents: number;
   quantity: number;
   customization: CartCustomization;
+  customizationSelections: CartCustomizationGroupSelection[];
 };
 
 export type CartPricingSummary = {
@@ -45,57 +40,116 @@ export type CartPricingSummary = {
   totalCents: number;
 };
 
-export const DEFAULT_CUSTOMIZATION: CartCustomization = {
-  size: "Regular",
-  milk: "Whole",
-  extraShot: false,
-  notes: ""
-};
+export const DEFAULT_CUSTOMIZATION: CartCustomization = EMPTY_MENU_ITEM_CUSTOMIZATION;
 
-export function normalizeCustomization(input: CartCustomization): CartCustomization {
-  return {
-    ...input,
-    notes: input.notes?.trim() ?? ""
-  };
+export function normalizeCustomization(input: unknown): CartCustomization {
+  return normalizeCustomizationInput(input);
 }
 
-export function getCustomizationDeltaCents(customization: CartCustomization): number {
-  return (
-    SIZE_PRICE_DELTA_CENTS[customization.size] +
-    MILK_PRICE_DELTA_CENTS[customization.milk] +
-    (customization.extraShot ? EXTRA_SHOT_PRICE_DELTA_CENTS : 0)
+export function buildDefaultCustomization(groups: MenuItemCustomizationGroup[]): CartCustomization {
+  return buildDefaultCustomizationInput(groups);
+}
+
+export function isCustomizationOptionSelected(
+  customization: CartCustomization,
+  groupId: string,
+  optionId: string
+): boolean {
+  return customization.selectedOptions.some(
+    (selection) => selection.groupId === groupId && selection.optionId === optionId
   );
 }
 
-export function getUnitPriceCents(basePriceCents: number, customization: CartCustomization): number {
-  return basePriceCents + getCustomizationDeltaCents(customization);
+export function resolveCartCustomization(
+  groups: MenuItemCustomizationGroup[],
+  customization: CartCustomization | undefined
+) {
+  return resolveMenuItemCustomization({
+    groups,
+    selection: customization ?? DEFAULT_CUSTOMIZATION
+  });
+}
+
+export function getCustomizationDeltaCents(
+  groups: MenuItemCustomizationGroup[],
+  customization: CartCustomization | undefined
+): number {
+  return resolveCartCustomization(groups, customization).customizationDeltaCents;
+}
+
+export function getUnitPriceCents(
+  basePriceCents: number,
+  groups: MenuItemCustomizationGroup[],
+  customization: CartCustomization | undefined
+): number {
+  return priceMenuItemCustomization({
+    basePriceCents,
+    groups,
+    selection: customization ?? DEFAULT_CUSTOMIZATION
+  }).unitPriceCents;
+}
+
+type CustomizationDescribeOptions = {
+  includeNotes?: boolean;
+  fallback?: string;
+};
+
+export function describeCustomization(
+  input: Pick<CartItem, "customization" | "customizationSelections">,
+  options: CustomizationDescribeOptions = {}
+): string {
+  return describeCustomizationSelection({
+    selection: input.customization,
+    groupSelections: input.customizationSelections,
+    includeNotes: options.includeNotes,
+    fallback: options.fallback
+  });
 }
 
 export function toCartLineId(input: CartItemInput): string {
-  const customization = normalizeCustomization(input.customization);
-  const noteMarker = customization.notes && customization.notes.length > 0 ? customization.notes : "-";
+  const customization = normalizeCustomization(input.customization ?? DEFAULT_CUSTOMIZATION);
+  const optionMarker =
+    customization.selectedOptions.length > 0
+      ? customization.selectedOptions.map((selection) => `${selection.groupId}:${selection.optionId}`).join(",")
+      : "-";
+  const noteMarker = customization.notes.length > 0 ? customization.notes : "-";
 
-  return [
-    input.menuItemId,
-    customization.size,
-    customization.milk,
-    customization.extraShot ? "extra-shot" : "no-extra-shot",
-    noteMarker
-  ].join("|");
+  return [input.menuItemId, optionMarker, noteMarker].join("|");
+}
+
+function createInvalidCustomizationError(itemName: string, issues: Array<{ message: string }>) {
+  const issueSummary = issues.map((issue) => issue.message).join(" ");
+  return new Error(`Invalid customization for ${itemName}: ${issueSummary}`);
 }
 
 export function createCartItem(input: CartItemInput): CartItem {
-  const customization = normalizeCustomization(input.customization);
+  const customization = normalizeCustomization(input.customization ?? DEFAULT_CUSTOMIZATION);
   const quantity = Math.max(1, input.quantity ?? 1);
+  const priced = priceMenuItemCustomization({
+    basePriceCents: input.basePriceCents,
+    quantity,
+    groups: input.customizationGroups,
+    selection: customization
+  });
+
+  if (!priced.valid) {
+    throw createInvalidCustomizationError(input.itemName, priced.issues);
+  }
 
   return {
-    lineId: toCartLineId(input),
+    lineId: toCartLineId({
+      ...input,
+      customization,
+      quantity
+    }),
     menuItemId: input.menuItemId,
-    name: input.name,
+    itemName: input.itemName,
     basePriceCents: input.basePriceCents,
-    unitPriceCents: getUnitPriceCents(input.basePriceCents, customization),
+    unitPriceCents: priced.unitPriceCents,
+    lineTotalCents: priced.lineTotalCents,
     quantity,
-    customization
+    customization,
+    customizationSelections: priced.groupSelections
   };
 }
 
@@ -107,8 +161,15 @@ export function addCartItem(items: CartItem[], input: CartItemInput): CartItem[]
     return [...items, createCartItem(input)];
   }
 
+  const nextQuantity = existing.quantity + quantity;
   return items.map((entry) =>
-    entry.lineId === lineId ? { ...entry, quantity: entry.quantity + quantity } : entry
+    entry.lineId === lineId
+      ? {
+          ...entry,
+          quantity: nextQuantity,
+          lineTotalCents: entry.unitPriceCents * nextQuantity
+        }
+      : entry
   );
 }
 
@@ -117,7 +178,15 @@ export function setCartItemQuantity(items: CartItem[], lineId: string, quantity:
     return items.filter((entry) => entry.lineId !== lineId);
   }
 
-  return items.map((entry) => (entry.lineId === lineId ? { ...entry, quantity } : entry));
+  return items.map((entry) =>
+    entry.lineId === lineId
+      ? {
+          ...entry,
+          quantity,
+          lineTotalCents: entry.unitPriceCents * quantity
+        }
+      : entry
+  );
 }
 
 export function removeCartItem(items: CartItem[], lineId: string): CartItem[] {
@@ -125,7 +194,7 @@ export function removeCartItem(items: CartItem[], lineId: string): CartItem[] {
 }
 
 export function calculateSubtotalCents(items: CartItem[]): number {
-  return items.reduce((sum, item) => sum + item.unitPriceCents * item.quantity, 0);
+  return items.reduce((sum, item) => sum + item.lineTotalCents, 0);
 }
 
 export function calculateItemCount(items: CartItem[]): number {
@@ -143,17 +212,4 @@ export function buildPricingSummary(subtotalCents: number, taxRateBasisPoints: n
     taxCents,
     totalCents: subtotalCents + taxCents
   };
-}
-
-export function describeCustomization(customization: CartCustomization): string {
-  const parts = [`${customization.size}`, `${customization.milk} milk`];
-  if (customization.extraShot) {
-    parts.push("extra shot");
-  }
-
-  if (customization.notes && customization.notes.length > 0) {
-    parts.push(`note: ${customization.notes}`);
-  }
-
-  return parts.join(" · ");
 }

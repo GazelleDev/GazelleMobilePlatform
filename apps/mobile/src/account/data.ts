@@ -3,9 +3,33 @@ import { z } from "zod";
 import { apiClient } from "../api/client";
 
 const orderStatusSchema = z.enum(["PENDING_PAYMENT", "PAID", "IN_PREP", "READY", "COMPLETED", "CANCELED"]);
+const orderItemSchema = z.object({
+  itemId: z.string(),
+  itemName: z.string().min(1).optional(),
+  quantity: z.number().int().positive(),
+  unitPriceCents: z.number().int().nonnegative(),
+  lineTotalCents: z.number().int().nonnegative().optional(),
+  customization: z
+    .object({
+      notes: z.string().default(""),
+      selectedOptions: z
+        .array(
+          z.object({
+            groupId: z.string(),
+            groupLabel: z.string(),
+            optionId: z.string(),
+            optionLabel: z.string(),
+            priceDeltaCents: z.number().int()
+          })
+        )
+        .default([])
+    })
+    .optional()
+});
 const orderSchema = z.object({
   id: z.string().uuid(),
   status: orderStatusSchema,
+  items: z.array(orderItemSchema),
   pickupCode: z.string().min(1),
   total: z.object({
     currency: z.literal("USD"),
@@ -44,24 +68,26 @@ const pushTokenUpsertResponseSchema = z.object({
 const orderListSchema = z.array(orderSchema);
 const loyaltyLedgerSchema = z.array(loyaltyLedgerEntrySchema);
 const activeOrderStatusSchema = orderStatusSchema.exclude(["CANCELED", "COMPLETED"]);
+export const orderHistoryQueryKey = ["account", "orders"] as const;
 
 export type OrderHistoryEntry = z.output<typeof orderSchema>;
 export type LoyaltyBalance = z.output<typeof loyaltyBalanceSchema>;
 export type LoyaltyLedgerEntry = z.output<typeof loyaltyLedgerEntrySchema>;
 export type ActiveOrderStatus = z.output<typeof activeOrderStatusSchema>;
 
+export function sortOrdersByLatestActivity(orders: OrderHistoryEntry[]) {
+  return [...orders].sort((left, right) => {
+    const leftOccurredAt = left.timeline[left.timeline.length - 1]?.occurredAt ?? "";
+    const rightOccurredAt = right.timeline[right.timeline.length - 1]?.occurredAt ?? "";
+    return Date.parse(rightOccurredAt) - Date.parse(leftOccurredAt);
+  });
+}
+
 export function useOrderHistoryQuery(enabled = true) {
   return useQuery({
-    queryKey: ["account", "orders"],
+    queryKey: orderHistoryQueryKey,
     enabled,
-    queryFn: async (): Promise<OrderHistoryEntry[]> => {
-      const orders = orderListSchema.parse(await apiClient.listOrders());
-      return [...orders].sort((left, right) => {
-        const leftOccurredAt = left.timeline[left.timeline.length - 1]?.occurredAt ?? "";
-        const rightOccurredAt = right.timeline[right.timeline.length - 1]?.occurredAt ?? "";
-        return Date.parse(rightOccurredAt) - Date.parse(leftOccurredAt);
-      });
-    }
+    queryFn: async (): Promise<OrderHistoryEntry[]> => sortOrdersByLatestActivity(orderListSchema.parse(await apiClient.listOrders()))
   });
 }
 

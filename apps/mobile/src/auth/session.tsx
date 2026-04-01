@@ -1,5 +1,5 @@
 import { AppState } from "react-native";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { apiClient } from "../api/client";
 import {
   clearStoredSession,
@@ -23,13 +23,21 @@ type SessionContextValue = {
 };
 
 const SessionContext = createContext<SessionContextValue | undefined>(undefined);
+const SESSION_REFRESH_WINDOW_MS = 60_000;
+
+function getSessionRefreshDelayMs(session: AuthSession, nowMs = Date.now()) {
+  return Math.max(0, Date.parse(session.expiresAt) - nowMs - SESSION_REFRESH_WINDOW_MS);
+}
 
 export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [isHydrating, setIsHydrating] = useState(true);
+  const sessionRef = useRef<AuthSession | null>(null);
+  const refreshInFlightRef = useRef<Promise<AuthSession | null> | null>(null);
 
   const clearLocalSession = useCallback(async () => {
     apiClient.setAccessToken(undefined);
+    sessionRef.current = null;
     setSession(null);
     try {
       await clearStoredSession();
@@ -40,6 +48,7 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (nextSession: AuthSession) => {
     apiClient.setAccessToken(nextSession.accessToken);
+    sessionRef.current = nextSession;
     setSession(nextSession);
     try {
       await persistSession(nextSession);
@@ -65,19 +74,37 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
   );
 
   const refreshSession = useCallback(async (): Promise<AuthSession | null> => {
-    if (!session) {
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const currentSession = sessionRef.current;
+    if (!currentSession) {
       return null;
     }
 
-    try {
-      const nextSession = await apiClient.refreshSession({ refreshToken: session.refreshToken });
-      await signIn(nextSession);
-      return nextSession;
-    } catch {
-      await signOut({ revokeRemote: false });
-      return null;
-    }
-  }, [session, signIn, signOut]);
+    const refreshPromise = (async (): Promise<AuthSession | null> => {
+      try {
+        const nextSession = await apiClient.refreshSession({ refreshToken: currentSession.refreshToken });
+        await signIn(nextSession);
+        return nextSession;
+      } catch {
+        if (sessionRef.current?.refreshToken === currentSession.refreshToken) {
+          await signOut({ revokeRemote: false });
+        }
+        return null;
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    })();
+
+    refreshInFlightRef.current = refreshPromise;
+    return refreshPromise;
+  }, [signIn, signOut]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   useEffect(() => {
     let isMounted = true;
@@ -135,6 +162,28 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
 
     return () => {
       subscription.remove();
+    };
+  }, [refreshSession, session]);
+
+  useEffect(() => {
+    apiClient.setSessionRefreshHandler(refreshSession);
+
+    return () => {
+      apiClient.setSessionRefreshHandler(undefined);
+    };
+  }, [refreshSession]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    const refreshTimeout = setTimeout(() => {
+      void refreshSession();
+    }, getSessionRefreshDelayMs(session));
+
+    return () => {
+      clearTimeout(refreshTimeout);
     };
   }, [refreshSession, session]);
 

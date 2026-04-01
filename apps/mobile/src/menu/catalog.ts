@@ -1,39 +1,192 @@
 import { useQuery } from "@tanstack/react-query";
-import { z } from "zod";
-import { apiClient } from "../api/client";
+import {
+  appConfigSchema,
+  menuItemCustomizationGroupSchema,
+  menuResponseSchema,
+  storeConfigResponseSchema,
+  type AppConfig,
+  type MenuCategory,
+  type MenuItem,
+  type MenuItemCustomizationGroup,
+  type MenuItemCustomizationInput,
+  type MenuItemCustomizationOption,
+  type MenuResponse,
+  type StoreConfigResponse
+} from "@gazelle/contracts-catalog";
+import { apiClient, catalogApiClient } from "../api/client";
 
-const menuItemSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  priceCents: z.number().int().nonnegative(),
-  badgeCodes: z.array(z.string()),
-  visible: z.boolean()
+const sizeGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "size",
+  sourceGroupId: "core:size",
+  label: "Size",
+  description: "Choose the pour size for this drink.",
+  selectionType: "single",
+  required: true,
+  minSelections: 1,
+  maxSelections: 1,
+  sortOrder: 0,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "regular",
+      label: "Regular",
+      priceDeltaCents: 0,
+      default: true,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "large",
+      label: "Large",
+      priceDeltaCents: 100,
+      default: false,
+      sortOrder: 1,
+      available: true
+    }
+  ]
 });
 
-const menuCategorySchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  items: z.array(menuItemSchema)
+const milkGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "milk",
+  sourceGroupId: "core:milk",
+  label: "Milk",
+  description: "Pick the texture and finish you want.",
+  selectionType: "single",
+  required: true,
+  minSelections: 1,
+  maxSelections: 1,
+  sortOrder: 1,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "whole",
+      label: "Whole milk",
+      priceDeltaCents: 0,
+      default: true,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "oat",
+      label: "Oat milk",
+      priceDeltaCents: 75,
+      default: false,
+      sortOrder: 1,
+      available: true
+    },
+    {
+      id: "almond",
+      label: "Almond milk",
+      priceDeltaCents: 75,
+      default: false,
+      sortOrder: 2,
+      available: true
+    }
+  ]
 });
 
-const menuResponseSchema = z.object({
-  locationId: z.string(),
-  currency: z.literal("USD"),
-  categories: z.array(menuCategorySchema)
+const sweetnessGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "sweetness",
+  sourceGroupId: "core:sweetness",
+  label: "Sweetness",
+  description: "Control how much sweetness is whisked in.",
+  selectionType: "single",
+  required: true,
+  minSelections: 1,
+  maxSelections: 1,
+  sortOrder: 2,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "full",
+      label: "Full sweet",
+      priceDeltaCents: 0,
+      default: true,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "half",
+      label: "Half sweet",
+      priceDeltaCents: 0,
+      default: false,
+      sortOrder: 1,
+      available: true
+    },
+    {
+      id: "unsweetened",
+      label: "Unsweetened",
+      priceDeltaCents: 0,
+      default: false,
+      sortOrder: 2,
+      available: true
+    }
+  ]
 });
 
-const storeConfigResponseSchema = z.object({
-  locationId: z.string(),
-  prepEtaMinutes: z.number().int().positive(),
-  taxRateBasisPoints: z.number().int().min(0).max(10000),
-  pickupInstructions: z.string()
+const espressoExtrasGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "espresso-extras",
+  label: "Extras",
+  description: "Add a little more structure or finish.",
+  selectionType: "multiple",
+  required: false,
+  minSelections: 0,
+  maxSelections: 2,
+  sortOrder: 3,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "extra-shot",
+      label: "Extra shot",
+      priceDeltaCents: 125,
+      default: false,
+      sortOrder: 0,
+      available: true
+    },
+    {
+      id: "vanilla",
+      label: "Vanilla",
+      priceDeltaCents: 75,
+      default: false,
+      sortOrder: 1,
+      available: true
+    }
+  ]
 });
 
-export type MenuItem = z.output<typeof menuItemSchema>;
-export type MenuCategory = z.output<typeof menuCategorySchema>;
-export type MenuResponse = z.output<typeof menuResponseSchema>;
-export type StoreConfigResponse = z.output<typeof storeConfigResponseSchema>;
+const matchaFinishGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
+  id: "matcha-finish",
+  label: "Finish",
+  description: "Choose the final matcha texture.",
+  selectionType: "multiple",
+  required: false,
+  minSelections: 0,
+  maxSelections: 1,
+  sortOrder: 3,
+  displayStyle: "chips",
+  options: [
+    {
+      id: "strawberry-cold-foam",
+      label: "Strawberry cold foam",
+      priceDeltaCents: 150,
+      default: false,
+      sortOrder: 0,
+      available: true
+    }
+  ]
+});
+
+export const reusableCustomizationGroups = {
+  size: sizeGroup,
+  milk: milkGroup,
+  sweetness: sweetnessGroup
+} as const;
+
+export const exampleCustomizationByItemId: Record<string, MenuItemCustomizationGroup[]> = {
+  latte: [sizeGroup, milkGroup, espressoExtrasGroup],
+  matcha: [sizeGroup, milkGroup, sweetnessGroup, matchaFinishGroup],
+  croissant: []
+};
 
 const fallbackMenu = menuResponseSchema.parse({
   locationId: "flagship-01",
@@ -46,40 +199,26 @@ const fallbackMenu = menuResponseSchema.parse({
         {
           id: "latte",
           name: "Honey Oat Latte",
-          description: "Espresso with steamed oat milk and honey drizzle.",
+          description: "Espresso with steamed oat milk and a warm honey finish.",
           priceCents: 675,
           badgeCodes: ["popular"],
-          visible: true
-        },
-        {
-          id: "flat-white",
-          name: "Flat White",
-          description: "Velvety microfoam over ristretto espresso shots.",
-          priceCents: 625,
-          badgeCodes: [],
-          visible: true
+          visible: true,
+          customizationGroups: exampleCustomizationByItemId.latte
         }
       ]
     },
     {
-      id: "cold",
-      title: "Cold Drinks",
+      id: "matcha",
+      title: "Matcha",
       items: [
-        {
-          id: "cold-brew",
-          name: "Single-Origin Cold Brew",
-          description: "Twelve-hour steep with rotating single-origin beans.",
-          priceCents: 550,
-          badgeCodes: ["seasonal"],
-          visible: true
-        },
         {
           id: "matcha",
           name: "Ceremonial Matcha",
-          description: "Stone-ground matcha whisked to order with milk of choice.",
+          description: "Stone-ground matcha whisked to order with milk of your choice.",
           priceCents: 725,
           badgeCodes: ["new"],
-          visible: true
+          visible: true,
+          customizationGroups: exampleCustomizationByItemId.matcha
         }
       ]
     },
@@ -90,10 +229,11 @@ const fallbackMenu = menuResponseSchema.parse({
         {
           id: "croissant",
           name: "Butter Croissant",
-          description: "Flaky and laminated daily in-house.",
+          description: "Flaky, laminated, and baked fresh each morning.",
           priceCents: 425,
           badgeCodes: [],
-          visible: true
+          visible: true,
+          customizationGroups: exampleCustomizationByItemId.croissant
         }
       ]
     }
@@ -105,6 +245,58 @@ const fallbackStoreConfig = storeConfigResponseSchema.parse({
   prepEtaMinutes: 12,
   taxRateBasisPoints: 600,
   pickupInstructions: "Pickup at the flagship order counter."
+});
+
+const fallbackAppConfig = appConfigSchema.parse({
+  brand: {
+    brandId: "gazelle-default",
+    brandName: "Gazelle Coffee",
+    locationId: "flagship-01",
+    locationName: "Gazelle Coffee Flagship",
+    marketLabel: "Ann Arbor, MI"
+  },
+  theme: {
+    background: "#F7F4ED",
+    backgroundAlt: "#F0ECE4",
+    surface: "#FFFDF8",
+    surfaceMuted: "#F3EFE7",
+    foreground: "#171513",
+    foregroundMuted: "#605B55",
+    muted: "#9B9389",
+    border: "rgba(23, 21, 19, 0.08)",
+    primary: "#1E1B18",
+    accent: "#2D2823",
+    fontFamily: "System",
+    displayFontFamily: "Fraunces"
+  },
+  enabledTabs: ["home", "menu", "orders", "account"],
+  featureFlags: {
+    loyalty: true,
+    pushNotifications: true,
+    refunds: true,
+    orderTracking: true,
+    staffDashboard: false,
+    menuEditing: false
+  },
+  loyaltyEnabled: true,
+  paymentCapabilities: {
+    applePay: true,
+    card: true,
+    cash: false,
+    refunds: true,
+    clover: {
+      enabled: true,
+      merchantRef: "flagship-01"
+    }
+  },
+  fulfillment: {
+    mode: "time_based",
+    timeBasedScheduleMinutes: {
+      inPrep: 5,
+      ready: 10,
+      completed: 15
+    }
+  }
 });
 
 function filterVisibleCategories(menu: MenuResponse): MenuCategory[] {
@@ -139,6 +331,24 @@ export function useStoreConfigQuery() {
   });
 }
 
+export function useAppConfigQuery() {
+  return useQuery({
+    queryKey: ["catalog", "app-config"],
+    queryFn: async (): Promise<AppConfig> => {
+      try {
+        return await apiClient.appConfig();
+      } catch {
+        try {
+          return await catalogApiClient.appConfig();
+        } catch {
+          return fallbackAppConfig;
+        }
+      }
+    },
+    staleTime: 60_000
+  });
+}
+
 export function resolveMenuData(menu: MenuResponse | undefined): MenuResponse {
   if (!menu || menu.categories.length === 0) {
     return fallbackMenu;
@@ -149,6 +359,17 @@ export function resolveMenuData(menu: MenuResponse | undefined): MenuResponse {
 
 export function resolveStoreConfigData(config: StoreConfigResponse | undefined): StoreConfigResponse {
   return config ?? fallbackStoreConfig;
+}
+
+export function resolveAppConfigData(config: AppConfig | undefined): AppConfig {
+  return config ?? fallbackAppConfig;
+}
+
+export function createEmptyCustomizationInput(): MenuItemCustomizationInput {
+  return {
+    selectedOptions: [],
+    notes: ""
+  };
 }
 
 export function formatUsd(amountCents: number): string {
@@ -164,3 +385,5 @@ export function toCategoryById(categories: MenuCategory[]): Record<string, MenuC
     return acc;
   }, {});
 }
+
+export type { AppConfig, MenuCategory, MenuItem, MenuItemCustomizationGroup, MenuItemCustomizationInput, MenuItemCustomizationOption };

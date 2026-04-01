@@ -21,6 +21,8 @@ Validate local push-token registration and order-state notification dispatch beh
 3. Confirm notifications service accepted and enqueued the event.
 4. Process outbox entries and confirm dispatch summary.
 
+Internal notifications routes now require `NOTIFICATIONS_INTERNAL_API_TOKEN`.
+
 ## Register Push Token Through Gateway
 
 ```bash
@@ -49,6 +51,7 @@ Expected response:
 curl -s http://127.0.0.1:3005/v1/notifications/internal/order-state \
   -X POST \
   -H "content-type: application/json" \
+  -H "x-internal-token: ${NOTIFICATIONS_INTERNAL_API_TOKEN}" \
   -d "{
     \"userId\":\"${USER_ID}\",
     \"orderId\":\"123e4567-e89b-12d3-a456-426614174951\",
@@ -76,6 +79,7 @@ Repeat the same payload:
 curl -s http://127.0.0.1:3005/v1/notifications/internal/outbox/process \
   -X POST \
   -H "content-type: application/json" \
+  -H "x-internal-token: ${NOTIFICATIONS_INTERNAL_API_TOKEN}" \
   -d '{"batchSize":50}'
 ```
 
@@ -90,6 +94,8 @@ You can also run the local worker loop instead of manual processing:
 ```bash
 START_NOTIFICATIONS_DISPATCH_WORKER=1 pnpm dev:services
 ```
+
+Ensure the worker environment also has `NOTIFICATIONS_INTERNAL_API_TOKEN` set.
 
 ## Orders Integration
 

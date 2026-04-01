@@ -28,8 +28,17 @@ export async function buildApp() {
   };
 
   await app.register(cors, {
-    origin: true,
-    credentials: true
+    origin: (origin, cb) => {
+      const allowed = (process.env.CORS_ALLOWED_ORIGINS ?? "http://localhost:3000,http://localhost:5173,http://localhost:8080")
+        .split(",")
+        .map((value) => value.trim());
+      if (!origin || allowed.includes(origin)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Not allowed by CORS"), false);
+      }
+    },
+    credentials: true,
   });
 
   await app.register(rateLimit, {

@@ -27,6 +27,8 @@ Default in-memory flow:
 `services/orders` now orchestrates loyalty ledger mutations through:
 - `POST /v1/loyalty/internal/ledger/apply`
 
+`services/orders` sends `LOYALTY_INTERNAL_API_TOKEN` as `x-internal-token` on those loyalty requests.
+
 Payment success (`PAID`) applies:
 - `REDEEM` for `quote.pointsToRedeem` (when > 0)
 - `EARN` for `order.total.amountCents`
@@ -45,6 +47,8 @@ Loyalty mutation idempotency keys are deterministic per order:
 
 `services/orders` now emits best-effort internal notification events to:
 - `POST /v1/notifications/internal/order-state`
+
+`services/orders` sends `NOTIFICATIONS_INTERNAL_API_TOKEN` as `x-internal-token` on those notifications requests.
 
 Events are emitted when status transitions are newly applied:
 - `PENDING_PAYMENT` (order create)
@@ -74,6 +78,9 @@ Default notifications upstream:
 Default:
 - `ORDERS_SERVICE_BASE_URL=http://127.0.0.1:3001`
 - `LOYALTY_SERVICE_BASE_URL=http://127.0.0.1:3004` (used by orders internally)
+- `LOYALTY_INTERNAL_API_TOKEN` must match the loyalty service runtime
+- `NOTIFICATIONS_SERVICE_BASE_URL=http://127.0.0.1:3005`
+- `NOTIFICATIONS_INTERNAL_API_TOKEN` must match the notifications service runtime
 
 ## Verification
 

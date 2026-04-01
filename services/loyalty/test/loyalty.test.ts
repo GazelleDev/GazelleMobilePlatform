@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loyaltyBalanceSchema, loyaltyLedgerEntrySchema } from "@gazelle/contracts-loyalty";
 import { z } from "zod";
 import { buildApp } from "../src/app.js";
@@ -8,7 +8,33 @@ const mutationResponseSchema = z.object({
   balance: loyaltyBalanceSchema
 });
 
+const loyaltyGatewayToken = "loyalty-gateway-token";
+const loyaltyInternalToken = "loyalty-internal-token";
+
+function gatewayHeaders(extraHeaders?: Record<string, string>) {
+  return {
+    "x-gateway-token": loyaltyGatewayToken,
+    ...extraHeaders
+  };
+}
+
+function internalHeaders(extraHeaders?: Record<string, string>) {
+  return {
+    "x-internal-token": loyaltyInternalToken,
+    ...extraHeaders
+  };
+}
+
 describe("loyalty service", () => {
+  beforeEach(() => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", loyaltyGatewayToken);
+    vi.stubEnv("LOYALTY_INTERNAL_API_TOKEN", loyaltyInternalToken);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("returns a zeroed balance and empty ledger for a new user", async () => {
     const app = await buildApp();
     const userId = "123e4567-e89b-12d3-a456-426614174401";
@@ -16,7 +42,7 @@ describe("loyalty service", () => {
     const balanceResponse = await app.inject({
       method: "GET",
       url: "/v1/loyalty/balance",
-      headers: { "x-user-id": userId }
+      headers: gatewayHeaders({ "x-user-id": userId })
     });
     expect(balanceResponse.statusCode).toBe(200);
     expect(loyaltyBalanceSchema.parse(balanceResponse.json())).toEqual({
@@ -29,7 +55,7 @@ describe("loyalty service", () => {
     const ledgerResponse = await app.inject({
       method: "GET",
       url: "/v1/loyalty/ledger",
-      headers: { "x-user-id": userId }
+      headers: gatewayHeaders({ "x-user-id": userId })
     });
     expect(ledgerResponse.statusCode).toBe(200);
     expect(z.array(loyaltyLedgerEntrySchema).parse(ledgerResponse.json())).toEqual([]);
@@ -45,6 +71,7 @@ describe("loyalty service", () => {
     const earnResponse = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         orderId,
@@ -63,6 +90,7 @@ describe("loyalty service", () => {
     const redeemResponse = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         orderId,
@@ -81,6 +109,7 @@ describe("loyalty service", () => {
     const refundResponse = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         orderId,
@@ -99,6 +128,7 @@ describe("loyalty service", () => {
     const adjustmentResponse = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         type: "ADJUSTMENT",
@@ -116,7 +146,7 @@ describe("loyalty service", () => {
     const balanceResponse = await app.inject({
       method: "GET",
       url: "/v1/loyalty/balance",
-      headers: { "x-user-id": userId }
+      headers: gatewayHeaders({ "x-user-id": userId })
     });
     expect(balanceResponse.statusCode).toBe(200);
     expect(loyaltyBalanceSchema.parse(balanceResponse.json())).toMatchObject({
@@ -129,7 +159,7 @@ describe("loyalty service", () => {
     const ledgerResponse = await app.inject({
       method: "GET",
       url: "/v1/loyalty/ledger",
-      headers: { "x-user-id": userId }
+      headers: gatewayHeaders({ "x-user-id": userId })
     });
     expect(ledgerResponse.statusCode).toBe(200);
     const ledger = z.array(loyaltyLedgerEntrySchema).parse(ledgerResponse.json());
@@ -146,6 +176,7 @@ describe("loyalty service", () => {
     const firstResponse = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         type: "EARN",
@@ -160,6 +191,7 @@ describe("loyalty service", () => {
     const repeatedResponse = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         type: "EARN",
@@ -176,6 +208,7 @@ describe("loyalty service", () => {
     const conflictingResponse = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         type: "EARN",
@@ -199,6 +232,7 @@ describe("loyalty service", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         type: "REDEEM",
@@ -221,6 +255,7 @@ describe("loyalty service", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
       payload: {
         userId,
         type: "EARN",
@@ -247,6 +282,7 @@ describe("loyalty service", () => {
       const firstMutation = await app.inject({
         method: "POST",
         url: "/v1/loyalty/internal/ledger/apply",
+        headers: internalHeaders(),
         payload: {
           userId,
           type: "EARN",
@@ -259,6 +295,7 @@ describe("loyalty service", () => {
       const secondMutation = await app.inject({
         method: "POST",
         url: "/v1/loyalty/internal/ledger/apply",
+        headers: internalHeaders(),
         payload: {
           userId,
           type: "EARN",
@@ -274,34 +311,91 @@ describe("loyalty service", () => {
   });
 
   it("requires gateway token on customer routes when configured", async () => {
-    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "loyalty-gateway-token");
-    try {
-      const app = await buildApp();
-      const userId = "123e4567-e89b-12d3-a456-426614174406";
+    const app = await buildApp();
+    const userId = "123e4567-e89b-12d3-a456-426614174406";
 
-      const unauthorizedBalance = await app.inject({
-        method: "GET",
-        url: "/v1/loyalty/balance",
-        headers: { "x-user-id": userId }
-      });
-      expect(unauthorizedBalance.statusCode).toBe(401);
-      expect(unauthorizedBalance.json()).toMatchObject({
-        code: "UNAUTHORIZED_GATEWAY_REQUEST"
-      });
+    const unauthorizedBalance = await app.inject({
+      method: "GET",
+      url: "/v1/loyalty/balance",
+      headers: { "x-user-id": userId }
+    });
+    expect(unauthorizedBalance.statusCode).toBe(401);
+    expect(unauthorizedBalance.json()).toMatchObject({
+      code: "UNAUTHORIZED_GATEWAY_REQUEST"
+    });
 
-      const authorizedBalance = await app.inject({
-        method: "GET",
-        url: "/v1/loyalty/balance",
-        headers: {
-          "x-user-id": userId,
-          "x-gateway-token": "loyalty-gateway-token"
-        }
-      });
-      expect(authorizedBalance.statusCode).toBe(200);
+    const authorizedBalance = await app.inject({
+      method: "GET",
+      url: "/v1/loyalty/balance",
+      headers: gatewayHeaders({
+        "x-user-id": userId
+      })
+    });
+    expect(authorizedBalance.statusCode).toBe(200);
 
-      await app.close();
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    await app.close();
+  });
+
+  it("requires an internal token on loyalty mutation routes", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/loyalty/internal/ledger/apply",
+      payload: {
+        userId: "123e4567-e89b-12d3-a456-426614174407",
+        type: "EARN",
+        amountCents: 100,
+        idempotencyKey: "evt-missing-internal-token"
+      }
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      code: "UNAUTHORIZED_INTERNAL_REQUEST"
+    });
+
+    await app.close();
+  });
+
+  it("fails closed when gateway auth is not configured", async () => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "");
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/loyalty/balance",
+      headers: gatewayHeaders({
+        "x-user-id": "123e4567-e89b-12d3-a456-426614174408"
+      })
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      code: "GATEWAY_ACCESS_NOT_CONFIGURED"
+    });
+
+    await app.close();
+  });
+
+  it("fails closed when loyalty internal auth is not configured", async () => {
+    vi.stubEnv("LOYALTY_INTERNAL_API_TOKEN", "");
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/loyalty/internal/ledger/apply",
+      headers: internalHeaders(),
+      payload: {
+        userId: "123e4567-e89b-12d3-a456-426614174409",
+        type: "EARN",
+        amountCents: 100,
+        idempotencyKey: "evt-missing-internal-config"
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      code: "INTERNAL_ACCESS_NOT_CONFIGURED"
+    });
+
+    await app.close();
   });
 });

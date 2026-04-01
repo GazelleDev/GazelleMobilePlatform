@@ -4,10 +4,12 @@ Last reviewed: `2026-03-11`
 
 ## Scope
 
-Initial persistence foundation is now wired for `payments`, `loyalty`, `orders`, `identity`, and `notifications` with automatic fallback behavior:
+Initial persistence foundation is now wired for `payments`, `loyalty`, `orders`, `identity`, and `notifications` with explicit fallback behavior:
 
 - If `DATABASE_URL` is set and reachable, services persist business state in Postgres.
-- If `DATABASE_URL` is missing or initialization fails, services fall back to in-memory storage and log the fallback.
+- In-memory mode is allowed automatically in `NODE_ENV=test`.
+- Outside tests, in-memory mode only activates when `ALLOW_IN_MEMORY_PERSISTENCE=true`.
+- If Postgres is required and `DATABASE_URL` is missing or initialization fails, service startup fails instead of silently switching to memory.
 
 ## Shared Package
 
@@ -19,9 +21,10 @@ It provides:
 
 - `createPostgresDb(connectionString)`
 - `getDatabaseUrl()`
-- `ensurePersistenceTables(db)`
+- `runMigrations(db)`
+- `ensurePersistenceTables(db)` (deprecated compatibility export)
 
-`ensurePersistenceTables` currently provisions foundational tables for:
+`runMigrations` applies the numbered persistence migration history for:
 
 - `payments_charges`
 - `payments_refunds`
@@ -87,9 +90,21 @@ Set for DB-backed mode:
 DATABASE_URL=postgres://user:password@host:5432/gazelle
 ```
 
-Without `DATABASE_URL`, service behavior remains unchanged from prior local/dev simulation mode.
+Set for explicit non-durable local simulation mode:
+
+```bash
+ALLOW_IN_MEMORY_PERSISTENCE=true
+```
+
+Run migrations manually:
+
+```bash
+pnpm --filter @gazelle/persistence migrate
+```
+
+Without `DATABASE_URL`, services now require `ALLOW_IN_MEMORY_PERSISTENCE=true` unless they are running under `NODE_ENV=test`.
 
 ## Next Work
 
 - Add transactional boundaries for cross-service side effects.
-- Introduce dedicated migration runner and versioned migrations.
+- Expand migration coverage as new persistence-backed features land.

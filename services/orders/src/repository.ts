@@ -1,6 +1,14 @@
 import type { FastifyBaseLogger } from "fastify";
+import { normalizeCustomizationGroups, type MenuItemCustomizationGroup } from "@gazelle/contracts-catalog";
 import { orderQuoteSchema, orderSchema } from "@gazelle/contracts-orders";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import {
+  allowsInMemoryPersistence,
+  buildPersistenceStartupError,
+  createPostgresDb,
+  getDatabaseUrl,
+  runMigrations,
+  sql
+} from "@gazelle/persistence";
 import { z } from "zod";
 
 type OrderQuote = z.output<typeof orderQuoteSchema>;
@@ -31,6 +39,15 @@ type PersistedQuoteRow = {
   quote_json: unknown;
 };
 
+const defaultTaxRateBasisPoints = 600;
+
+export type QuoteCatalogItem = {
+  itemId: string;
+  itemName: string;
+  basePriceCents: number;
+  customizationGroups: MenuItemCustomizationGroup[];
+};
+
 export type OrdersRepository = {
   backend: "memory" | "postgres";
   saveQuote(quote: OrderQuote): Promise<void>;
@@ -38,6 +55,7 @@ export type OrdersRepository = {
   createOrder(input: { order: Order; quoteId: string; userId: string }): Promise<void>;
   getOrder(orderId: string): Promise<Order | undefined>;
   listOrders(): Promise<Order[]>;
+  listOrdersByUser(userId: string): Promise<Order[]>;
   getOrderForCreateIdempotency(quoteId: string, quoteHash: string): Promise<Order | undefined>;
   saveCreateOrderIdempotency(quoteId: string, quoteHash: string, orderId: string): Promise<void>;
   getPaymentOrderByIdempotency(orderId: string, idempotencyKey: string): Promise<Order | undefined>;
@@ -52,6 +70,9 @@ export type OrdersRepository = {
   setSuccessfulRefund(orderId: string, payload: unknown): Promise<void>;
   getSuccessfulRefund(orderId: string): Promise<unknown | undefined>;
   updateOrder(orderId: string, order: Order): Promise<Order>;
+  getCatalogItemsForQuote(locationId: string, itemIds: string[]): Promise<Map<string, QuoteCatalogItem>>;
+  getTaxRateBasisPoints(locationId: string): Promise<number>;
+  pingDb(): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -62,6 +83,119 @@ function sortOrdersDescendingByCreatedAt(orders: Order[]) {
     return rightCreatedAt - leftCreatedAt;
   });
 }
+
+const fallbackCatalogItems = new Map<string, QuoteCatalogItem>([
+  [
+    "latte",
+    {
+      itemId: "latte",
+      itemName: "Honey Oat Latte",
+      basePriceCents: 675,
+      customizationGroups: normalizeCustomizationGroups([
+        {
+          id: "size",
+          sourceGroupId: "core:size",
+          label: "Size",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 0,
+          options: [
+            { id: "regular", label: "Regular", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "large", label: "Large", priceDeltaCents: 100, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "milk",
+          sourceGroupId: "core:milk",
+          label: "Milk",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 1,
+          options: [
+            { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "oat", label: "Oat milk", priceDeltaCents: 75, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "extras",
+          label: "Extras",
+          selectionType: "multiple",
+          required: false,
+          minSelections: 0,
+          maxSelections: 2,
+          sortOrder: 2,
+          options: [{ id: "extra-shot", label: "Extra shot", priceDeltaCents: 125, sortOrder: 0, available: true }]
+        }
+      ])
+    }
+  ],
+  [
+    "matcha",
+    {
+      itemId: "matcha",
+      itemName: "Ceremonial Matcha",
+      basePriceCents: 725,
+      customizationGroups: normalizeCustomizationGroups([
+        {
+          id: "size",
+          sourceGroupId: "core:size",
+          label: "Size",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 0,
+          options: [
+            { id: "regular", label: "Regular", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "large", label: "Large", priceDeltaCents: 100, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "milk",
+          sourceGroupId: "core:milk",
+          label: "Milk",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 1,
+          options: [
+            { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "oat", label: "Oat milk", priceDeltaCents: 75, sortOrder: 1, available: true }
+          ]
+        },
+        {
+          id: "sweetness",
+          sourceGroupId: "core:sweetness",
+          label: "Sweetness",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 2,
+          options: [
+            { id: "full", label: "Full sweet", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+            { id: "half", label: "Half sweet", priceDeltaCents: 0, sortOrder: 1, available: true },
+            { id: "unsweetened", label: "Unsweetened", priceDeltaCents: 0, sortOrder: 2, available: true }
+          ]
+        }
+      ])
+    }
+  ],
+  [
+    "croissant",
+    {
+      itemId: "croissant",
+      itemName: "Butter Croissant",
+      basePriceCents: 425,
+      customizationGroups: []
+    }
+  ]
+]);
 
 function createInMemoryRepository(): OrdersRepository {
   const quotesById = new Map<string, OrderQuote>();
@@ -89,6 +223,12 @@ function createInMemoryRepository(): OrdersRepository {
     },
     async listOrders() {
       const orders = [...ordersById.values()].map((entry) => entry.order);
+      return sortOrdersDescendingByCreatedAt(orders);
+    },
+    async listOrdersByUser(userId) {
+      const orders = [...ordersById.values()]
+        .filter((entry) => entry.userId === userId)
+        .map((entry) => entry.order);
       return sortOrdersDescendingByCreatedAt(orders);
     },
     async getOrderForCreateIdempotency(quoteId, quoteHash) {
@@ -181,15 +321,34 @@ function createInMemoryRepository(): OrdersRepository {
       });
       return order;
     },
+    async getCatalogItemsForQuote(_locationId, itemIds) {
+      const items = new Map<string, QuoteCatalogItem>();
+      for (const itemId of itemIds) {
+        const item = fallbackCatalogItems.get(itemId);
+        if (item) {
+          items.set(itemId, item);
+        }
+      }
+      return items;
+    },
+    async getTaxRateBasisPoints() {
+      return defaultTaxRateBasisPoints;
+    },
+    async pingDb() {
+      // no-op for in-memory
+    },
     async close() {
       // no-op
     }
   };
 }
 
-async function createPostgresRepository(connectionString: string): Promise<OrdersRepository> {
+async function createPostgresRepository(
+  connectionString: string,
+  logger: FastifyBaseLogger
+): Promise<OrdersRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   async function getPersistedOrder(orderId: string): Promise<PersistedOrderRow | undefined> {
     const row = await db.selectFrom("orders").selectAll().where("order_id", "=", orderId).executeTakeFirst();
@@ -202,6 +361,10 @@ async function createPostgresRepository(connectionString: string): Promise<Order
 
   function parseQuote(payload: unknown): OrderQuote {
     return orderQuoteSchema.parse(payload);
+  }
+
+  function parseCustomizationGroups(payload: unknown) {
+    return normalizeCustomizationGroups(typeof payload === "string" ? JSON.parse(payload) : payload);
   }
 
   async function getQuoteById(quoteId: string): Promise<OrderQuote | undefined> {
@@ -263,6 +426,15 @@ async function createPostgresRepository(connectionString: string): Promise<Order
     },
     async listOrders() {
       const rows = await db.selectFrom("orders").selectAll().orderBy("created_at", "desc").execute();
+      return rows.map((row) => parseOrder((row as PersistedOrderRow).order_json));
+    },
+    async listOrdersByUser(userId) {
+      const rows = await db
+        .selectFrom("orders")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .orderBy("created_at", "desc")
+        .execute();
       return rows.map((row) => parseOrder((row as PersistedOrderRow).order_json));
     },
     async getOrderForCreateIdempotency(quoteId, quoteHash) {
@@ -399,6 +571,54 @@ async function createPostgresRepository(connectionString: string): Promise<Order
 
       return order;
     },
+    async getCatalogItemsForQuote(locationId, itemIds) {
+      if (itemIds.length === 0) {
+        return new Map<string, QuoteCatalogItem>();
+      }
+
+      const rows = await db
+        .selectFrom("catalog_menu_items")
+        .select(["item_id", "name", "price_cents", "customization_groups_json", "visible"])
+        .where("location_id", "=", locationId)
+        .where("item_id", "in", itemIds)
+        .where("visible", "=", true)
+        .execute();
+
+      const items = new Map<string, QuoteCatalogItem>();
+      for (const row of rows) {
+        items.set(row.item_id, {
+          itemId: row.item_id,
+          itemName: row.name,
+          basePriceCents: row.price_cents,
+          customizationGroups: parseCustomizationGroups(row.customization_groups_json)
+        });
+      }
+
+      return items;
+    },
+    async getTaxRateBasisPoints(locationId) {
+      const row = await db
+        .selectFrom("catalog_store_configs")
+        .select("tax_rate_basis_points")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
+
+      if (!row) {
+        logger.warn(
+          {
+            locationId,
+            fallbackTaxRateBasisPoints: defaultTaxRateBasisPoints
+          },
+          "catalog store config tax rate missing for location; using default"
+        );
+        return defaultTaxRateBasisPoints;
+      }
+
+      return row.tax_rate_basis_points;
+    },
+    async pingDb() {
+      await sql`SELECT 1`.execute(db);
+    },
     async close() {
       await db.destroy();
     }
@@ -407,17 +627,33 @@ async function createPostgresRepository(connectionString: string): Promise<Order
 
 export async function createOrdersRepository(logger: FastifyBaseLogger): Promise<OrdersRepository> {
   const databaseUrl = getDatabaseUrl();
+  const allowInMemory = allowsInMemoryPersistence();
   if (!databaseUrl) {
-    logger.info({ backend: "memory" }, "orders persistence backend selected");
+    if (!allowInMemory) {
+      throw buildPersistenceStartupError({
+        service: "orders",
+        reason: "missing_database_url"
+      });
+    }
+
+    logger.warn({ backend: "memory" }, "orders persistence backend selected with explicit in-memory mode");
     return createInMemoryRepository();
   }
 
   try {
-    const repository = await createPostgresRepository(databaseUrl);
+    const repository = await createPostgresRepository(databaseUrl, logger);
     logger.info({ backend: "postgres" }, "orders persistence backend selected");
     return repository;
   } catch (error) {
-    logger.error({ error }, "failed to initialize postgres persistence; falling back to in-memory");
+    if (!allowInMemory) {
+      logger.error({ error }, "failed to initialize postgres persistence");
+      throw buildPersistenceStartupError({
+        service: "orders",
+        reason: "postgres_initialization_failed"
+      });
+    }
+
+    logger.error({ error }, "failed to initialize postgres persistence; using explicit in-memory fallback");
     return createInMemoryRepository();
   }
 }

@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { orderStateNotificationSchema, pushTokenUpsertSchema } from "@gazelle/contracts-notifications";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import {
+  allowsInMemoryPersistence,
+  buildPersistenceStartupError,
+  createPostgresDb,
+  getDatabaseUrl,
+  runMigrations,
+  sql
+} from "@gazelle/persistence";
 import { z } from "zod";
 
 type PushTokenInput = z.output<typeof pushTokenUpsertSchema>;
@@ -49,6 +56,7 @@ export type NotificationsRepository = {
   markOutboxDispatched(id: string): Promise<void>;
   markOutboxRetry(id: string, input: { retryAtIso: string; error: string }): Promise<void>;
   markOutboxFailed(id: string, error: string): Promise<void>;
+  pingDb(): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -143,6 +151,9 @@ function createInMemoryRepository(): NotificationsRepository {
         attempts: existing.attempts + 1
       });
     },
+    async pingDb() {
+      // no-op for in-memory
+    },
     async close() {
       // no-op
     }
@@ -151,7 +162,7 @@ function createInMemoryRepository(): NotificationsRepository {
 
 async function createPostgresRepository(connectionString: string): Promise<NotificationsRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   async function getAttempts(id: string) {
     const row = await db
@@ -318,6 +329,9 @@ async function createPostgresRepository(connectionString: string): Promise<Notif
         .where("id", "=", id)
         .execute();
     },
+    async pingDb() {
+      await sql`SELECT 1`.execute(db);
+    },
     async close() {
       await db.destroy();
     }
@@ -326,8 +340,16 @@ async function createPostgresRepository(connectionString: string): Promise<Notif
 
 export async function createNotificationsRepository(logger: FastifyBaseLogger): Promise<NotificationsRepository> {
   const databaseUrl = getDatabaseUrl();
+  const allowInMemory = allowsInMemoryPersistence();
   if (!databaseUrl) {
-    logger.info({ backend: "memory" }, "notifications persistence backend selected");
+    if (!allowInMemory) {
+      throw buildPersistenceStartupError({
+        service: "notifications",
+        reason: "missing_database_url"
+      });
+    }
+
+    logger.warn({ backend: "memory" }, "notifications persistence backend selected with explicit in-memory mode");
     return createInMemoryRepository();
   }
 
@@ -336,7 +358,15 @@ export async function createNotificationsRepository(logger: FastifyBaseLogger): 
     logger.info({ backend: "postgres" }, "notifications persistence backend selected");
     return repository;
   } catch (error) {
-    logger.error({ error }, "failed to initialize postgres persistence; falling back to in-memory");
+    if (!allowInMemory) {
+      logger.error({ error }, "failed to initialize postgres persistence");
+      throw buildPersistenceStartupError({
+        service: "notifications",
+        reason: "postgres_initialization_failed"
+      });
+    }
+
+    logger.error({ error }, "failed to initialize postgres persistence; using explicit in-memory fallback");
     return createInMemoryRepository();
   }
 }

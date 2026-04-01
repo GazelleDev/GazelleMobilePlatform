@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 
 describe("loyalty service", () => {
+  beforeEach(() => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "loyalty-gateway-token");
+    vi.stubEnv("LOYALTY_INTERNAL_API_TOKEN", "loyalty-internal-token");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("responds on /health and /ready", async () => {
     const app = await buildApp();
     const response = await app.inject({ method: "GET", url: "/health" });
@@ -22,6 +31,7 @@ describe("loyalty service", () => {
       url: "/v1/loyalty/balance",
       headers: {
         "x-request-id": requestId,
+        "x-gateway-token": "loyalty-gateway-token",
         "x-user-id": "not-a-uuid"
       }
     });
@@ -42,6 +52,25 @@ describe("loyalty service", () => {
     });
     expect(metricsResponse.json().requests.total).toBeGreaterThanOrEqual(1);
     expect(metricsResponse.json().requests.status4xx).toBeGreaterThanOrEqual(1);
+
+    await app.close();
+  });
+
+  it("rejects missing x-user-id on customer read routes", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/loyalty/balance",
+      headers: {
+        "x-gateway-token": "loyalty-gateway-token"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "INVALID_USER_CONTEXT"
+    });
 
     await app.close();
   });

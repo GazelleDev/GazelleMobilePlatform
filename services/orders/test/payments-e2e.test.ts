@@ -9,7 +9,17 @@ import { buildApp as buildPaymentsApp } from "../../payments/src/app.js";
 const sampleQuotePayload = {
   locationId: "flagship-01",
   items: [
-    { itemId: "latte", quantity: 1 },
+    {
+      itemId: "latte",
+      quantity: 1,
+      customization: {
+        selectedOptions: [
+          { groupId: "size", optionId: "regular" },
+          { groupId: "milk", optionId: "whole" }
+        ],
+        notes: ""
+      }
+    },
     { itemId: "croissant", quantity: 1 }
   ],
   pointsToRedeem: 0
@@ -414,6 +424,43 @@ describe.sequential("orders + payments e2e", () => {
     expect(secondPaidOrder.id).toBe(firstPaidOrder.id);
     expect(secondPaidOrder.timeline).toHaveLength(firstPaidOrder.timeline.length);
     expect(firstPaidOrder.timeline).toHaveLength(2);
+  });
+
+  it("exposes a paid order through list and detail reads after checkout", async () => {
+    const order = await createOrder();
+
+    const payResponse = await ordersApp.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "visibility-check-pay"
+      }
+    });
+
+    expect(payResponse.statusCode).toBe(200);
+    const paidOrder = orderSchema.parse(payResponse.json());
+    expect(paidOrder.status).toBe("PAID");
+
+    const listResponse = await ordersApp.inject({
+      method: "GET",
+      url: "/v1/orders"
+    });
+    expect(listResponse.statusCode).toBe(200);
+    const visibleOrders = orderSchema.array().parse(listResponse.json());
+    expect(visibleOrders).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: paidOrder.id, status: "PAID" })])
+    );
+
+    const detailResponse = await ordersApp.inject({
+      method: "GET",
+      url: `/v1/orders/${paidOrder.id}`
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(detailResponse.json())).toMatchObject({
+      id: paidOrder.id,
+      status: "PAID"
+    });
   });
 
   it("supports refund failure recovery on cancel retry", async () => {

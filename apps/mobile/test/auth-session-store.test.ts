@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  EXPIRY_REFRESH_WINDOW_MS,
   SESSION_STORAGE_KEY,
   clearStoredSession,
+  getSessionRefreshDelayMs,
   isSessionExpiringSoon,
   loadStoredSession,
   parseStoredSession,
@@ -47,6 +49,15 @@ describe("sessionStore", () => {
 
     expect(isSessionExpiringSoon(soon, now)).toBe(true);
     expect(isSessionExpiringSoon(later, now)).toBe(false);
+  });
+
+  it("computes a scheduled refresh delay before expiry", () => {
+    const now = Date.parse("2030-01-01T00:00:00.000Z");
+    const later = { ...sampleSession, expiresAt: "2030-01-01T00:05:00.000Z" };
+    const expired = { ...sampleSession, expiresAt: "2029-12-31T23:59:00.000Z" };
+
+    expect(getSessionRefreshDelayMs(later, now)).toBe(5 * 60 * 1000 - EXPIRY_REFRESH_WINDOW_MS);
+    expect(getSessionRefreshDelayMs(expired, now)).toBe(0);
   });
 
   it("loads, persists, and clears secure storage entries", async () => {

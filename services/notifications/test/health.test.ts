@@ -1,7 +1,33 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 
+const notificationsGatewayToken = "notifications-gateway-token";
+const notificationsInternalToken = "notifications-internal-token";
+
+function gatewayHeaders(extraHeaders?: Record<string, string>) {
+  return {
+    "x-gateway-token": notificationsGatewayToken,
+    ...extraHeaders
+  };
+}
+
+function internalHeaders(extraHeaders?: Record<string, string>) {
+  return {
+    "x-internal-token": notificationsInternalToken,
+    ...extraHeaders
+  };
+}
+
 describe("notifications service", () => {
+  beforeEach(() => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", notificationsGatewayToken);
+    vi.stubEnv("NOTIFICATIONS_INTERNAL_API_TOKEN", notificationsInternalToken);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("responds on /health and /ready", async () => {
     const app = await buildApp();
     const healthResponse = await app.inject({ method: "GET", url: "/health" });
@@ -24,9 +50,9 @@ describe("notifications service", () => {
     const upsertResponse = await app.inject({
       method: "PUT",
       url: "/v1/devices/push-token",
-      headers: {
+      headers: gatewayHeaders({
         "x-user-id": userId
-      },
+      }),
       payload: {
         deviceId: "ios-1",
         platform: "ios",
@@ -39,6 +65,7 @@ describe("notifications service", () => {
     const dispatchResponse = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/order-state",
+      headers: internalHeaders(),
       payload: {
         userId,
         orderId: "123e4567-e89b-12d3-a456-426614174911",
@@ -60,6 +87,7 @@ describe("notifications service", () => {
     const processOutbox = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/outbox/process",
+      headers: internalHeaders(),
       payload: {
         batchSize: 10
       }
@@ -91,6 +119,7 @@ describe("notifications service", () => {
     const firstDispatch = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/order-state",
+      headers: internalHeaders(),
       payload
     });
     expect(firstDispatch.statusCode).toBe(200);
@@ -103,6 +132,7 @@ describe("notifications service", () => {
     const secondDispatch = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/order-state",
+      headers: internalHeaders(),
       payload
     });
     expect(secondDispatch.statusCode).toBe(200);
@@ -115,6 +145,7 @@ describe("notifications service", () => {
     const processOutbox = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/outbox/process",
+      headers: internalHeaders(),
       payload: {
         batchSize: 10
       }
@@ -138,9 +169,9 @@ describe("notifications service", () => {
     await app.inject({
       method: "PUT",
       url: "/v1/devices/push-token",
-      headers: {
+      headers: gatewayHeaders({
         "x-user-id": userId
-      },
+      }),
       payload: {
         deviceId: "ios-failing",
         platform: "ios",
@@ -151,6 +182,7 @@ describe("notifications service", () => {
     await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/order-state",
+      headers: internalHeaders(),
       payload: {
         userId,
         orderId: "123e4567-e89b-12d3-a456-426614174931",
@@ -164,6 +196,7 @@ describe("notifications service", () => {
     const firstAttempt = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/outbox/process",
+      headers: internalHeaders(),
       payload: {
         batchSize: 10,
         nowIso: baseNow
@@ -180,6 +213,7 @@ describe("notifications service", () => {
     const secondAttempt = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/outbox/process",
+      headers: internalHeaders(),
       payload: {
         batchSize: 10,
         nowIso: "2030-01-01T00:00:01.000Z"
@@ -196,6 +230,7 @@ describe("notifications service", () => {
     const thirdAttempt = await app.inject({
       method: "POST",
       url: "/v1/notifications/internal/outbox/process",
+      headers: internalHeaders(),
       payload: {
         batchSize: 10,
         nowIso: "2030-01-01T00:00:03.000Z"
@@ -218,9 +253,9 @@ describe("notifications service", () => {
     const invalidUserResponse = await app.inject({
       method: "PUT",
       url: "/v1/devices/push-token",
-      headers: {
+      headers: gatewayHeaders({
         "x-user-id": "not-a-uuid"
-      },
+      }),
       payload: {
         deviceId: "ios-2",
         platform: "ios",
@@ -251,6 +286,28 @@ describe("notifications service", () => {
     await app.close();
   });
 
+  it("rejects missing x-user-id on push-token writes", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/devices/push-token",
+      headers: gatewayHeaders(),
+      payload: {
+        deviceId: "ios-missing-user",
+        platform: "ios",
+        expoPushToken: "ExponentPushToken[missing-user]"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "INVALID_USER_CONTEXT"
+    });
+
+    await app.close();
+  });
+
   it("rate limits push-token writes when configured threshold is reached", async () => {
     vi.stubEnv("NOTIFICATIONS_RATE_LIMIT_DEVICE_WRITE_MAX", "1");
     vi.stubEnv("NOTIFICATIONS_RATE_LIMIT_WINDOW_MS", "60000");
@@ -260,9 +317,9 @@ describe("notifications service", () => {
       const firstUpsert = await app.inject({
         method: "PUT",
         url: "/v1/devices/push-token",
-        headers: {
+        headers: gatewayHeaders({
           "x-user-id": "123e4567-e89b-12d3-a456-426614174930"
-        },
+        }),
         payload: {
           deviceId: "ios-rate-limit",
           platform: "ios",
@@ -274,9 +331,9 @@ describe("notifications service", () => {
       const secondUpsert = await app.inject({
         method: "PUT",
         url: "/v1/devices/push-token",
-        headers: {
+        headers: gatewayHeaders({
           "x-user-id": "123e4567-e89b-12d3-a456-426614174930"
-        },
+        }),
         payload: {
           deviceId: "ios-rate-limit",
           platform: "ios",
@@ -291,47 +348,108 @@ describe("notifications service", () => {
   });
 
   it("requires gateway token on push-token upsert when configured", async () => {
-    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "notifications-gateway-token");
-    try {
-      const app = await buildApp();
-      const userId = "123e4567-e89b-12d3-a456-426614174999";
+    const app = await buildApp();
+    const userId = "123e4567-e89b-12d3-a456-426614174999";
 
-      const unauthorizedResponse = await app.inject({
-        method: "PUT",
-        url: "/v1/devices/push-token",
-        headers: {
-          "x-user-id": userId
-        },
-        payload: {
-          deviceId: "ios-unauthorized",
-          platform: "ios",
-          expoPushToken: "ExponentPushToken[unauthorized-token]"
-        }
-      });
-      expect(unauthorizedResponse.statusCode).toBe(401);
-      expect(unauthorizedResponse.json()).toMatchObject({
-        code: "UNAUTHORIZED_GATEWAY_REQUEST"
-      });
+    const unauthorizedResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/devices/push-token",
+      headers: {
+        "x-user-id": userId
+      },
+      payload: {
+        deviceId: "ios-unauthorized",
+        platform: "ios",
+        expoPushToken: "ExponentPushToken[unauthorized-token]"
+      }
+    });
+    expect(unauthorizedResponse.statusCode).toBe(401);
+    expect(unauthorizedResponse.json()).toMatchObject({
+      code: "UNAUTHORIZED_GATEWAY_REQUEST"
+    });
 
-      const authorizedResponse = await app.inject({
-        method: "PUT",
-        url: "/v1/devices/push-token",
-        headers: {
-          "x-user-id": userId,
-          "x-gateway-token": "notifications-gateway-token"
-        },
-        payload: {
-          deviceId: "ios-authorized",
-          platform: "ios",
-          expoPushToken: "ExponentPushToken[authorized-token]"
-        }
-      });
-      expect(authorizedResponse.statusCode).toBe(200);
-      expect(authorizedResponse.json()).toEqual({ success: true });
+    const authorizedResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/devices/push-token",
+      headers: gatewayHeaders({
+        "x-user-id": userId
+      }),
+      payload: {
+        deviceId: "ios-authorized",
+        platform: "ios",
+        expoPushToken: "ExponentPushToken[authorized-token]"
+      }
+    });
+    expect(authorizedResponse.statusCode).toBe(200);
+    expect(authorizedResponse.json()).toEqual({ success: true });
 
-      await app.close();
-    } finally {
-      vi.unstubAllEnvs();
-    }
+    await app.close();
+  });
+
+  it("requires an internal token on notifications internal routes", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/notifications/internal/order-state",
+      payload: {
+        userId: "123e4567-e89b-12d3-a456-426614174960",
+        orderId: "123e4567-e89b-12d3-a456-426614174961",
+        status: "PAID",
+        pickupCode: "AUTH01",
+        locationId: "flagship-01",
+        occurredAt: "2026-03-11T00:00:00.000Z"
+      }
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      code: "UNAUTHORIZED_INTERNAL_REQUEST"
+    });
+
+    await app.close();
+  });
+
+  it("fails closed when notifications internal auth is not configured", async () => {
+    vi.stubEnv("NOTIFICATIONS_INTERNAL_API_TOKEN", "");
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/notifications/internal/outbox/process",
+      headers: internalHeaders(),
+      payload: {
+        batchSize: 1
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      code: "INTERNAL_ACCESS_NOT_CONFIGURED"
+    });
+
+    await app.close();
+  });
+
+  it("fails closed when gateway auth is not configured", async () => {
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "");
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/devices/push-token",
+      headers: gatewayHeaders({
+        "x-user-id": "123e4567-e89b-12d3-a456-426614174970"
+      }),
+      payload: {
+        deviceId: "ios-misconfigured",
+        platform: "ios",
+        expoPushToken: "ExponentPushToken[misconfigured-token]"
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      code: "GATEWAY_ACCESS_NOT_CONFIGURED"
+    });
+
+    await app.close();
   });
 });

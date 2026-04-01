@@ -5,6 +5,7 @@ Public monorepo for Gazelle's mobile ordering platform.
 ## Scope
 
 - Expo iOS app (`apps/mobile`)
+- Operator web app (`apps/operator-web`)
 - API gateway and microservices (`services/*`)
 - Shared contracts, design tokens, SDKs (`packages/*`)
 - AWS Terraform (`infra/terraform`)

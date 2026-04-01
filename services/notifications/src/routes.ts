@@ -1,4 +1,5 @@
-import type { FastifyInstance } from "fastify";
+import { timingSafeEqual } from "node:crypto";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   orderStateDispatchResponseSchema,
   orderStateNotificationSchema,
@@ -20,6 +21,10 @@ const gatewayHeadersSchema = z.object({
   "x-gateway-token": z.string().optional()
 });
 
+const internalHeadersSchema = z.object({
+  "x-internal-token": z.string().optional()
+});
+
 const serviceErrorSchema = z.object({
   code: z.string(),
   message: z.string(),
@@ -27,7 +32,6 @@ const serviceErrorSchema = z.object({
   details: z.record(z.unknown()).optional()
 });
 
-const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
 const defaultRateLimitWindowMs = 60_000;
 const defaultNotificationsDeviceWriteRateLimitMax = 120;
 const defaultNotificationsInternalDispatchRateLimitMax = 180;
@@ -49,13 +53,30 @@ const outboxProcessResponseSchema = z.object({
   failed: z.number().int().nonnegative()
 });
 
-function resolveUserId(headers: unknown) {
-  const parsed = userHeadersSchema.safeParse(headers);
+function resolveUserId(request: FastifyRequest, reply: FastifyReply) {
+  const parsed = userHeadersSchema.safeParse(request.headers);
   if (!parsed.success) {
+    sendError(reply, {
+      statusCode: 400,
+      code: "INVALID_USER_CONTEXT",
+      message: "x-user-id header must be a UUID when provided",
+      requestId: request.id,
+      details: parsed.error.flatten()
+    });
     return undefined;
   }
 
-  return parsed.data["x-user-id"] ?? defaultUserId;
+  if (!parsed.data["x-user-id"]) {
+    sendError(reply, {
+      statusCode: 400,
+      code: "INVALID_USER_CONTEXT",
+      message: "x-user-id header is required",
+      requestId: request.id
+    });
+    return undefined;
+  }
+
+  return parsed.data["x-user-id"];
 }
 
 function trimToUndefined(value: string | undefined) {
@@ -63,17 +84,86 @@ function trimToUndefined(value: string | undefined) {
   return next && next.length > 0 ? next : undefined;
 }
 
-function authorizeGatewayRequest(
-  headers: unknown,
-  gatewayToken: string | undefined
+function sendError(
+  reply: FastifyReply,
+  input: {
+    statusCode: number;
+    code: string;
+    message: string;
+    requestId: string;
+    details?: Record<string, unknown>;
+  }
 ) {
+  return reply.status(input.statusCode).send(
+    serviceErrorSchema.parse({
+      code: input.code,
+      message: input.message,
+      requestId: input.requestId,
+      details: input.details
+    })
+  );
+}
+
+function secretsMatch(expected: string, provided: string) {
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const providedBuffer = Buffer.from(provided, "utf8");
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
+function authorizeGatewayRequest(request: FastifyRequest, reply: FastifyReply, gatewayToken: string | undefined) {
   if (!gatewayToken) {
+    sendError(reply, {
+      statusCode: 503,
+      code: "GATEWAY_ACCESS_NOT_CONFIGURED",
+      message: "GATEWAY_INTERNAL_API_TOKEN must be configured before accepting gateway requests",
+      requestId: request.id
+    });
+    return false;
+  }
+
+  const parsedHeaders = gatewayHeadersSchema.safeParse(request.headers);
+  const providedToken = parsedHeaders.success ? parsedHeaders.data["x-gateway-token"] : undefined;
+  if (providedToken && secretsMatch(gatewayToken, providedToken)) {
     return true;
   }
 
-  const parsedHeaders = gatewayHeadersSchema.safeParse(headers);
-  const providedToken = parsedHeaders.success ? parsedHeaders.data["x-gateway-token"] : undefined;
-  return providedToken === gatewayToken;
+  sendError(reply, {
+    statusCode: 401,
+    code: "UNAUTHORIZED_GATEWAY_REQUEST",
+    message: "Gateway token is invalid",
+    requestId: request.id
+  });
+  return false;
+}
+
+function authorizeInternalRequest(request: FastifyRequest, reply: FastifyReply, internalToken: string | undefined) {
+  if (!internalToken) {
+    sendError(reply, {
+      statusCode: 503,
+      code: "INTERNAL_ACCESS_NOT_CONFIGURED",
+      message: "NOTIFICATIONS_INTERNAL_API_TOKEN must be configured before accepting internal notifications requests",
+      requestId: request.id
+    });
+    return false;
+  }
+
+  const parsedHeaders = internalHeadersSchema.safeParse(request.headers);
+  const providedToken = parsedHeaders.success ? parsedHeaders.data["x-internal-token"] : undefined;
+  if (providedToken && secretsMatch(internalToken, providedToken)) {
+    return true;
+  }
+
+  sendError(reply, {
+    statusCode: 401,
+    code: "UNAUTHORIZED_INTERNAL_REQUEST",
+    message: "Internal notifications token is invalid",
+    requestId: request.id
+  });
+  return false;
 }
 
 function computeRetryDelayMs(nextAttempt: number) {
@@ -98,6 +188,7 @@ function simulatePushDispatch(entry: OutboxEntry) {
 
 export async function registerRoutes(app: FastifyInstance) {
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
+  const notificationsInternalApiToken = trimToUndefined(process.env.NOTIFICATIONS_INTERNAL_API_TOKEN);
   const repository = await createNotificationsRepository(app.log);
   const notificationsRateLimitWindowMs = toPositiveInteger(
     process.env.NOTIFICATIONS_RATE_LIMIT_WINDOW_MS,
@@ -130,11 +221,19 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   app.get("/health", async () => ({ status: "ok", service: "notifications" }));
-  app.get("/ready", async () => ({
-    status: "ready",
-    service: "notifications",
-    persistence: repository.backend
-  }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      await repository.pingDb();
+      return {
+        status: "ready",
+        service: "notifications",
+        persistence: repository.backend
+      };
+    } catch {
+      reply.status(503);
+      return { status: "unavailable", service: "notifications", error: "Database unavailable" };
+    }
+  });
 
   app.put(
     "/v1/devices/push-token",
@@ -142,24 +241,13 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: app.rateLimit(notificationsDeviceWriteRateLimit)
     },
     async (request, reply) => {
-      if (!authorizeGatewayRequest(request.headers, gatewayApiToken)) {
-        return reply.status(401).send(
-          serviceErrorSchema.parse({
-            code: "UNAUTHORIZED_GATEWAY_REQUEST",
-            message: "Gateway token is invalid",
-            requestId: request.id
-          })
-        );
+      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+        return;
       }
 
-      const userId = resolveUserId(request.headers);
+      const userId = resolveUserId(request, reply);
       if (!userId) {
-        request.log.warn({ requestId: request.id }, "invalid x-user-id header");
-        return reply.status(400).send({
-          code: "INVALID_USER_CONTEXT",
-          message: "x-user-id header must be a UUID when provided",
-          requestId: request.id
-        });
+        return;
       }
 
       const input = pushTokenUpsertSchema.parse(request.body);
@@ -174,7 +262,11 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(notificationsInternalDispatchRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
+      if (!authorizeInternalRequest(request, reply, notificationsInternalApiToken)) {
+        return;
+      }
+
       const input = orderStateNotificationSchema.parse(request.body);
       const dispatchKey = `${input.userId}:${input.orderId}:${input.status}`;
 
@@ -215,7 +307,11 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(notificationsInternalOutboxProcessRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
+      if (!authorizeInternalRequest(request, reply, notificationsInternalApiToken)) {
+        return;
+      }
+
       const input = outboxProcessRequestSchema.parse(request.body ?? {});
       const batchSize = input.batchSize ?? outboxDefaultBatch;
       const nowIso = input.nowIso ?? new Date().toISOString();
@@ -259,7 +355,11 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post("/v1/notifications/internal/ping", async (request) => {
+  app.post("/v1/notifications/internal/ping", async (request, reply) => {
+    if (!authorizeInternalRequest(request, reply, notificationsInternalApiToken)) {
+      return;
+    }
+
     const parsed = payloadSchema.parse(request.body ?? {});
 
     return {

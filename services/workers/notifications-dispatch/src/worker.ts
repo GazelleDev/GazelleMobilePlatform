@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export type NotificationsDispatchConfig = {
   notificationsBaseUrl: string;
+  internalApiToken: string;
   intervalMs: number;
   batchSize: number;
 };
@@ -16,7 +17,7 @@ export type NotificationsDispatchResult = {
 type Logger = Pick<Console, "info" | "warn" | "error">;
 
 export type NotificationsDispatchRuntime = {
-  processOutbox: (baseUrl: string, batchSize: number) => Promise<NotificationsDispatchResult>;
+  processOutbox: (baseUrl: string, batchSize: number, internalApiToken: string) => Promise<NotificationsDispatchResult>;
   logger: Logger;
   setTimeoutFn: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   clearTimeoutFn: (handle: ReturnType<typeof setTimeout>) => void;
@@ -36,6 +37,11 @@ const outboxProcessResponseSchema = z.object({
 const defaultNotificationsBaseUrl = "http://127.0.0.1:3005";
 const defaultIntervalMs = 5_000;
 const defaultBatchSize = 50;
+
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
 
 function parseIntegerEnv(input: {
   name: string;
@@ -58,10 +64,15 @@ function parseIntegerEnv(input: {
 
 export function buildNotificationsDispatchConfig(env: NodeJS.ProcessEnv = process.env): NotificationsDispatchConfig {
   const notificationsBaseUrl = env.NOTIFICATIONS_SERVICE_BASE_URL ?? defaultNotificationsBaseUrl;
+  const internalApiToken = trimToUndefined(env.NOTIFICATIONS_INTERNAL_API_TOKEN);
   new URL(notificationsBaseUrl);
+  if (!internalApiToken) {
+    throw new Error("NOTIFICATIONS_INTERNAL_API_TOKEN must be set");
+  }
 
   return {
     notificationsBaseUrl,
+    internalApiToken,
     intervalMs: parseIntegerEnv({
       name: "NOTIFICATIONS_DISPATCH_INTERVAL_MS",
       value: env.NOTIFICATIONS_DISPATCH_INTERVAL_MS,
@@ -81,11 +92,12 @@ export function createNotificationsDispatchRuntime(
   logger: Logger = console
 ): NotificationsDispatchRuntime {
   return {
-    processOutbox: async (baseUrl, batchSize) => {
+    processOutbox: async (baseUrl, batchSize, internalApiToken) => {
       const response = await fetch(`${baseUrl}/v1/notifications/internal/outbox/process`, {
         method: "POST",
         headers: {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-internal-token": internalApiToken
         },
         body: JSON.stringify({ batchSize })
       });
@@ -107,7 +119,7 @@ export async function processOutboxBatch(
   config: NotificationsDispatchConfig,
   runtime: Pick<NotificationsDispatchRuntime, "processOutbox" | "logger">
 ) {
-  const result = await runtime.processOutbox(config.notificationsBaseUrl, config.batchSize);
+  const result = await runtime.processOutbox(config.notificationsBaseUrl, config.batchSize, config.internalApiToken);
   runtime.logger.info(
     `[notifications-dispatch] processed=${result.processed} dispatched=${result.dispatched} retried=${result.retried} failed=${result.failed}`
   );

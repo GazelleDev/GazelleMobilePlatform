@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -20,6 +20,7 @@ import {
 } from "@gazelle/contracts-auth";
 import { apiErrorSchema, authSessionSchema } from "@gazelle/contracts-core";
 import { createIdentityRepository, type IdentityRepository } from "./repository.js";
+import { createMailSender, type MailSender } from "./mail.js";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
@@ -34,7 +35,6 @@ const clientDataSchema = z.object({
 });
 const passkeyTransportSchema = z.enum(["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"]);
 
-const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
 const defaultPasskeyRpId = "localhost";
 const defaultPasskeyRpName = "Gazelle";
 const defaultPasskeyTimeoutMs = 60_000;
@@ -43,6 +43,10 @@ const defaultAuthWriteRateLimitMax = 24;
 const defaultAuthReadRateLimitMax = 120;
 const defaultPasskeyVerifyRateLimitMax = 12;
 const defaultPasskeyChallengeRateLimitMax = 24;
+const defaultAccessTokenTtlMs = 30 * 60 * 1000;
+// Successful refresh rotation extends the session's idle lifetime by issuing a new refresh token.
+// We intentionally keep this as an idle timeout for now; absolute session caps are a future policy choice.
+const defaultRefreshSessionTtlMs = 30 * 24 * 60 * 60 * 1000;
 
 function parseCommaSeparatedEnv(value: string | undefined) {
   return (value ?? "")
@@ -58,6 +62,54 @@ function toPositiveInteger(value: string | undefined, fallback: number) {
   }
 
   return Math.floor(parsed);
+}
+
+function extractAppleTokenClaims(identityToken: string): { sub?: string; email?: string } {
+  try {
+    const parts = identityToken.split(".");
+    if (parts.length !== 3 || !parts[1]) {
+      return {};
+    }
+
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
+
+    return {
+      sub: typeof payload.sub === "string" ? payload.sub : undefined,
+      email: typeof payload.email === "string" ? payload.email : undefined
+    };
+  } catch {
+    return {};
+  }
+}
+
+function buildMagicLinkUrl(baseUrl: string, token: string) {
+  const url = new URL("/auth/magic-link", baseUrl);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+function loadJwtSecret() {
+  const secret = process.env.JWT_SECRET?.trim();
+  return secret && secret.length > 0 ? secret : undefined;
+}
+
+function buildJwtAccessToken(userId: string, expiresAt: string, secret: string): string {
+  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const expiresAtSeconds = Math.floor(Date.parse(expiresAt) / 1000);
+  const encodedHeader = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url");
+  const encodedPayload = Buffer.from(
+    JSON.stringify({
+      sub: userId,
+      exp: expiresAtSeconds,
+      iat: issuedAtSeconds,
+      jti: randomUUID()
+    }),
+    "utf8"
+  ).toString("base64url");
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const signature = createHmac("sha256", secret).update(signingInput).digest("base64url");
+
+  return `${signingInput}.${signature}`;
 }
 
 function loadPasskeyConfig() {
@@ -78,14 +130,25 @@ function loadPasskeyConfig() {
   };
 }
 
-function buildSession(seed: string, userId: string) {
+function buildStoredSession(seed: string, userId: string) {
   const tokenSuffix = `${seed}-${randomUUID()}`;
-  return authSessionSchema.parse({
-    accessToken: `access-${tokenSuffix}`,
-    refreshToken: `refresh-${tokenSuffix}`,
-    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-    userId
-  });
+  const accessExpiresAt = new Date(Date.now() + defaultAccessTokenTtlMs).toISOString();
+  const refreshExpiresAt = new Date(Date.now() + defaultRefreshSessionTtlMs).toISOString();
+  const jwtSecret = loadJwtSecret();
+  // JWT access tokens are opt-in for rollout compatibility. Refresh/logout semantics remain DB-backed
+  // either way because the refresh token and session record are still persisted. The opaque path stays
+  // until every identity+gateway deployment shares JWT_SECRET.
+  const accessToken = jwtSecret ? buildJwtAccessToken(userId, accessExpiresAt, jwtSecret) : `access-${tokenSuffix}`;
+
+  return {
+    ...authSessionSchema.parse({
+      accessToken,
+      refreshToken: `refresh-${tokenSuffix}`,
+      expiresAt: accessExpiresAt,
+      userId
+    }),
+    refreshExpiresAt
+  };
 }
 
 function extractChallengeFromClientData(clientDataJSON: string) {
@@ -117,12 +180,12 @@ function toPasskeyTransports(transports: string[] | undefined) {
 async function issueSession(params: {
   repository: IdentityRepository;
   seed: string;
-  userId?: string;
+  userId: string;
   authMethod: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh";
 }) {
-  const session = buildSession(params.seed, params.userId ?? defaultUserId);
+  const session = buildStoredSession(params.seed, params.userId);
   await params.repository.saveSession(session, params.authMethod);
-  return session;
+  return authSessionSchema.parse(session);
 }
 
 function buildApiError(requestId: string, code: string, message: string) {
@@ -133,10 +196,19 @@ function buildApiError(requestId: string, code: string, message: string) {
   });
 }
 
-export async function registerRoutes(app: FastifyInstance) {
-  const repository = await createIdentityRepository(app.log);
+export type RegisterRoutesOptions = {
+  mailSender?: MailSender;
+  repository?: IdentityRepository;
+};
+
+export async function registerRoutes(app: FastifyInstance, options: RegisterRoutesOptions = {}) {
+  const repository = options.repository ?? (await createIdentityRepository(app.log));
+  const mailSender = options.mailSender ?? createMailSender({ logger: app.log });
   const passkeyConfig = loadPasskeyConfig();
   const rateLimitWindowMs = toPositiveInteger(process.env.IDENTITY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
+  const magicLinkExpiryMinutes = toPositiveInteger(process.env.MAGIC_LINK_EXPIRY_MINUTES, 15);
+  const magicLinkBaseUrl = process.env.MAGIC_LINK_BASE_URL?.trim() || "http://localhost:8080";
+  const appleSignInVerificationEnabled = process.env.APPLE_SIGN_IN_VERIFY === "true";
   const authWriteRateLimit = {
     max: toPositiveInteger(process.env.IDENTITY_RATE_LIMIT_AUTH_WRITE_MAX, defaultAuthWriteRateLimitMax),
     timeWindow: rateLimitWindowMs
@@ -162,20 +234,78 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   app.get("/health", async () => ({ status: "ok", service: "identity" }));
-  app.get("/ready", async () => ({ status: "ready", service: "identity", persistence: repository.backend }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      await repository.pingDb();
+      return { status: "ready", service: "identity", persistence: repository.backend };
+    } catch {
+      reply.status(503);
+      return { status: "unavailable", service: "identity", error: "Database unavailable" };
+    }
+  });
 
   app.post(
     "/v1/auth/apple/exchange",
     {
       preHandler: app.rateLimit(authWriteRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
       const input = appleExchangeRequestSchema.parse(request.body);
-      return issueSession({
-        repository,
-        seed: input.nonce,
-        authMethod: "apple"
-      });
+
+      if (appleSignInVerificationEnabled) {
+        // Apple verification is intentionally fail-closed when explicitly enabled. Until full JWKS
+        // signature verification exists, we reject these requests instead of accepting unverifiable tokens.
+        app.log.warn(
+          {
+            requestId: request.id
+          },
+          "Apple Sign-In verification is enabled, but full JWT verification has not been implemented yet"
+        );
+        return reply.status(503).send(
+          buildApiError(
+            request.id,
+            "APPLE_VERIFICATION_UNAVAILABLE",
+            "Apple Sign-In verification is enabled but not yet implemented"
+          )
+        );
+      }
+
+      if (input.identityToken) {
+        const claims = extractAppleTokenClaims(input.identityToken);
+        if (claims.sub) {
+          const userId = await repository.findOrCreateUserByAppleSub(claims.sub, claims.email);
+          return issueSession({
+            repository,
+            seed: input.nonce,
+            userId,
+            authMethod: "apple"
+          });
+        }
+
+        app.log.warn(
+          {
+            requestId: request.id
+          },
+          "Apple Sign-In token was present but did not contain a usable sub claim"
+        );
+        return reply.status(401).send(
+          buildApiError(
+            request.id,
+            "INVALID_APPLE_IDENTITY",
+            "Apple Sign-In token is invalid or missing a required subject claim"
+          )
+        );
+      } else {
+        app.log.warn(
+          {
+            requestId: request.id
+          },
+          "Apple Sign-In request omitted identityToken"
+        );
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_APPLE_IDENTITY", "Apple Sign-In identity token is required"));
+      }
     }
   );
 
@@ -184,9 +314,15 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(passkeyChallengeRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
       const input = passkeyChallengeRequestSchema.parse(request.body ?? {});
-      const userId = input.userId ?? defaultUserId;
+      if (!input.userId) {
+        return reply
+          .status(400)
+          .send(buildApiError(request.id, "INVALID_USER_CONTEXT", "userId is required for passkey registration"));
+      }
+
+      const userId = input.userId;
       const existingCredentials = await repository.listPasskeyCredentialsForUser(userId);
       const options = await generateRegistrationOptions({
         rpID: passkeyConfig.rpId,
@@ -280,7 +416,19 @@ export async function registerRoutes(app: FastifyInstance) {
             .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey registration verification failed"));
         }
 
-        const userId = challenge.userId ?? defaultUserId;
+        if (!challenge.userId) {
+          return reply
+            .status(409)
+            .send(
+              buildApiError(
+                request.id,
+                "PASSKEY_USER_CONTEXT_MISSING",
+                "Passkey registration challenge is missing user context"
+              )
+            );
+        }
+
+        const userId = challenge.userId;
         await repository.savePasskeyCredential({
           credentialId: verifiedRegistration.registrationInfo.credential.id,
           userId,
@@ -300,7 +448,7 @@ export async function registerRoutes(app: FastifyInstance) {
           authMethod: "passkey-register"
         });
       } catch (error) {
-        app.log.warn({ error }, "passkey register verify failed");
+        app.log.warn({ error, requestId: request.id }, "passkey register verify failed");
         return reply
           .status(401)
           .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey registration verification failed"));
@@ -438,7 +586,7 @@ export async function registerRoutes(app: FastifyInstance) {
           authMethod: "passkey-auth"
         });
       } catch (error) {
-        app.log.warn({ error }, "passkey auth verify failed");
+        app.log.warn({ error, requestId: request.id }, "passkey auth verify failed");
         return reply
           .status(401)
           .send(buildApiError(request.id, "PASSKEY_VERIFICATION_FAILED", "Passkey authentication verification failed"));
@@ -451,9 +599,34 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(authWriteRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
       const input = magicLinkRequestSchema.parse(request.body);
-      app.log.info({ email: input.email }, "magic link requested");
+      const token = randomUUID();
+      const expiresAt = new Date(Date.now() + magicLinkExpiryMinutes * 60 * 1000).toISOString();
+      const magicLinkUrl = buildMagicLinkUrl(magicLinkBaseUrl, token);
+
+      await repository.saveMagicLink({
+        token,
+        email: input.email,
+        expiresAt
+      });
+
+      try {
+        await mailSender.sendMagicLink({
+          to: input.email,
+          magicLinkUrl
+        });
+      } catch (error) {
+        app.log.error({ error, email: input.email, requestId: request.id }, "magic link delivery failed");
+        return reply.status(503).send(
+          buildApiError(
+            request.id,
+            "MAGIC_LINK_DELIVERY_FAILED",
+            "Unable to deliver magic link at this time"
+          )
+        );
+      }
+
       return { success: true as const };
     }
   );
@@ -463,11 +636,29 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: app.rateLimit(authWriteRateLimit)
     },
-    async (request) => {
+    async (request, reply) => {
       const input = magicLinkVerifySchema.parse(request.body);
+
+      const magicLink = await repository.getMagicLink(input.token);
+      if (!magicLink) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_MAGIC_LINK", "Magic link is invalid or unavailable"));
+      }
+
+      if (magicLink.consumedAt || Date.parse(magicLink.expiresAt) <= Date.now()) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "MAGIC_LINK_EXPIRED", "Magic link has expired or was already used"));
+      }
+
+      const userId = magicLink.userId ?? (await repository.findOrCreateUserByEmail(magicLink.email));
+      await repository.consumeMagicLink(input.token, userId);
+
       return issueSession({
         repository,
         seed: input.token,
+        userId,
         authMethod: "magic-link"
       });
     }
@@ -480,8 +671,12 @@ export async function registerRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const input = refreshRequestSchema.parse(request.body);
-      const currentSession = await repository.getSessionByRefreshToken(input.refreshToken);
-      if (!currentSession) {
+      const rotatedSession = await repository.rotateRefreshSession(
+        input.refreshToken,
+        (userId) => buildStoredSession(input.refreshToken, userId),
+        "refresh"
+      );
+      if (!rotatedSession) {
         return reply.status(401).send(
           apiErrorSchema.parse({
             code: "INVALID_REFRESH_TOKEN",
@@ -491,12 +686,7 @@ export async function registerRoutes(app: FastifyInstance) {
         );
       }
 
-      await repository.revokeByRefreshToken(input.refreshToken);
-      return issueSession({
-        repository,
-        seed: input.refreshToken,
-        authMethod: "refresh"
-      });
+      return rotatedSession;
     }
   );
 

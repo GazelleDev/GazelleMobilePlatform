@@ -8,7 +8,7 @@ export type AuthSession = {
 };
 
 export const SESSION_STORAGE_KEY = "gazelle.auth.session.v1";
-const EXPIRY_REFRESH_WINDOW_MS = 60_000;
+export const EXPIRY_REFRESH_WINDOW_MS = 60_000;
 
 function isString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -52,6 +52,10 @@ export function parseStoredSession(rawValue: string | null): AuthSession | null 
 
 export function isSessionExpiringSoon(session: AuthSession, nowMs = Date.now()): boolean {
   return Date.parse(session.expiresAt) <= nowMs + EXPIRY_REFRESH_WINDOW_MS;
+}
+
+export function getSessionRefreshDelayMs(session: AuthSession, nowMs = Date.now()): number {
+  return Math.max(0, Date.parse(session.expiresAt) - nowMs - EXPIRY_REFRESH_WINDOW_MS);
 }
 
 export async function loadStoredSession(): Promise<AuthSession | null> {

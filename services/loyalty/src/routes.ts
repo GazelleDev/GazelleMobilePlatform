@@ -1,10 +1,16 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { loyaltyBalanceSchema, loyaltyLedgerEntrySchema } from "@gazelle/contracts-loyalty";
-import { createPostgresDb, ensurePersistenceTables, getDatabaseUrl } from "@gazelle/persistence";
+import {
+  allowsInMemoryPersistence,
+  buildPersistenceStartupError,
+  createPostgresDb,
+  getDatabaseUrl,
+  runMigrations,
+  sql
+} from "@gazelle/persistence";
 import { z } from "zod";
 
-const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
 const defaultRateLimitWindowMs = 60_000;
 const defaultLoyaltyMutationRateLimitMax = 180;
 
@@ -25,6 +31,10 @@ const userHeadersSchema = z.object({
 
 const gatewayHeadersSchema = z.object({
   "x-gateway-token": z.string().optional()
+});
+
+const internalHeadersSchema = z.object({
+  "x-internal-token": z.string().optional()
 });
 
 const mutationBaseSchema = z.object({
@@ -135,6 +145,7 @@ type LoyaltyRepository = {
   appendLedgerEntry(userId: string, entry: LoyaltyLedgerEntry): Promise<void>;
   getIdempotencyRecord(userId: string, idempotencyKey: string): Promise<IdempotencyRecord | undefined>;
   saveIdempotencyRecord(userId: string, idempotencyKey: string, record: IdempotencyRecord): Promise<IdempotencyRecord>;
+  pingDb(): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -171,12 +182,32 @@ function resolveUserId(request: FastifyRequest, reply: FastifyReply) {
     return undefined;
   }
 
-  return parsed.data["x-user-id"] ?? defaultUserId;
+  if (!parsed.data["x-user-id"]) {
+    sendError(reply, {
+      statusCode: 400,
+      code: "INVALID_USER_CONTEXT",
+      message: "x-user-id header is required",
+      requestId: request.id
+    });
+    return undefined;
+  }
+
+  return parsed.data["x-user-id"];
 }
 
 function trimToUndefined(value: string | undefined) {
   const next = value?.trim();
   return next && next.length > 0 ? next : undefined;
+}
+
+function secretsMatch(expected: string, provided: string) {
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const providedBuffer = Buffer.from(provided, "utf8");
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
 function authorizeGatewayRequest(
@@ -185,12 +216,18 @@ function authorizeGatewayRequest(
   gatewayToken: string | undefined
 ) {
   if (!gatewayToken) {
-    return true;
+    sendError(reply, {
+      statusCode: 503,
+      code: "GATEWAY_ACCESS_NOT_CONFIGURED",
+      message: "GATEWAY_INTERNAL_API_TOKEN must be configured before accepting gateway requests",
+      requestId: request.id
+    });
+    return false;
   }
 
   const parsedHeaders = gatewayHeadersSchema.safeParse(request.headers);
   const providedToken = parsedHeaders.success ? parsedHeaders.data["x-gateway-token"] : undefined;
-  if (providedToken === gatewayToken) {
+  if (providedToken && secretsMatch(gatewayToken, providedToken)) {
     return true;
   }
 
@@ -198,6 +235,36 @@ function authorizeGatewayRequest(
     statusCode: 401,
     code: "UNAUTHORIZED_GATEWAY_REQUEST",
     message: "Gateway token is invalid",
+    requestId: request.id
+  });
+  return false;
+}
+
+function authorizeInternalRequest(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  internalToken: string | undefined
+) {
+  if (!internalToken) {
+    sendError(reply, {
+      statusCode: 503,
+      code: "INTERNAL_ACCESS_NOT_CONFIGURED",
+      message: "LOYALTY_INTERNAL_API_TOKEN must be configured before accepting internal loyalty requests",
+      requestId: request.id
+    });
+    return false;
+  }
+
+  const parsedHeaders = internalHeadersSchema.safeParse(request.headers);
+  const providedToken = parsedHeaders.success ? parsedHeaders.data["x-internal-token"] : undefined;
+  if (providedToken && secretsMatch(internalToken, providedToken)) {
+    return true;
+  }
+
+  sendError(reply, {
+    statusCode: 401,
+    code: "UNAUTHORIZED_INTERNAL_REQUEST",
+    message: "Internal loyalty token is invalid",
     requestId: request.id
   });
   return false;
@@ -317,6 +384,9 @@ function createInMemoryRepository(): LoyaltyRepository {
       idempotencyByUserId.set(userId, userStore);
       return record;
     },
+    async pingDb() {
+      // no-op for in-memory
+    },
     async close() {
       // no-op
     }
@@ -325,7 +395,7 @@ function createInMemoryRepository(): LoyaltyRepository {
 
 async function createPostgresRepository(connectionString: string): Promise<LoyaltyRepository> {
   const db = createPostgresDb(connectionString);
-  await ensurePersistenceTables(db);
+  await runMigrations(db);
 
   return {
     backend: "postgres",
@@ -471,6 +541,9 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
         response: applyLedgerMutationResponseSchema.parse(persisted.response_json)
       };
     },
+    async pingDb() {
+      await sql`SELECT 1`.execute(db);
+    },
     async close() {
       await db.destroy();
     }
@@ -479,8 +552,16 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
 
 async function createLoyaltyRepository(logger: FastifyBaseLogger): Promise<LoyaltyRepository> {
   const databaseUrl = getDatabaseUrl();
+  const allowInMemory = allowsInMemoryPersistence();
   if (!databaseUrl) {
-    logger.info({ backend: "memory" }, "loyalty persistence backend selected");
+    if (!allowInMemory) {
+      throw buildPersistenceStartupError({
+        service: "loyalty",
+        reason: "missing_database_url"
+      });
+    }
+
+    logger.warn({ backend: "memory" }, "loyalty persistence backend selected with explicit in-memory mode");
     return createInMemoryRepository();
   }
 
@@ -489,13 +570,22 @@ async function createLoyaltyRepository(logger: FastifyBaseLogger): Promise<Loyal
     logger.info({ backend: "postgres" }, "loyalty persistence backend selected");
     return repository;
   } catch (error) {
-    logger.error({ error }, "failed to initialize postgres persistence; falling back to in-memory");
+    if (!allowInMemory) {
+      logger.error({ error }, "failed to initialize postgres persistence");
+      throw buildPersistenceStartupError({
+        service: "loyalty",
+        reason: "postgres_initialization_failed"
+      });
+    }
+
+    logger.error({ error }, "failed to initialize postgres persistence; using explicit in-memory fallback");
     return createInMemoryRepository();
   }
 }
 
 export async function registerRoutes(app: FastifyInstance) {
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
+  const loyaltyInternalApiToken = trimToUndefined(process.env.LOYALTY_INTERNAL_API_TOKEN);
   const repository = await createLoyaltyRepository(app.log);
   const loyaltyRateLimitWindowMs = toPositiveInteger(process.env.LOYALTY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const loyaltyMutationRateLimit = {
@@ -508,7 +598,15 @@ export async function registerRoutes(app: FastifyInstance) {
   });
 
   app.get("/health", async () => ({ status: "ok", service: "loyalty" }));
-  app.get("/ready", async () => ({ status: "ready", service: "loyalty", persistence: repository.backend }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      await repository.pingDb();
+      return { status: "ready", service: "loyalty", persistence: repository.backend };
+    } catch {
+      reply.status(503);
+      return { status: "unavailable", service: "loyalty", error: "Database unavailable" };
+    }
+  });
 
   app.get("/v1/loyalty/balance", async (request, reply) => {
     if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
@@ -543,6 +641,10 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: app.rateLimit(loyaltyMutationRateLimit)
     },
     async (request, reply) => {
+      if (!authorizeInternalRequest(request, reply, loyaltyInternalApiToken)) {
+        return;
+      }
+
       const parsedMutation = applyLedgerMutationSchema.safeParse(request.body);
       if (!parsedMutation.success) {
         return sendError(reply, {
@@ -639,7 +741,11 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post("/v1/loyalty/internal/ping", async (request) => {
+  app.post("/v1/loyalty/internal/ping", async (request, reply) => {
+    if (!authorizeInternalRequest(request, reply, loyaltyInternalApiToken)) {
+      return;
+    }
+
     const parsed = payloadSchema.parse(request.body ?? {});
 
     return {

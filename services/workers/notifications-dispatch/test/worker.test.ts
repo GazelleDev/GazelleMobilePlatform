@@ -9,6 +9,7 @@ import {
 
 const baseConfig: NotificationsDispatchConfig = {
   notificationsBaseUrl: "http://127.0.0.1:3005",
+  internalApiToken: "notifications-internal-token",
   intervalMs: 5_000,
   batchSize: 25
 };
@@ -38,11 +39,20 @@ describe("notifications dispatch worker", () => {
   });
 
   it("builds config from environment defaults", () => {
-    const config = buildNotificationsDispatchConfig({} as NodeJS.ProcessEnv);
+    const config = buildNotificationsDispatchConfig({
+      NOTIFICATIONS_INTERNAL_API_TOKEN: "notifications-internal-token"
+    } as NodeJS.ProcessEnv);
 
     expect(config.notificationsBaseUrl).toBe("http://127.0.0.1:3005");
+    expect(config.internalApiToken).toBe("notifications-internal-token");
     expect(config.intervalMs).toBe(5000);
     expect(config.batchSize).toBe(50);
+  });
+
+  it("requires an internal notifications token in config", () => {
+    expect(() => buildNotificationsDispatchConfig({} as NodeJS.ProcessEnv)).toThrow(
+      "NOTIFICATIONS_INTERNAL_API_TOKEN must be set"
+    );
   });
 
   it("processes an outbox batch through runtime", async () => {
@@ -64,7 +74,11 @@ describe("notifications dispatch worker", () => {
       retried: 1,
       failed: 0
     });
-    expect(processOutbox).toHaveBeenCalledWith(baseConfig.notificationsBaseUrl, baseConfig.batchSize);
+    expect(processOutbox).toHaveBeenCalledWith(
+      baseConfig.notificationsBaseUrl,
+      baseConfig.batchSize,
+      baseConfig.internalApiToken
+    );
   });
 
   it("runs loop immediately, reschedules, and stops cleanly", async () => {

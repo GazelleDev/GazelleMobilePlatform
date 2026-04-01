@@ -1,132 +1,439 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
-import { API_BASE_URL, apiClient } from "../../src/api/client";
-import { Button, Card, GlassCard, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
+import { useCallback, useRef, useState } from "react";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import Animated, { Extrapolation, interpolate, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { resolveAppConfigData, resolveStoreConfigData, useAppConfigQuery, useStoreConfigQuery } from "../../src/menu/catalog";
+import { TAB_BAR_HEIGHT, getTabBarBottomOffset } from "../../src/navigation/tabBarMetrics";
+import { Card, ScreenBackdrop, TabBarDepthBackdrop, uiPalette, uiTypography } from "../../src/ui/system";
+
+const HEADER_TOP_PADDING = 18;
+const HEADER_EXPANDED_HEIGHT = 212;
+const HEADER_COLLAPSED_HEIGHT = 92;
+const DIVIDER_SHADOW_TOP_OVERLAP = 10;
+const DIVIDER_SHADOW_HEIGHT = 38;
+const HEADER_SNAP_VELOCITY_THRESHOLD = 0.2;
+const HEADER_SNAP_EDGE_TOLERANCE = 2;
+
+const HOME_NEWS_ITEMS = [
+  {
+    label: "NEW DRINK",
+    title: "Honey Cardamom Cold Brew",
+    body: "Placeholder feature card for a seasonal drink launch with oat foam and orange peel.",
+    note: "Available this week only."
+  },
+  {
+    label: "DISCOUNT",
+    title: "20% Off After 3 PM",
+    body: "Placeholder promo card for an afternoon pickup offer on any handcrafted drink.",
+    note: "Weekdays only. In-store pickup."
+  },
+  {
+    label: "HOLIDAY HOURS",
+    title: "Adjusted Hours For Memorial Day",
+    body: "Placeholder notice for holiday operations so guests can check changes before arriving.",
+    note: "Open 8:00 AM to 2:00 PM."
+  },
+  {
+    label: "STORE UPDATE",
+    title: "Mobile Orders Resume At 7 AM",
+    body: "Placeholder operations card for service changes, maintenance windows, or staffing updates.",
+    note: "Thanks for your patience."
+  }
+] as const;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [gatewayStatus, setGatewayStatus] = useState<string>("");
+  const insets = useSafeAreaInsets();
+  const appConfigQuery = useAppConfigQuery();
+  const storeConfigQuery = useStoreConfigQuery();
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
+  const appConfig = resolveAppConfigData(appConfigQuery.data);
+  const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const scrollY = useSharedValue(0);
+  const dockBottom = getTabBarBottomOffset(insets.bottom > 0);
+  const contentBottomInset = dockBottom + TAB_BAR_HEIGHT + 24;
+  const headerExpandedHeight = insets.top + HEADER_EXPANDED_HEIGHT;
+  const headerCollapsedHeight = insets.top + HEADER_COLLAPSED_HEIGHT;
+  const headerCollapseDistance = headerExpandedHeight - headerCollapsedHeight;
 
-  async function handleGatewayCheck() {
-    setGatewayStatus("Checking gateway...");
-    try {
-      await apiClient.get("/meta/contracts");
-      setGatewayStatus("Gateway is reachable.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      setGatewayStatus(`Gateway failed (${API_BASE_URL}): ${message}`);
-    }
-  }
+  const setScrollViewRef = useCallback((node: ScrollView | null) => {
+    scrollViewRef.current = node;
+  }, []);
+
+  const scrollHandler = useAnimatedScrollHandler((event) => {
+    scrollY.value = event.contentOffset.y;
+  });
+
+  const headerStyle = useAnimatedStyle(() => ({
+    height: interpolate(
+      scrollY.value,
+      [0, headerCollapseDistance],
+      [headerExpandedHeight, headerCollapsedHeight],
+      Extrapolation.CLAMP
+    )
+  }));
+
+  const heroShadowStyle = useAnimatedStyle(() => ({
+    top: interpolate(
+      scrollY.value,
+      [0, headerCollapseDistance],
+      [headerExpandedHeight - DIVIDER_SHADOW_TOP_OVERLAP, headerCollapsedHeight - DIVIDER_SHADOW_TOP_OVERLAP],
+      Extrapolation.CLAMP
+    )
+  }));
+
+  const titleStyle = useAnimatedStyle(() => ({
+    marginTop: interpolate(scrollY.value, [0, headerCollapseDistance], [14, 6], Extrapolation.CLAMP),
+    fontSize: interpolate(scrollY.value, [0, headerCollapseDistance], [40, 28], Extrapolation.CLAMP),
+    lineHeight: interpolate(scrollY.value, [0, headerCollapseDistance], [46, 32], Extrapolation.CLAMP),
+    letterSpacing: interpolate(scrollY.value, [0, headerCollapseDistance], [-1.4, -0.9], Extrapolation.CLAMP)
+  }));
+
+  const subtitleStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 28, 52], [1, 0.35, 0], Extrapolation.CLAMP),
+    height: interpolate(scrollY.value, [0, 52], [28, 0], Extrapolation.CLAMP),
+    marginTop: interpolate(scrollY.value, [0, 52], [2, 0], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(scrollY.value, [0, 52], [0, -8], Extrapolation.CLAMP) }]
+  }));
+
+  const pickupMetaStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 20, 48], [1, 0.28, 0], Extrapolation.CLAMP),
+    height: interpolate(scrollY.value, [0, 48], [18, 0], Extrapolation.CLAMP),
+    marginBottom: interpolate(scrollY.value, [0, 48], [6, 0], Extrapolation.CLAMP)
+  }));
+
+  const menuLinkStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(scrollY.value, [0, 18, 42], [1, 0.35, 0], Extrapolation.CLAMP),
+    transform: [
+      { translateX: interpolate(scrollY.value, [0, 42], [0, 12], Extrapolation.CLAMP) },
+      { scale: interpolate(scrollY.value, [0, 42], [1, 0.96], Extrapolation.CLAMP) }
+    ]
+  }));
+
+  const storeRailStyle = useAnimatedStyle(() => ({
+    marginTop: interpolate(scrollY.value, [0, headerCollapseDistance], [28, 14], Extrapolation.CLAMP),
+    paddingBottom: interpolate(scrollY.value, [0, headerCollapseDistance], [18, 8], Extrapolation.CLAMP)
+  }));
+
+  const storeTitleStyle = useAnimatedStyle(() => ({
+    marginTop: interpolate(scrollY.value, [0, headerCollapseDistance], [6, 0], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(scrollY.value, [0, headerCollapseDistance], [0, -10], Extrapolation.CLAMP) }]
+  }));
+
+  const snapHeader = useCallback(
+    (offsetY: number, velocityY = 0) => {
+      if (offsetY <= HEADER_SNAP_EDGE_TOLERANCE || offsetY >= headerCollapseDistance - HEADER_SNAP_EDGE_TOLERANCE) {
+        return;
+      }
+
+      let targetOffset = offsetY >= headerCollapseDistance / 2 ? headerCollapseDistance : 0;
+
+      if (velocityY > 0.15) {
+        targetOffset = headerCollapseDistance;
+      } else if (velocityY < -0.15) {
+        targetOffset = 0;
+      }
+
+      scrollViewRef.current?.scrollTo({ y: targetOffset, animated: true });
+    },
+    [headerCollapseDistance]
+  );
+
+  const handleScrollEndDrag = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const velocityY = event.nativeEvent.velocity?.y ?? 0;
+
+      if (Math.abs(velocityY) >= HEADER_SNAP_VELOCITY_THRESHOLD) {
+        return;
+      }
+
+      snapHeader(event.nativeEvent.contentOffset.y, velocityY);
+    },
+    [snapHeader]
+  );
+
+  const handleMomentumScrollEnd = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      snapHeader(event.nativeEvent.contentOffset.y);
+    },
+    [snapHeader]
+  );
+
+  const handleRefresh = useCallback(() => {
+    if (isManualRefresh) return;
+
+    setIsManualRefresh(true);
+    void storeConfigQuery.refetch().finally(() => {
+      setIsManualRefresh(false);
+    });
+  }, [isManualRefresh, storeConfigQuery]);
 
   return (
-    <ScreenScroll>
-      <TitleBlock
-        title="Gazelle"
-        subtitle="Fast ordering with secure auth, live menu sync, and Apple Pay checkout."
-      />
+    <View style={styles.screen}>
+      <ScreenBackdrop />
 
-      <GlassCard style={{ marginTop: 18 }}>
-        <SectionLabel label="Today" />
-        <Text style={styles.heroTitle}>Ready for your next order?</Text>
-        <Text style={styles.heroCopy}>
-          Browse the live menu, customize drinks, and check out in seconds with a clean native flow.
-        </Text>
-        <Button
-          label="Start Order"
-          onPress={() => router.push("/(tabs)/menu")}
-          style={{ marginTop: 14 }}
-          left={<Ionicons name="sparkles" size={16} color="#FFFFFF" />}
+      <Animated.ScrollView
+        ref={setScrollViewRef}
+        showsVerticalScrollIndicator={false}
+        onScroll={scrollHandler}
+        onScrollEndDrag={handleScrollEndDrag}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl
+            refreshing={isManualRefresh}
+            onRefresh={handleRefresh}
+            tintColor={uiPalette.primary}
+            colors={[uiPalette.primary]}
+            progressBackgroundColor={uiPalette.surfaceStrong}
+            progressViewOffset={insets.top + 12}
+          />
+        }
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: headerExpandedHeight,
+            paddingBottom: contentBottomInset
+          }
+        ]}
+      >
+        <View style={styles.cardGrid}>
+          {HOME_NEWS_ITEMS.map((item) => (
+            <Card key={item.title} muted style={styles.newsCard}>
+              <View style={styles.newsCardHeader}>
+                <View style={styles.newsLabel}>
+                  <Text style={styles.newsLabelText}>{item.label}</Text>
+                </View>
+              </View>
+
+              <View style={styles.newsCopy}>
+                <Text style={styles.newsTitle}>{item.title}</Text>
+                <Text style={styles.newsBody}>{item.body}</Text>
+              </View>
+
+              <Text style={styles.newsNote}>{item.note}</Text>
+            </Card>
+          ))}
+        </View>
+      </Animated.ScrollView>
+
+      <Animated.View style={[styles.headerShell, { paddingTop: insets.top + HEADER_TOP_PADDING }, headerStyle]}>
+        <View style={styles.hero}>
+          <Animated.Text style={[styles.title, titleStyle]}>{appConfig.brand.brandName}</Animated.Text>
+          <Animated.View style={[styles.subtitleWrap, subtitleStyle]}>
+            <Text style={styles.subtitle}>{appConfig.brand.locationName}</Text>
+          </Animated.View>
+        </View>
+
+        <Animated.View style={[styles.storeRail, storeRailStyle]}>
+          <View style={styles.storeCopy}>
+            <Animated.View style={[styles.pickupMetaWrap, pickupMetaStyle]}>
+              <Text style={styles.storeMeta}>{`Estimated pick-up is ${storeConfig.prepEtaMinutes} mins`}</Text>
+            </Animated.View>
+            <Animated.Text style={[styles.storeTitle, storeTitleStyle]}>{appConfig.brand.marketLabel}</Animated.Text>
+          </View>
+
+          <Animated.View style={menuLinkStyle}>
+            <Pressable onPress={() => router.push("/(tabs)/menu")} style={styles.inlineLink}>
+              <Text style={styles.inlineLinkText}>Menu</Text>
+              <Ionicons name="chevron-forward" size={16} color={uiPalette.text} />
+            </Pressable>
+          </Animated.View>
+        </Animated.View>
+      </Animated.View>
+
+      <Animated.View pointerEvents="none" style={[styles.heroShadow, heroShadowStyle]}>
+        <LinearGradient
+          colors={[
+            "rgba(0, 0, 0, 0)",
+            "rgba(0, 0, 0, 0.012)",
+            "rgba(0, 0, 0, 0.038)",
+            "rgba(0, 0, 0, 0.01)",
+            "rgba(0, 0, 0, 0)"
+          ]}
+          locations={[0, 0.2, 0.34, 0.5, 1]}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={styles.heroShadowGradient}
         />
-      </GlassCard>
+        <LinearGradient
+          colors={[uiPalette.background, "rgba(247, 244, 237, 0)"]}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={[styles.heroShadowEdgeFade, styles.heroShadowEdgeFadeLeft]}
+        />
+        <LinearGradient
+          colors={["rgba(247, 244, 237, 0)", uiPalette.background]}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={[styles.heroShadowEdgeFade, styles.heroShadowEdgeFadeRight]}
+        />
+      </Animated.View>
 
-      <View style={styles.quickRow}>
-        <Card style={styles.quickCard}>
-          <Ionicons name="person-circle-outline" size={22} color={uiPalette.primary} />
-          <Text style={styles.quickCardTitle}>Auth Center</Text>
-          <Text style={styles.quickCardBody}>Sign in, refresh, and validate session state.</Text>
-          <Button label="Open" variant="secondary" onPress={() => router.push("/auth")} style={{ marginTop: 10 }} />
-        </Card>
-
-        <Card style={styles.quickCard}>
-          <Ionicons name="bag-handle-outline" size={22} color={uiPalette.primary} />
-          <Text style={styles.quickCardTitle}>Cart + Checkout</Text>
-          <Text style={styles.quickCardBody}>Review totals and test Apple Pay flows.</Text>
-          <Button label="Go to Cart" variant="secondary" onPress={() => router.push("/(tabs)/cart")} style={{ marginTop: 10 }} />
-        </Card>
-      </View>
-
-      <Card style={{ marginTop: 14 }}>
-        <SectionLabel label="System" />
-        <Text style={styles.systemTitle}>Gateway Connectivity</Text>
-        <Text style={styles.systemBody}>Use this health action to verify API reachability from the current build.</Text>
-        <Button label="Run Gateway Check" variant="ghost" onPress={handleGatewayCheck} style={{ marginTop: 12 }} />
-        {gatewayStatus ? (
-          <Text style={[styles.gatewayStatus, gatewayStatus.includes("failed") ? styles.gatewayError : styles.gatewayOk]}>
-            {gatewayStatus}
-          </Text>
-        ) : null}
-      </Card>
-    </ScreenScroll>
+      <TabBarDepthBackdrop />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  heroTitle: {
-    marginTop: 8,
-    fontSize: 24,
-    fontWeight: "700",
-    letterSpacing: -0.4,
-    color: uiPalette.text
+  screen: {
+    flex: 1,
+    backgroundColor: uiPalette.background
   },
-  heroCopy: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 20,
+  scrollContent: {
+    paddingHorizontal: 20
+  },
+  headerShell: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    backgroundColor: uiPalette.background,
+    overflow: "hidden",
+    justifyContent: "flex-end"
+  },
+  heroShadow: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: DIVIDER_SHADOW_HEIGHT,
+    overflow: "hidden"
+  },
+  heroShadowGradient: {
+    ...StyleSheet.absoluteFillObject
+  },
+  heroShadowEdgeFade: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 42
+  },
+  heroShadowEdgeFadeLeft: {
+    left: 0
+  },
+  heroShadowEdgeFadeRight: {
+    right: 0
+  },
+  hero: {
+    paddingTop: 0
+  },
+  title: {
+    marginTop: 14,
+    fontSize: 40,
+    lineHeight: 46,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600",
+    letterSpacing: -1.4
+  },
+  subtitle: {
+    marginLeft: 4,
+    maxWidth: 340,
+    fontSize: 16,
+    lineHeight: 26,
     color: uiPalette.textSecondary
   },
-  quickRow: {
-    marginTop: 14,
-    flexDirection: "row",
-    gap: 12
+  subtitleWrap: {
+    overflow: "hidden"
   },
-  quickCard: {
+  storeRail: {
+    marginTop: 28,
+    paddingBottom: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: uiPalette.border,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 16
+  },
+  storeCopy: {
     flex: 1
   },
-  quickCardTitle: {
-    marginTop: 8,
-    fontSize: 15,
-    fontWeight: "700",
-    color: uiPalette.text
+  pickupMetaWrap: {
+    overflow: "hidden"
   },
-  quickCardBody: {
-    marginTop: 4,
+  storeMeta: {
     fontSize: 13,
     lineHeight: 18,
     color: uiPalette.textSecondary
   },
-  systemTitle: {
-    marginTop: 7,
-    fontSize: 18,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-  systemBody: {
+  storeTitle: {
     marginTop: 6,
-    fontSize: 13,
+    fontSize: 19,
+    lineHeight: 25,
+    letterSpacing: 1.9,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
+  },
+  inlineLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingBottom: 2
+  },
+  inlineLinkText: {
+    fontSize: 14,
     lineHeight: 18,
+    color: uiPalette.text,
+    fontWeight: "600"
+  },
+  cardGrid: {
+    paddingTop: 14,
+    gap: 14
+  },
+  newsCard: {
+    width: "100%",
+    minHeight: 142,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    justifyContent: "space-between",
+    gap: 18
+  },
+  newsCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  newsLabel: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: uiPalette.accentSoft
+  },
+  newsLabelText: {
+    fontSize: 11,
+    lineHeight: 13,
+    letterSpacing: 1.1,
+    fontWeight: "700",
     color: uiPalette.textSecondary
   },
-  gatewayStatus: {
-    marginTop: 10,
-    fontSize: 12,
-    lineHeight: 17
+  newsCopy: {
+    gap: 8
   },
-  gatewayOk: {
-    color: "#0E8F46"
+  newsTitle: {
+    fontSize: 24,
+    lineHeight: 28,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600",
+    letterSpacing: -0.5
   },
-  gatewayError: {
-    color: uiPalette.danger
+  newsBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: uiPalette.textSecondary
+  },
+  newsNote: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: uiPalette.textMuted,
+    fontWeight: "500"
   }
 });

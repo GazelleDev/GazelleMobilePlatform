@@ -3,8 +3,53 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
 PIDS=()
 CLEANED_UP=0
+
+load_env_file() {
+  local env_file="$1"
+  local line=""
+  local line_number=0
+  local key=""
+  local value=""
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_number=$((line_number + 1))
+    line="${line%$'\r'}"
+
+    if [[ "${line}" =~ ^[[:space:]]*$ ]] || [[ "${line}" =~ ^[[:space:]]*# ]]; then
+      continue
+    fi
+
+    if [[ "${line}" =~ ^[[:space:]]*export[[:space:]]+ ]]; then
+      line="${line#export }"
+    fi
+
+    if [[ ! "${line}" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      echo "[dev-services] skipping invalid env line ${line_number} in ${env_file}" >&2
+      continue
+    fi
+
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+
+    if [[ "${value}" =~ ^\".*\"$ ]] || [[ "${value}" =~ ^\'.*\'$ ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" =~ [[:space:]] ]]; then
+      echo "[dev-services] skipping invalid env line ${line_number} in ${env_file}" >&2
+      continue
+    fi
+
+    export "${key}=${value}"
+  done < "${env_file}"
+}
+
+if [[ -f "${ENV_FILE}" ]]; then
+  echo "[dev-services] loading env from ${ENV_FILE}"
+  load_env_file "${ENV_FILE}"
+fi
+
 BIND_HOST="${BIND_HOST:-127.0.0.1}"
 GATEWAY_PUBLIC_HOST="${GATEWAY_PUBLIC_HOST:-127.0.0.1}"
 IDENTITY_UPSTREAM_HOST="${IDENTITY_UPSTREAM_HOST:-127.0.0.1}"

@@ -16,6 +16,8 @@ Validate loyalty balance and ledger behavior locally with deterministic points a
   - `GET /v1/loyalty/balance`
   - `GET /v1/loyalty/ledger`
 
+Internal loyalty routes now require `LOYALTY_INTERNAL_API_TOKEN`.
+
 ## Orders Integration Keys
 
 `services/orders` uses deterministic loyalty mutation keys per order:
@@ -52,6 +54,7 @@ Apply an earn mutation:
 ```bash
 curl -s http://127.0.0.1:3004/v1/loyalty/internal/ledger/apply \
   -H 'content-type: application/json' \
+  -H "x-internal-token: ${LOYALTY_INTERNAL_API_TOKEN}" \
   -d "{
     \"userId\":\"${USER_ID}\",
     \"type\":\"EARN\",
@@ -65,6 +68,7 @@ Apply a redeem mutation:
 ```bash
 curl -s http://127.0.0.1:3004/v1/loyalty/internal/ledger/apply \
   -H 'content-type: application/json' \
+  -H "x-internal-token: ${LOYALTY_INTERNAL_API_TOKEN}" \
   -d "{
     \"userId\":\"${USER_ID}\",
     \"type\":\"REDEEM\",
@@ -85,6 +89,7 @@ Idempotency conflict check (same key, different payload):
 ```bash
 curl -s http://127.0.0.1:3004/v1/loyalty/internal/ledger/apply \
   -H 'content-type: application/json' \
+  -H "x-internal-token: ${LOYALTY_INTERNAL_API_TOKEN}" \
   -d "{
     \"userId\":\"${USER_ID}\",
     \"type\":\"EARN\",

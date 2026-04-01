@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fastify/rate-limit": "^9.1.0",
+    "@gazelle/contracts-catalog": "workspace:*",
     "@gazelle/persistence": "workspace:*",
     "@gazelle/contracts-orders": "workspace:*",
     "@fastify/swagger": "^8.15.0",

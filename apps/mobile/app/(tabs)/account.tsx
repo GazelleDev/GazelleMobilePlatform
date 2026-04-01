@@ -1,439 +1,254 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Link } from "expo-router";
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthSession } from "../../src/auth/session";
-import {
-  findActiveOrder,
-  useLoyaltyBalanceQuery,
-  useLoyaltyLedgerQuery,
-  useOrderHistoryQuery,
-  usePushTokenRegistrationMutation
-} from "../../src/account/data";
-import { formatUsd } from "../../src/menu/catalog";
-import { Button, Card, Chip, ScreenScroll, SectionLabel, TitleBlock, uiPalette } from "../../src/ui/system";
+import { useLoyaltyBalanceQuery, useLoyaltyLedgerQuery } from "../../src/account/data";
+import { AccountFloatingHeader, ACCOUNT_HEADER_HEIGHT } from "../../src/account/AccountFloatingHeader";
+import { resolveAppConfigData, useAppConfigQuery } from "../../src/menu/catalog";
+import { TAB_BAR_HEIGHT, getTabBarBottomOffset } from "../../src/navigation/tabBarMetrics";
+import { Button, Chip, GlassCard, ScreenScroll, SectionLabel, uiPalette, uiTypography } from "../../src/ui/system";
 
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Unexpected error";
-}
-
-function formatDateTime(value: string) {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) {
-    return value;
+function formatMemberLabel(userId: string | undefined) {
+  if (!userId) {
+    return "Member";
   }
 
-  return new Date(parsed).toLocaleString();
+  return `Member ${userId.slice(0, 8).toUpperCase()}`;
 }
 
-function formatOrderStatus(status: string) {
-  return status.replaceAll("_", " ");
-}
-
-function OrderStatusChip({ status }: { status: string }) {
-  const isPositive = status === "READY" || status === "COMPLETED";
-  const isCritical = status === "CANCELED";
-
+function AccountPageRow({
+  label,
+  isLast = false,
+  onPress
+}: {
+  label: string;
+  isLast?: boolean;
+  onPress: () => void;
+}) {
   return (
-    <View
-      style={[
-        styles.statusPill,
-        isPositive ? styles.statusPillPositive : null,
-        isCritical ? styles.statusPillCritical : null
-      ]}
-    >
-      <Text
-        style={[
-          styles.statusPillText,
-          isPositive ? styles.statusPillTextPositive : null,
-          isCritical ? styles.statusPillTextCritical : null
-        ]}
-      >
-        {formatOrderStatus(status)}
-      </Text>
-    </View>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.pageRow, pressed ? styles.pageRowPressed : null]}>
+      <View style={styles.pageRowInner}>
+        <Text numberOfLines={1} style={styles.pageRowLabel}>
+          {label}
+        </Text>
+        <Ionicons name="arrow-forward" size={16} color={uiPalette.text} style={styles.pageRowChevron} />
+      </View>
+      {isLast ? null : <View style={styles.pageRowDivider} />}
+    </Pressable>
   );
 }
 
 export default function AccountScreen() {
-  const { isAuthenticated, session, signOut } = useAuthSession();
-  const ordersQuery = useOrderHistoryQuery(isAuthenticated);
-  const loyaltyBalanceQuery = useLoyaltyBalanceQuery(isAuthenticated);
-  const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
-  const pushTokenMutation = usePushTokenRegistrationMutation();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { isAuthenticated, session } = useAuthSession();
+  const appConfigQuery = useAppConfigQuery();
+  const appConfig = resolveAppConfigData(appConfigQuery.data);
+  const loyaltyEnabled = appConfig.loyaltyEnabled && appConfig.featureFlags.loyalty;
+  const loyaltyBalanceQuery = useLoyaltyBalanceQuery(isAuthenticated && loyaltyEnabled);
+  const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated && loyaltyEnabled);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
 
-  const [notificationStatus, setNotificationStatus] = useState("");
-  const [signOutPending, setSignOutPending] = useState(false);
-
-  const orders = ordersQuery.data ?? [];
-  const activeOrder = findActiveOrder(orders);
   const loyaltyBalance = loyaltyBalanceQuery.data;
-  const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
-
-  const isRefreshing =
-    ordersQuery.isFetching ||
-    loyaltyBalanceQuery.isFetching ||
-    loyaltyLedgerQuery.isFetching ||
-    pushTokenMutation.isPending;
-
-  async function handleSignOut() {
-    setSignOutPending(true);
-    try {
-      await signOut();
-    } finally {
-      setSignOutPending(false);
-    }
-  }
+  const memberLabel = formatMemberLabel(session?.userId);
+  const headerOffset = insets.top + ACCOUNT_HEADER_HEIGHT;
+  const contentBottomInset = Math.max(getTabBarBottomOffset(insets.bottom > 0) + TAB_BAR_HEIGHT + 24 - insets.bottom, 24);
 
   function handleRefresh() {
-    void ordersQuery.refetch();
-    void loyaltyBalanceQuery.refetch();
-    void loyaltyLedgerQuery.refetch();
+    if (isManualRefresh) return;
+
+    setIsManualRefresh(true);
+    void Promise.allSettled([
+      appConfigQuery.refetch(),
+      loyaltyBalanceQuery.refetch(),
+      loyaltyLedgerQuery.refetch()
+    ]).finally(() => {
+      setIsManualRefresh(false);
+    });
   }
 
-  function handleRegisterPushToken() {
-    const userIdFragment = session?.userId.slice(0, 8) ?? "guest";
-    const tokenSeed = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  function openAccountRoute(pathname: "/account/rewards" | "/account/alerts" | "/account/session" | "/account/settings") {
+    if (!isAuthenticated) {
+      router.push({ pathname: "/auth", params: { returnTo: "/(tabs)/account" } });
+      return;
+    }
 
-    setNotificationStatus("Registering push token...");
-    pushTokenMutation.mutate(
-      {
-        deviceId: `mobile-${userIdFragment}`,
-        platform: "ios",
-        expoPushToken: `ExponentPushToken[${tokenSeed}]`
-      },
-      {
-        onSuccess: () => setNotificationStatus("Push token registration updated."),
-        onError: (error) => setNotificationStatus(toErrorMessage(error))
-      }
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <ScreenScroll>
-        <TitleBlock
-          title="Account"
-          subtitle="Sign in to access order tracking, loyalty balances, and notification preferences."
-        />
-
-        <Card style={{ marginTop: 16 }}>
-          <SectionLabel label="Profile Access" />
-          <Text style={styles.emptyBody}>
-            Your account dashboard shows active order progress, recent history, and rewards activity.
-          </Text>
-          <Link href={{ pathname: "/auth", params: { returnTo: "/(tabs)/account" } }} asChild>
-            <Pressable style={styles.signInCta}>
-              <Ionicons name="log-in-outline" size={16} color="#FFFFFF" />
-              <Text style={styles.signInCtaText}>Sign In</Text>
-            </Pressable>
-          </Link>
-        </Card>
-      </ScreenScroll>
-    );
+    router.push(pathname);
   }
 
   return (
-    <ScreenScroll>
-      <TitleBlock
-        title="Account"
-        subtitle="Manage profile, loyalty rewards, order history, and push notifications."
-        action={
-          <Button
-            label={isRefreshing ? "Refreshing" : "Refresh"}
-            variant="secondary"
-            onPress={handleRefresh}
-            disabled={isRefreshing}
-          />
-        }
-      />
-
-      <Card style={{ marginTop: 16 }}>
-        <SectionLabel label="Profile" />
-        <Text style={styles.profileValue}>{session?.userId ?? "Unknown user"}</Text>
-        <Text style={styles.profileMeta}>Session expires {formatDateTime(session?.expiresAt ?? "")}</Text>
-      </Card>
-
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Active Order" />
-        {ordersQuery.isLoading ? <Text style={styles.bodyText}>Loading active order...</Text> : null}
-
-        {ordersQuery.error ? (
-          <View style={{ marginTop: 10 }}>
-            <Text style={styles.errorText}>{toErrorMessage(ordersQuery.error)}</Text>
-            <Button label="Retry" variant="ghost" onPress={() => void ordersQuery.refetch()} style={{ marginTop: 8, alignSelf: "flex-start" }} />
-          </View>
-        ) : null}
-
-        {!ordersQuery.isLoading && !ordersQuery.error ? (
-          activeOrder ? (
-            <View style={styles.activeOrderCard}>
-              <OrderStatusChip status={activeOrder.status} />
-              <Text style={styles.pickupCodeLabel}>Pickup code</Text>
-              <Text style={styles.pickupCodeValue}>{activeOrder.pickupCode}</Text>
-              <Text style={styles.profileMeta}>
-                Updated {formatDateTime(activeOrder.timeline[activeOrder.timeline.length - 1]?.occurredAt ?? "")}
-              </Text>
-            </View>
-          ) : (
-            <Text style={styles.bodyText}>No active order right now.</Text>
-          )
-        ) : null}
-      </Card>
-
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Order History" />
-        {ordersQuery.isLoading ? <Text style={styles.bodyText}>Loading history...</Text> : null}
-        {ordersQuery.error ? <Text style={styles.errorText}>Unable to load order history.</Text> : null}
-
-        {!ordersQuery.isLoading && !ordersQuery.error && orders.length === 0 ? (
-          <Text style={styles.bodyText}>No completed orders yet.</Text>
-        ) : null}
-
-        {!ordersQuery.isLoading && !ordersQuery.error && orders.length > 0 ? (
-          <View style={styles.listWrap}>
-            {orders.slice(0, 5).map((order) => (
-              <View key={order.id} style={styles.listItem}>
-                <View style={styles.listItemTop}>
-                  <OrderStatusChip status={order.status} />
-                  <Text style={styles.listItemAmount}>{formatUsd(order.total.amountCents)}</Text>
+    <View style={styles.screenShell}>
+      <ScreenScroll
+        bottomInset={contentBottomInset}
+        refreshing={isAuthenticated && isManualRefresh}
+        onRefresh={isAuthenticated ? handleRefresh : undefined}
+        contentContainerStyle={[styles.screenContentNoTopPadding, { paddingTop: headerOffset }]}
+      >
+        <GlassCard style={styles.heroCard}>
+          {isAuthenticated ? (
+            <>
+              <View style={styles.heroTopRow}>
+                <View style={styles.heroCopy}>
+                  <SectionLabel label="Member" />
+                  <Text style={styles.heroTitle}>{memberLabel}</Text>
+                  <Text style={styles.heroBody}>{appConfig.brand.locationName}</Text>
                 </View>
-                <Text style={styles.listItemCode}>{order.pickupCode}</Text>
-                <Text style={styles.listItemMeta}>
-                  {formatDateTime(order.timeline[order.timeline.length - 1]?.occurredAt ?? "")}
-                </Text>
+                <Chip label={loyaltyEnabled ? "Loyalty On" : "Loyalty Off"} active={loyaltyEnabled} />
               </View>
-            ))}
-          </View>
-        ) : null}
-      </Card>
 
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Loyalty" />
-        {loyaltyBalanceQuery.isLoading ? <Text style={styles.bodyText}>Loading loyalty balance...</Text> : null}
-        {loyaltyBalanceQuery.error ? <Text style={styles.errorText}>Unable to load loyalty balance.</Text> : null}
-
-        {loyaltyBalance ? (
-          <View style={styles.pointsPanel}>
-            <Text style={styles.pointsValue}>{loyaltyBalance.availablePoints} points</Text>
-            <Text style={styles.pointsMeta}>
-              Pending {loyaltyBalance.pendingPoints} • Lifetime earned {loyaltyBalance.lifetimeEarned}
-            </Text>
-          </View>
-        ) : null}
-
-        {loyaltyLedger.length > 0 ? (
-          <View style={styles.ledgerWrap}>
-            {loyaltyLedger.slice(0, 4).map((entry) => (
-              <View key={entry.id} style={styles.ledgerItem}>
-                <Chip
-                  label={`${entry.type} ${entry.points > 0 ? `+${entry.points}` : entry.points}`}
-                  active={entry.points > 0}
-                />
-                <Text style={styles.ledgerMeta}>{formatDateTime(entry.createdAt)}</Text>
+              <View style={styles.pointsWrap}>
+                <Text style={styles.pointsLabel}>Available points</Text>
+                <Text style={styles.pointsValue}>{loyaltyEnabled ? (loyaltyBalance ? `${loyaltyBalance.availablePoints}` : "…") : "Off"}</Text>
+                <View style={styles.pointsMetaRow}>
+                  <Text style={styles.pointsMeta}>{loyaltyEnabled ? `Pending ${loyaltyBalance ? loyaltyBalance.pendingPoints : "--"} pts` : "Loyalty unavailable"}</Text>
+                </View>
               </View>
-            ))}
+            </>
+          ) : (
+            <>
+              <SectionLabel label="Member access" />
+              <Text style={styles.heroTitle}>Rewards travel with you.</Text>
+              <Text style={styles.heroBody}>
+                Sign in once to keep points, alerts, and session settings attached to the same customer account.
+              </Text>
+              <Button
+                label="Sign In"
+                variant="secondary"
+                onPress={() => router.push({ pathname: "/auth", params: { returnTo: "/(tabs)/account" } })}
+                style={styles.signInAction}
+                left={<Ionicons name="log-in-outline" size={16} color={uiPalette.text} />}
+              />
+            </>
+          )}
+        </GlassCard>
+
+        <View style={styles.listSection}>
+          <View style={styles.pageList}>
+            <AccountPageRow label="Rewards activity" onPress={() => openAccountRoute("/account/rewards")} />
+            <AccountPageRow label="Alerts" onPress={() => openAccountRoute("/account/alerts")} />
+            <AccountPageRow label="Session" onPress={() => openAccountRoute("/account/session")} />
+            <AccountPageRow label="Settings" isLast onPress={() => openAccountRoute("/account/settings")} />
           </View>
-        ) : null}
-      </Card>
+        </View>
+      </ScreenScroll>
 
-      <Card style={{ marginTop: 12 }}>
-        <SectionLabel label="Notification Settings" />
-        <Text style={styles.bodyText}>Register this device token to receive order updates in real time.</Text>
-        <Button
-          label={pushTokenMutation.isPending ? "Saving..." : "Register Push Updates"}
-          onPress={handleRegisterPushToken}
-          disabled={pushTokenMutation.isPending}
-          style={{ marginTop: 10 }}
-        />
-        {notificationStatus ? <Text style={styles.statusText}>{notificationStatus}</Text> : null}
-      </Card>
-
-      <Button
-        label={signOutPending ? "Signing Out..." : "Sign Out"}
-        variant="ghost"
-        onPress={() => {
-          void handleSignOut();
-        }}
-        disabled={signOutPending}
-        style={{ marginTop: 12 }}
-      />
-    </ScreenScroll>
+      <AccountFloatingHeader title="Account" insetTop={insets.top} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  emptyBody: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 20,
-    color: uiPalette.textSecondary
+  screenShell: {
+    flex: 1
   },
-  signInCta: {
-    marginTop: 12,
-    alignSelf: "flex-start",
+  screenContentNoTopPadding: {
+    paddingTop: 0
+  },
+  heroCard: {
+    marginTop: 18
+  },
+  heroTopRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
-    backgroundColor: uiPalette.primary
-  },
-  signInCtaText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0.3
-  },
-  profileValue: {
-    marginTop: 8,
-    fontSize: 15,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-  profileMeta: {
-    marginTop: 4,
-    fontSize: 12,
-    color: uiPalette.textMuted
-  },
-  bodyText: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 20,
-    color: uiPalette.textSecondary
-  },
-  errorText: {
-    marginTop: 8,
-    fontSize: 13,
-    color: uiPalette.danger
-  },
-  activeOrderCard: {
-    marginTop: 10,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    padding: 12
-  },
-  pickupCodeLabel: {
-    marginTop: 8,
-    fontSize: 12,
-    color: uiPalette.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 1
-  },
-  pickupCodeValue: {
-    marginTop: 4,
-    fontSize: 22,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    color: uiPalette.text
-  },
-  statusPill: {
-    alignSelf: "flex-start",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "rgba(15,23,42,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(15,23,42,0.12)"
-  },
-  statusPillPositive: {
-    backgroundColor: "rgba(52,199,89,0.14)",
-    borderColor: "rgba(52,199,89,0.34)"
-  },
-  statusPillCritical: {
-    backgroundColor: "rgba(255,59,48,0.14)",
-    borderColor: "rgba(255,59,48,0.34)"
-  },
-  statusPillText: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    color: uiPalette.textSecondary,
-    textTransform: "uppercase"
-  },
-  statusPillTextPositive: {
-    color: "#118C43"
-  },
-  statusPillTextCritical: {
-    color: "#B52821"
-  },
-  listWrap: {
-    marginTop: 10,
-    gap: 8
-  },
-  listItem: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.84)",
-    padding: 10
-  },
-  listItemTop: {
-    flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 8
+    gap: 16
   },
-  listItemAmount: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: uiPalette.text
+  heroCopy: {
+    flex: 1
   },
-  listItemCode: {
+  heroTitle: {
+    marginTop: 10,
+    fontSize: 30,
+    lineHeight: 34,
+    letterSpacing: -0.8,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700"
+  },
+  heroBody: {
     marginTop: 8,
     fontSize: 14,
-    fontWeight: "600",
-    color: uiPalette.text
+    lineHeight: 21,
+    color: uiPalette.textSecondary
   },
-  listItemMeta: {
-    marginTop: 3,
-    fontSize: 12,
-    color: uiPalette.textMuted
+  pointsWrap: {
+    marginTop: 22,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border
   },
-  pointsPanel: {
-    marginTop: 8,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    padding: 12
+  pointsLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+    color: uiPalette.textMuted,
+    fontWeight: "700"
   },
   pointsValue: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: uiPalette.text
+    marginTop: 10,
+    fontSize: 46,
+    lineHeight: 50,
+    letterSpacing: -1.6,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700"
+  },
+  pointsMetaRow: {
+    marginTop: 10,
+    gap: 4
   },
   pointsMeta: {
-    marginTop: 4,
-    fontSize: 12,
-    color: uiPalette.textMuted
+    fontSize: 13,
+    lineHeight: 18,
+    color: uiPalette.textSecondary
   },
-  ledgerWrap: {
-    marginTop: 10,
-    gap: 8
+  signInAction: {
+    marginTop: 18,
+    alignSelf: "flex-start"
   },
-  ledgerItem: {
+  listSection: {
+    marginTop: 28
+  },
+  pageList: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border,
+    borderBottomWidth: 1,
+    borderBottomColor: uiPalette.border
+  },
+  pageRow: {
+    minHeight: 68
+  },
+  pageRowPressed: {
+    opacity: 0.72
+  },
+  pageRowInner: {
+    minHeight: 68,
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    padding: 8,
-    backgroundColor: "rgba(255,255,255,0.76)"
+    gap: 16
   },
-  ledgerMeta: {
-    fontSize: 12,
-    color: uiPalette.textMuted
+  pageRowLabel: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
   },
-  statusText: {
-    marginTop: 8,
-    fontSize: 12,
-    lineHeight: 17,
-    color: uiPalette.textSecondary
+  pageRowChevron: {
+    flexShrink: 0
+  },
+  pageRowDivider: {
+    marginHorizontal: 12,
+    height: 1,
+    backgroundColor: uiPalette.border
   }
 });

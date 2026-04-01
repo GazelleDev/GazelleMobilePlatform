@@ -1,65 +1,50 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import Constants from "expo-constants";
+import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ActivityIndicator,
+  describeCustomizationSelection,
+  priceMenuItemCustomization,
+  type CustomizationValidationIssue
+} from "@gazelle/contracts-catalog";
+import {
+  Animated as RNAnimated,
+  Image,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
+  type StyleProp,
+  type ViewStyle
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCart } from "../src/cart/store";
 import {
+  buildDefaultCustomization,
   DEFAULT_CUSTOMIZATION,
-  getCustomizationDeltaCents,
-  getUnitPriceCents,
+  isCustomizationOptionSelected,
+  normalizeCustomization,
+  resolveCartCustomization,
   type CartCustomization
 } from "../src/cart/model";
+import { CustomizationGroupSection } from "../src/menu/CustomizationGroupSection";
 import {
   formatUsd,
   resolveMenuData,
   useMenuQuery,
-  type MenuItem
+  type MenuItem,
+  type MenuItemCustomizationGroup,
+  type MenuItemCustomizationOption
 } from "../src/menu/catalog";
-import { Button, Chip, SectionLabel, uiPalette } from "../src/ui/system";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+import { CustomizeModalLoadingSheet } from "../src/menu/CustomizeModalLoadingSheet";
+import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../src/navigation/tabBarMetrics";
+import { uiPalette, uiTypography } from "../src/ui/system";
 
 const MAX_QUANTITY = 20;
-const isExpoGo = Constants.appOwnership === "expo";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type CustomizationOptionProps = {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-  priceDeltaCents?: number;
-};
-
-type LiquidGlassViewProps = {
-  children: ReactNode;
-  style: {
-    borderRadius: number;
-    overflow: "hidden";
-  };
-  effect?: "clear" | "regular" | "none";
-  colorScheme?: "light" | "dark" | "system";
-};
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function resolveItemId(input: string | string[] | undefined): string | null {
   if (Array.isArray(input)) return resolveItemId(input[0]);
@@ -72,387 +57,506 @@ function findMenuItemById(itemId: string | null, items: MenuItem[]): MenuItem | 
   return items.find((item) => item.id === itemId) ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
+function canUseLiquidGlassFooter() {
+  if (Platform.OS !== "ios") return false;
 
-function CustomizationOption({
-  label,
-  selected,
-  onPress,
-  priceDeltaCents
-}: CustomizationOptionProps) {
+  try {
+    return isLiquidGlassAvailable();
+  } catch {
+    return false;
+  }
+}
+
+function updateCustomizationOption(
+  customization: CartCustomization,
+  group: MenuItemCustomizationGroup,
+  option: MenuItemCustomizationOption
+): CartCustomization {
+  const active = isCustomizationOptionSelected(customization, group.id, option.id);
+  const otherSelections = customization.selectedOptions.filter((selection) => selection.groupId !== group.id);
+  const groupSelections = customization.selectedOptions.filter((selection) => selection.groupId === group.id);
+
+  if (group.selectionType === "single") {
+    return normalizeCustomization({
+      ...customization,
+      selectedOptions: [...otherSelections, { groupId: group.id, optionId: option.id }]
+    });
+  }
+
+  if (active) {
+    return normalizeCustomization({
+      ...customization,
+      selectedOptions: customization.selectedOptions.filter(
+        (selection) => !(selection.groupId === group.id && selection.optionId === option.id)
+      )
+    });
+  }
+
+  if (groupSelections.length >= group.maxSelections) {
+    if (group.maxSelections === 1) {
+      return normalizeCustomization({
+        ...customization,
+        selectedOptions: [...otherSelections, { groupId: group.id, optionId: option.id }]
+      });
+    }
+
+    return customization;
+  }
+
+  return normalizeCustomization({
+    ...customization,
+    selectedOptions: [...customization.selectedOptions, { groupId: group.id, optionId: option.id }]
+  });
+}
+
+function findGroupIssue(issues: CustomizationValidationIssue[], groupId: string) {
+  return issues.find((issue) => issue.groupId === groupId);
+}
+
+function FooterPill({
+  children,
+  style
+}: {
+  children: ReactNode;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const useLiquidGlass = canUseLiquidGlassFooter();
+
+  const content = (
+    <View style={[styles.footerPillInner, useLiquidGlass ? styles.footerPillInnerGlass : styles.footerPillInnerFallback]}>
+      {children}
+    </View>
+  );
+
   return (
-    <Chip
-      label={
-        priceDeltaCents && priceDeltaCents > 0
-          ? `${label} +${formatUsd(priceDeltaCents)}`
-          : label
-      }
-      active={selected}
-      onPress={onPress}
-    />
+    <View style={[styles.footerPillShell, style]}>
+      {useLiquidGlass ? (
+        <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.footerPillFrame}>
+          {content}
+        </GlassView>
+      ) : (
+        <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerPillFrame}>
+          {content}
+        </BlurView>
+      )}
+    </View>
   );
 }
 
-function renderGlassPill(children: ReactNode) {
-  if (Platform.OS === "ios" && !isExpoGo) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { LiquidGlassView, isLiquidGlassSupported } = require("@callstack/liquid-glass") as {
-        LiquidGlassView: React.ComponentType<LiquidGlassViewProps>;
-        isLiquidGlassSupported: boolean;
-      };
-
-      if (isLiquidGlassSupported) {
-        return (
-          <LiquidGlassView
-            effect="regular"
-            colorScheme="system"
-            style={{ borderRadius: 999, overflow: "hidden" }}
-          >
-            <View style={styles.addToCartGlassSurface}>{children}</View>
-          </LiquidGlassView>
-        );
-      }
-    } catch {
-      // Fall through to blur fallback when native module is unavailable.
-    }
-  }
+function FooterQuantityPill({
+  quantity,
+  onDecrease,
+  onIncrease,
+  canDecrease,
+  canIncrease,
+  style
+}: {
+  quantity: number;
+  onDecrease: () => void;
+  onIncrease: () => void;
+  canDecrease: boolean;
+  canIncrease: boolean;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const useLiquidGlass = canUseLiquidGlassFooter();
 
   return (
-    <BlurView
-      tint="light"
-      intensity={Platform.OS === "ios" ? 66 : 56}
-      style={styles.addToCartBlurFallback}
-    >
-      <View style={styles.addToCartGlassSurface}>{children}</View>
-    </BlurView>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Screen
-// ---------------------------------------------------------------------------
-
-export default function MenuCustomizeModalScreen() {
-  const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const params = useLocalSearchParams<{ itemId?: string | string[] }>();
-  const itemId = useMemo(() => resolveItemId(params.itemId), [params.itemId]);
-
-  const { addItem } = useCart();
-  const menuQuery = useMenuQuery();
-  const menu = resolveMenuData(menuQuery.data);
-  const menuItems = useMemo(
-    () => menu.categories.flatMap((category) => category.items),
-    [menu.categories]
-  );
-  const item = useMemo(
-    () => findMenuItemById(itemId, menuItems),
-    [itemId, menuItems]
-  );
-
-  const [customization, setCustomization] =
-    useState<CartCustomization>(DEFAULT_CUSTOMIZATION);
-  const [quantity, setQuantity] = useState(1);
-
-  useEffect(() => {
-    setCustomization(DEFAULT_CUSTOMIZATION);
-    setQuantity(1);
-  }, [item?.id]);
-
-  const customizationDeltaCents = useMemo(
-    () => getCustomizationDeltaCents(customization),
-    [customization]
-  );
-  const selectedUnitPriceCents = item
-    ? getUnitPriceCents(item.priceCents, customization)
-    : 0;
-  const selectedLineTotalCents = selectedUnitPriceCents * quantity;
-
-  // ---------------------------------------------------------------------------
-  // Handlers
-  // ---------------------------------------------------------------------------
-
-  function closeModal() {
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace("/(tabs)/home");
-    }
-  }
-
-  function addSelectedItem() {
-    if (!item) return;
-
-    addItem({
-      menuItemId: item.id,
-      name: item.name,
-      basePriceCents: item.priceCents,
-      customization,
-      quantity
-    });
-    closeModal();
-  }
-
-  function incrementQuantity() {
-    setQuantity((prev) => {
-      if (prev >= MAX_QUANTITY) return prev;
-      return prev + 1;
-    });
-  }
-
-  function decrementQuantity() {
-    setQuantity((prev) => {
-      if (prev <= 1) return prev;
-      return prev - 1;
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
-
-  return (
-    <View style={styles.backdrop}>
-      <View style={styles.sheet}>
-        {/* Handle */}
-        <View style={styles.modalHandleWrap}>
-          <View style={styles.modalHandle} />
-        </View>
-
-        {/* Header — always visible, never scrolls */}
-        <View style={styles.modalHeaderRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.modalTitle}>{item?.name ?? "Customize"}</Text>
-            {/* Only show subtitle if there's an actual description */}
-            {item?.description ? (
-              <Text style={styles.modalSubtitle}>{item.description}</Text>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Loading state */}
-        {menuQuery.isLoading && !menuQuery.data ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator color={uiPalette.primary} />
-            <Text style={styles.loadingText}>Loading item details...</Text>
-          </View>
-        ) : null}
-
-        {/* Item not found state */}
-        {!menuQuery.isLoading && !item ? (
-          <View style={styles.loadingWrap}>
-            <Text style={styles.loadingText}>
-              This item is unavailable right now.
-            </Text>
-            <Button
-              label="Close"
-              variant="secondary"
-              onPress={closeModal}
-              style={{ marginTop: 12 }}
-            />
-          </View>
-        ) : null}
-
-        {/* Scrollable customization options */}
-        {item ? (
+    <View style={[styles.footerQuantityShell, style]}>
+      <View pointerEvents="box-none" style={styles.footerQuantityMergeLayer}>
+        {useLiquidGlass ? (
           <>
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{
-                paddingBottom: Math.max(insets.bottom, 16) + 8
-              }}
-            >
-              {item.badgeCodes.length > 0 ? (
-                <View style={styles.badgeRow}>
-                  {item.badgeCodes.map((badge) => (
-                    <View key={badge} style={styles.badgePill}>
-                      <Text style={styles.badgeText}>{badge}</Text>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-
-              <View style={styles.modalSection}>
-                <SectionLabel label="Size" />
-                <View style={styles.optionRow}>
-                  <CustomizationOption
-                    label="Regular"
-                    selected={customization.size === "Regular"}
-                    onPress={() =>
-                      setCustomization((prev) => ({ ...prev, size: "Regular" }))
-                    }
-                  />
-                  <CustomizationOption
-                    label="Large"
-                    selected={customization.size === "Large"}
-                    onPress={() =>
-                      setCustomization((prev) => ({ ...prev, size: "Large" }))
-                    }
-                    priceDeltaCents={100}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.modalSection}>
-                <SectionLabel label="Milk" />
-                <View style={styles.optionRowWrap}>
-                  <CustomizationOption
-                    label="Whole"
-                    selected={customization.milk === "Whole"}
-                    onPress={() =>
-                      setCustomization((prev) => ({ ...prev, milk: "Whole" }))
-                    }
-                  />
-                  <CustomizationOption
-                    label="Oat"
-                    selected={customization.milk === "Oat"}
-                    onPress={() =>
-                      setCustomization((prev) => ({ ...prev, milk: "Oat" }))
-                    }
-                    priceDeltaCents={75}
-                  />
-                  <CustomizationOption
-                    label="Almond"
-                    selected={customization.milk === "Almond"}
-                    onPress={() =>
-                      setCustomization((prev) => ({ ...prev, milk: "Almond" }))
-                    }
-                    priceDeltaCents={75}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.modalSection}>
-                <SectionLabel label="Extras" />
-                <View style={styles.optionRow}>
-                  <CustomizationOption
-                    label="Extra Shot"
-                    selected={customization.extraShot}
-                    onPress={() =>
-                      setCustomization((prev) => ({
-                        ...prev,
-                        extraShot: !prev.extraShot
-                      }))
-                    }
-                    priceDeltaCents={125}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.modalSection}>
-                <SectionLabel label="Notes" />
-                <TextInput
-                  value={customization.notes ?? ""}
-                  onChangeText={(notes) =>
-                    setCustomization((prev) => ({ ...prev, notes }))
-                  }
-                  placeholder="No foam, easy ice, etc."
-                  placeholderTextColor={uiPalette.textMuted}
-                  style={styles.noteInput}
-                  multiline
-                />
-              </View>
-
-              <View style={styles.modalSection}>
-                <SectionLabel label="Quantity & Price" />
-                <View style={styles.quantityRow}>
-                  <Text style={styles.quantityLabel}>Quantity</Text>
-                  <View style={styles.quantityControls}>
-                    <Pressable
-                      style={[
-                        styles.qtyButton,
-                        quantity <= 1 && styles.qtyButtonDisabled
-                      ]}
-                      onPress={decrementQuantity}
-                      disabled={quantity <= 1}
-                    >
-                      <Ionicons
-                        name="remove"
-                        size={16}
-                        color={
-                          quantity <= 1
-                            ? "rgba(60,60,67,0.3)"
-                            : uiPalette.text
-                        }
-                      />
-                    </Pressable>
-                    <Text style={styles.qtyValue}>{quantity}</Text>
-                    <Pressable
-                      style={[
-                        styles.qtyButton,
-                        quantity >= MAX_QUANTITY && styles.qtyButtonDisabled
-                      ]}
-                      onPress={incrementQuantity}
-                      disabled={quantity >= MAX_QUANTITY}
-                    >
-                      <Ionicons
-                        name="add"
-                        size={16}
-                        color={
-                          quantity >= MAX_QUANTITY
-                            ? "rgba(60,60,67,0.3)"
-                            : uiPalette.text
-                        }
-                      />
-                    </Pressable>
-                  </View>
-                </View>
-                <Text style={styles.priceBreakdown}>
-                  Base {formatUsd(item.priceCents)} + Customizations{" "}
-                  {formatUsd(customizationDeltaCents)}
-                </Text>
-                <Text style={styles.totalPrice}>
-                  {formatUsd(selectedLineTotalCents)}
-                </Text>
-              </View>
-            </ScrollView>
-
-            {/* Sticky CTA — always visible outside the scroll */}
-            <View
-              style={[
-                styles.stickyFooter,
-                { paddingBottom: Math.max(insets.bottom - 10, 8) }
-              ]}
-            >
-              <View style={styles.addToCartShell}>
-                {renderGlassPill(
-                  <Pressable
-                    onPress={addSelectedItem}
-                    style={({ pressed }) => [
-                      styles.addToCartButton,
-                      pressed ? styles.addToCartButtonPressed : null
-                    ]}
-                  >
-                    <View style={styles.addToCartButtonContent}>
-                      <View style={styles.addToCartIconBox}>
-                        <Ionicons
-                          name="bag-check-outline"
-                          size={18}
-                          color="#1F2937"
-                        />
-                      </View>
-                      <Text style={styles.addToCartButtonLabel}>
-                        Add to Cart • {formatUsd(selectedLineTotalCents)}
-                      </Text>
-                      <View style={styles.addToCartIconSpacer} />
-                    </View>
-                  </Pressable>
-                )}
-              </View>
+            <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.footerQuantityBaseGlass}>
+              <View style={styles.footerQuantityBaseGlassInner} />
+            </GlassView>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassLeft]}>
+              <GlassView glassEffectStyle="clear" colorScheme="auto" isInteractive style={styles.footerQuantityOrbGlassView} />
+            </View>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassRight]}>
+              <GlassView glassEffectStyle="clear" colorScheme="auto" isInteractive style={styles.footerQuantityOrbGlassView} />
             </View>
           </>
+        ) : (
+          <>
+            <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerQuantityBaseGlass}>
+              <View style={styles.footerQuantityBaseFallbackInner} />
+            </BlurView>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassLeft]}>
+              <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerQuantityOrbGlassView}>
+                <View style={styles.footerMiniPillFallbackSurface} />
+              </BlurView>
+            </View>
+            <View style={[styles.footerQuantityOrbGlassShell, styles.footerQuantityOrbGlassRight]}>
+              <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.footerQuantityOrbGlassView}>
+                <View style={styles.footerMiniPillFallbackSurface} />
+              </BlurView>
+            </View>
+          </>
+        )}
+      </View>
+
+      <View pointerEvents="box-none" style={styles.footerQuantityContentLayer}>
+        <Text style={styles.footerQuantityValue}>{quantity}</Text>
+        <Pressable
+          style={[styles.footerOrbButton, styles.footerQuantityOrbControlLeft, !canDecrease ? styles.footerStepperButtonDisabled : null]}
+          onPress={onDecrease}
+          disabled={!canDecrease}
+        >
+          <Ionicons name="remove" size={18} color={!canDecrease ? uiPalette.textMuted : uiPalette.text} />
+        </Pressable>
+        <Pressable
+          style={[styles.footerOrbButton, styles.footerQuantityOrbControlRight, !canIncrease ? styles.footerStepperButtonDisabled : null]}
+          onPress={onIncrease}
+          disabled={!canIncrease}
+        >
+          <Ionicons name="add" size={18} color={!canIncrease ? uiPalette.textMuted : uiPalette.text} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function ProductImage({
+  imageUrl,
+  onReady
+}: {
+  imageUrl?: string;
+  onReady?: () => void;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  useEffect(() => {
+    if (!imageUrl) {
+      onReady?.();
+    }
+  }, [imageUrl, onReady]);
+
+  return (
+    <View style={styles.heroImage}>
+      {imageUrl && !imageFailed ? (
+        <Image
+          source={{ uri: imageUrl }}
+          style={styles.heroImagePhoto}
+          resizeMode="cover"
+          onLoadEnd={onReady}
+          onError={() => {
+            setImageFailed(true);
+            onReady?.();
+          }}
+        />
+      ) : (
+        <View style={styles.heroDrink}>
+          <Ionicons name="cafe-outline" size={34} color={uiPalette.surfaceStrong} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+function SimpleModalState({
+  title,
+  body,
+  actionLabel,
+  onAction
+}: {
+  title: string;
+  body: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <View style={styles.backdrop}>
+      <View style={[styles.sheet, styles.centerState]}>
+        <View style={styles.handleWrap}>
+          <View style={styles.handle} />
+        </View>
+        <Text style={styles.centerTitle}>{title}</Text>
+        <Text style={styles.centerText}>{body}</Text>
+        {actionLabel && onAction ? (
+          <Pressable onPress={onAction} style={styles.inlinePrimary}>
+            <Text style={styles.inlinePrimaryText}>{actionLabel}</Text>
+          </Pressable>
         ) : null}
       </View>
     </View>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
+export default function MenuCustomizeModalScreen() {
+  const insets = useSafeAreaInsets();
+  const footerBottom = getTabBarBottomOffset(insets.bottom > 0);
+  const footerClearance = footerBottom + TAB_BAR_HEIGHT + 16;
+  const router = useRouter();
+  const params = useLocalSearchParams<{ itemId?: string | string[] }>();
+  const itemId = useMemo(() => resolveItemId(params.itemId), [params.itemId]);
+
+  const { addItem } = useCart();
+  const menuQuery = useMenuQuery();
+  const isInitialLoading = menuQuery.isLoading && !menuQuery.data;
+  const menu = isInitialLoading ? null : resolveMenuData(menuQuery.data);
+  const items = useMemo(() => menu?.categories.flatMap((category) => category.items) ?? [], [menu?.categories]);
+  const item = useMemo(() => findMenuItemById(itemId, items), [itemId, items]);
+  const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
+
+  const [customization, setCustomization] = useState<CartCustomization>(DEFAULT_CUSTOMIZATION);
+  const [quantity, setQuantity] = useState(1);
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(true);
+  const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
+  const [readyHeroItemId, setReadyHeroItemId] = useState<string | null>(null);
+
+  const heroReady = !item || !item.imageUrl || readyHeroItemId === item.id;
+  const shouldShowInitialLoading = !didFinishInitialReveal && (isInitialLoading || (Boolean(item) && !heroReady));
+
+  useEffect(() => {
+    setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
+    setQuantity(1);
+    setShowValidationErrors(false);
+  }, [item]);
+
+  useEffect(() => {
+    setDidFinishInitialReveal(false);
+    setShowLoadingOverlay(true);
+    loadingOpacity.stopAnimation();
+    loadingOpacity.setValue(1);
+  }, [itemId, loadingOpacity]);
+
+  useEffect(() => {
+    if (!item) {
+      setReadyHeroItemId(null);
+      return;
+    }
+
+    setReadyHeroItemId(item.imageUrl ? null : item.id);
+  }, [item?.id, item?.imageUrl]);
+
+  const resolvedCustomization = useMemo(
+    () => (item ? resolveCartCustomization(item.customizationGroups, customization) : resolveCartCustomization([], customization)),
+    [customization, item]
+  );
+  const pricedCustomization = useMemo(
+    () =>
+      item
+        ? priceMenuItemCustomization({
+            basePriceCents: item.priceCents,
+            quantity,
+            groups: item.customizationGroups,
+            selection: customization
+          })
+        : undefined,
+    [customization, item, quantity]
+  );
+  const customizationDeltaCents = pricedCustomization?.customizationDeltaCents ?? 0;
+  const selectedUnitPriceCents = pricedCustomization?.unitPriceCents ?? 0;
+  const totalCents = pricedCustomization?.lineTotalCents ?? 0;
+  const orderedGroupSelections = useMemo(() => {
+    if (!item) {
+      return resolvedCustomization.groupSelections;
+    }
+
+    const rankByGroupId = new Map(item.customizationGroups.map((group, index) => [group.id, index] as const));
+    return [...resolvedCustomization.groupSelections].sort(
+      (left, right) => (rankByGroupId.get(left.groupId) ?? Number.MAX_SAFE_INTEGER) - (rankByGroupId.get(right.groupId) ?? Number.MAX_SAFE_INTEGER)
+    );
+  }, [item, resolvedCustomization.groupSelections]);
+  const customizationPreview = useMemo(
+    () =>
+      describeCustomizationSelection({
+        selection: customization,
+        groupSelections: orderedGroupSelections,
+        includeNotes: false,
+        fallback: ""
+      }),
+    [customization, orderedGroupSelections]
+  );
+  const priceLine = formatUsd(selectedUnitPriceCents);
+  const metaLine = customizationPreview;
+  const handleHeroReady = useCallback(() => {
+    if (!item?.id) return;
+
+    const activeItemId = item.id;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setReadyHeroItemId((currentItemId) => (currentItemId === activeItemId ? currentItemId : activeItemId));
+      });
+    });
+  }, [item?.id]);
+
+  useEffect(() => {
+    if (didFinishInitialReveal) return;
+
+    if (!item && !isInitialLoading) {
+      loadingOpacity.stopAnimation();
+      loadingOpacity.setValue(0);
+      setShowLoadingOverlay(false);
+      setDidFinishInitialReveal(true);
+      return;
+    }
+
+    if (shouldShowInitialLoading) {
+      setShowLoadingOverlay(true);
+      loadingOpacity.stopAnimation();
+      loadingOpacity.setValue(1);
+      return;
+    }
+
+    setShowLoadingOverlay(true);
+    loadingOpacity.stopAnimation();
+    RNAnimated.timing(loadingOpacity, {
+      toValue: 0,
+      duration: 260,
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (!finished) return;
+      setShowLoadingOverlay(false);
+      setDidFinishInitialReveal(true);
+    });
+  }, [didFinishInitialReveal, isInitialLoading, item, loadingOpacity, shouldShowInitialLoading]);
+
+  function closeModal() {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace("/(tabs)/menu");
+  }
+
+  function addSelectedItem() {
+    if (!item) return;
+    if (!pricedCustomization?.valid) {
+      setShowValidationErrors(true);
+      return;
+    }
+
+    addItem({
+      menuItemId: item.id,
+      itemName: item.name,
+      basePriceCents: item.priceCents,
+      customizationGroups: item.customizationGroups,
+      customization,
+      quantity
+    });
+
+    closeModal();
+  }
+
+  if (!item && !showLoadingOverlay) {
+    return (
+      <SimpleModalState
+        title="This item is unavailable."
+        body="Return to the menu and choose another drink."
+        actionLabel="Back to Menu"
+        onAction={closeModal}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.backdrop}>
+      {item ? (
+        <View style={styles.sheet}>
+          <View style={styles.handleWrap}>
+            <View style={styles.handle} />
+          </View>
+
+          <ScrollView
+            bounces
+            showsVerticalScrollIndicator={false}
+            contentInsetAdjustmentBehavior="never"
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
+          >
+            <View style={styles.heroWrap}>
+              <ProductImage imageUrl={item.imageUrl} onReady={handleHeroReady} />
+            </View>
+
+            <View style={styles.content}>
+              <View style={styles.titleRow}>
+                <Text style={[styles.title, styles.titleText]}>{item.name}</Text>
+                <Text style={styles.price}>{priceLine}</Text>
+              </View>
+              {metaLine ? <Text style={styles.meta}>{metaLine}</Text> : null}
+              <Text style={styles.description}>{item.description}</Text>
+
+              <View>
+                <View style={styles.customizationSectionsWrap}>
+                  {item.customizationGroups.map((group) => (
+                    <CustomizationGroupSection
+                      key={group.id}
+                      group={group}
+                      customization={customization}
+                      validationMessage={showValidationErrors ? findGroupIssue(resolvedCustomization.issues, group.id)?.message : undefined}
+                      onSelectOption={(option) => setCustomization((prev) => updateCustomizationOption(prev, group, option))}
+                    />
+                  ))}
+                </View>
+
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Notes</Text>
+                  <Text style={styles.sectionBody}>Optional instructions for the barista.</Text>
+                  <TextInput
+                    value={customization.notes}
+                    onChangeText={(value) =>
+                      setCustomization((prev) =>
+                        normalizeCustomization({
+                          ...prev,
+                          notes: value
+                        })
+                      )
+                    }
+                    placeholder="No foam, easy ice, half sweet..."
+                    placeholderTextColor={uiPalette.textMuted}
+                    style={styles.noteInput}
+                    multiline
+                  />
+                </View>
+              </View>
+
+              <View style={styles.summarySection}>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Customization</Text>
+                  <Text style={styles.summaryValue}>{formatUsd(customizationDeltaCents)}</Text>
+                </View>
+                {showValidationErrors && !resolvedCustomization.valid ? (
+                  <Text style={styles.summaryError}>{resolvedCustomization.issues[0]?.message ?? "Please finish the required selections."}</Text>
+                ) : null}
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Total</Text>
+                  <Text style={styles.summaryValueStrong}>{formatUsd(totalCents)}</Text>
+                </View>
+              </View>
+            </View>
+          </ScrollView>
+
+          <View pointerEvents="box-none" style={[styles.footerRow, { bottom: footerBottom }]}>
+            <FooterPill style={styles.footerPrimaryPill}>
+              <Pressable onPress={addSelectedItem} style={[styles.footerButton, styles.footerPrimaryButton]}>
+                <Text style={styles.footerPrimaryText}>Add to Cart</Text>
+              </Pressable>
+            </FooterPill>
+            <FooterQuantityPill
+              style={styles.footerQuantityPill}
+              quantity={quantity}
+              canDecrease={quantity > 1}
+              canIncrease={quantity < MAX_QUANTITY}
+              onDecrease={() => setQuantity((prev) => Math.max(prev - 1, 1))}
+              onIncrease={() => setQuantity((prev) => Math.min(prev + 1, MAX_QUANTITY))}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {showLoadingOverlay ? (
+        <RNAnimated.View pointerEvents="auto" style={[styles.loadingOverlay, { opacity: loadingOpacity }]}>
+          <CustomizeModalLoadingSheet />
+        </RNAnimated.View>
+      ) : null}
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   backdrop: {
@@ -461,252 +565,366 @@ const styles = StyleSheet.create({
   },
   sheet: {
     flex: 1,
-    marginTop: 8,
+    backgroundColor: "rgba(246, 247, 244, 0.98)",
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
-    backgroundColor: "rgba(242, 242, 247, 0.97)",
-    paddingHorizontal: 20,
-    paddingTop: 8
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    overflow: "hidden"
   },
-
-  modalHandleWrap: {
+  scrollContent: {
+    paddingBottom: 0
+  },
+  handleWrap: {
+    position: "absolute",
+    top: 16,
+    left: 0,
+    right: 0,
     alignItems: "center",
-    marginBottom: 10
+    zIndex: 10
   },
-
-  modalHandle: {
-    width: 36,
+  handle: {
+    width: 38,
     height: 5,
     borderRadius: 999,
-    backgroundColor: "rgba(60, 60, 67, 0.22)"
+    backgroundColor: "rgba(151, 160, 154, 0.52)"
   },
-
-  modalHeaderRow: {
+  centerState: {
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 28
+  },
+  centerTitle: {
+    fontSize: 30,
+    lineHeight: 36,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600",
+    textAlign: "center"
+  },
+  centerText: {
+    marginTop: 10,
+    fontSize: 15,
+    lineHeight: 24,
+    color: uiPalette.textSecondary,
+    textAlign: "center"
+  },
+  inlinePrimary: {
+    marginTop: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: uiPalette.primary
+  },
+  inlinePrimaryText: {
+    color: uiPalette.primaryText,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "600"
+  },
+  heroWrap: {
+    paddingHorizontal: 20,
+    paddingTop: 36
+  },
+  heroImage: {
+    height: 420,
+    backgroundColor: "#9BD8FF",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden"
+  },
+  heroImagePhoto: {
+    width: "100%",
+    height: "100%"
+  },
+  heroDrink: {
+    width: 126,
+    height: 280,
+    borderRadius: 30,
+    backgroundColor: "rgba(29, 26, 23, 0.68)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.38)"
+  },
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 22
+  },
+  titleRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    marginBottom: 8
+    justifyContent: "space-between",
+    gap: 16
   },
-
-  modalTitle: {
-    fontSize: 26,
-    fontWeight: "700",
-    letterSpacing: -0.9,
-    color: uiPalette.text
+  title: {
+    fontSize: 22,
+    lineHeight: 30,
+    letterSpacing: 2.4,
+    textTransform: "uppercase",
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
   },
-
-  modalSubtitle: {
-    marginTop: 6,
+  titleText: {
+    flex: 1
+  },
+  price: {
+    marginTop: 4,
+    fontSize: 15,
+    lineHeight: 24,
+    color: uiPalette.textSecondary,
+    fontFamily: uiTypography.bodyFamily,
+    fontWeight: "400"
+  },
+  meta: {
+    marginTop: 10,
+    fontSize: 15,
+    lineHeight: 24,
+    color: uiPalette.textSecondary
+  },
+  description: {
+    marginTop: 22,
+    fontSize: 15,
+    lineHeight: 28,
+    color: uiPalette.textSecondary
+  },
+  customizationSectionsWrap: {
+    marginBottom: 18
+  },
+  section: {
+    paddingTop: 24,
+    paddingBottom: 26,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border
+  },
+  sectionTitle: {
+    fontSize: 18,
+    lineHeight: 24,
+    color: uiPalette.text,
+    fontWeight: "600"
+  },
+  sectionBody: {
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 22,
+    color: uiPalette.textSecondary
+  },
+  noteInput: {
+    marginTop: 14,
+    minHeight: 112,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    backgroundColor: "rgba(255,255,255,0.56)",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontSize: 15,
+    lineHeight: 22,
+    color: uiPalette.text,
+    textAlignVertical: "top"
+  },
+  stepperButtonDisabled: {
+    opacity: 0.55
+  },
+  summarySection: {
+    marginBottom: 24
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20
+  },
+  summaryRow: {
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  summaryLabel: {
     fontSize: 14,
     lineHeight: 20,
     color: uiPalette.textSecondary
   },
-
-  loadingWrap: {
-    marginTop: 12,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.62)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.10)",
-    paddingHorizontal: 14,
-    paddingVertical: 18,
-    alignItems: "center"
-  },
-
-  loadingText: {
-    marginTop: 8,
+  summaryValue: {
     fontSize: 14,
     lineHeight: 20,
-    color: uiPalette.textSecondary,
-    textAlign: "center"
+    color: uiPalette.text,
+    fontWeight: "600"
   },
-
-  badgeRow: {
-    marginTop: 4,
-    marginBottom: 4,
-    flexDirection: "row",
-    gap: 6,
-    flexWrap: "wrap"
+  summaryValueStrong: {
+    fontSize: 18,
+    lineHeight: 22,
+    color: uiPalette.text,
+    fontWeight: "700"
   },
-
-  badgePill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: "rgba(0, 122, 255, 0.12)"
-  },
-
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    color: "#0B5CC4"
-  },
-
-  modalSection: {
-    marginTop: 12,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.62)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.10)",
-    paddingHorizontal: 14,
-    paddingVertical: 14
-  },
-
-  optionRow: {
-    marginTop: 8,
-    flexDirection: "row",
-    gap: 8
-  },
-
-  optionRowWrap: {
-    marginTop: 8,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8
-  },
-
-  noteInput: {
-    marginTop: 8,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.12)",
-    backgroundColor: "rgba(255,255,255,0.78)",
-    minHeight: 92,
-    textAlignVertical: "top",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: uiPalette.text
-  },
-
-  quantityRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-
-  quantityLabel: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: uiPalette.text
-  },
-
-  quantityControls: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10
-  },
-
-  qtyButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(60,60,67,0.2)",
-    backgroundColor: "rgba(255,255,255,0.86)",
-    justifyContent: "center",
-    alignItems: "center"
-  },
-
-  qtyButtonDisabled: {
-    opacity: 0.4
-  },
-
-  qtyValue: {
-    width: 22,
-    textAlign: "center",
-    fontSize: 15,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-
-  priceBreakdown: {
+  summaryError: {
     marginTop: 10,
-    fontSize: 12,
-    color: "rgba(60, 60, 67, 0.76)"
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#A55B3F"
   },
-
-  totalPrice: {
-    marginTop: 6,
-    fontSize: 28,
-    fontWeight: "700",
-    color: uiPalette.text
-  },
-
-  stickyFooter: {
-    paddingTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(60,60,67,0.10)",
-    backgroundColor: "rgba(242, 242, 247, 0.97)"
-  },
-
-  addToCartShell: {
-    height: 50,
-    borderRadius: 999,
-    overflow: "hidden",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(243, 243, 246, 0.54)",
-    shadowColor: "#0F172A",
-    shadowOpacity: 0.14,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 7 },
-    elevation: 8
-  },
-
-  addToCartBlurFallback: {
-    height: 50,
-    borderRadius: 999,
-    overflow: "hidden"
-  },
-
-  addToCartGlassSurface: {
-    borderRadius: 999,
-    overflow: "hidden",
-    backgroundColor: "rgba(213, 214, 219, 0.56)",
-    borderWidth: 1,
-    borderColor: "rgba(243, 243, 246, 0.54)"
-  },
-
-  addToCartButton: {
-    borderRadius: 999,
-    paddingHorizontal: 24,
-    paddingVertical: 0,
-    backgroundColor: "rgba(247, 247, 250, 0.58)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.78)",
-    justifyContent: "center",
-    overflow: "hidden"
-  },
-
-  addToCartButtonContent: {
+  footerRow: {
+    position: "absolute",
+    left: 18,
+    right: 18,
     flexDirection: "row",
-    alignItems: "center",
-    height: "100%",
-    paddingHorizontal: 20
+    gap: 8
   },
-
-  addToCartIconBox: {
-    width: 22,
+  footerPillShell: {
+    borderRadius: 999,
+    overflow: "visible",
+    minHeight: 60,
+    shadowColor: "#000000",
+    shadowOpacity: 0.09,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6
+  },
+  footerPillFrame: {
+    minHeight: 60,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  footerPillInner: {
+    minHeight: 60,
+    borderRadius: 999,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    justifyContent: "center"
+  },
+  footerPillInnerGlass: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.3)"
+  },
+  footerPillInnerFallback: {
+    backgroundColor: "rgba(248, 244, 236, 0.98)",
+    borderWidth: 1,
+    borderColor: "rgba(230, 221, 208, 0.94)"
+  },
+  footerPrimaryPill: {
+    flex: 1.9
+  },
+  footerQuantityPill: {
+    flex: 0.34,
+    minWidth: 118
+  },
+  footerButton: {
+    minHeight: 56,
+    width: "100%",
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-  },
-
-  addToCartIconSpacer: {
-    width: 22
-  },
-
-  addToCartButtonPressed: {
-    opacity: 0.86
-  },
-
-  addToCartButtonLabel: {
-    color: "#1F2937",
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "700",
-    letterSpacing: 0.1,
-    textAlign: "center",
-    flex: 1,
     paddingHorizontal: 14
+  },
+  footerPrimaryButton: {
+    flex: 1
+  },
+  footerPrimaryText: {
+    fontSize: 17,
+    lineHeight: 22,
+    color: uiPalette.text,
+    fontWeight: "600"
+  },
+  footerQuantityShell: {
+    minHeight: 60,
+    borderRadius: 999,
+    overflow: "visible",
+    shadowColor: "#000000",
+    shadowOpacity: 0.09,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6
+  },
+  footerQuantityMergeLayer: {
+    ...StyleSheet.absoluteFillObject
+  },
+  footerQuantityBaseGlass: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  footerQuantityBaseGlassInner: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.003)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.11)"
+  },
+  footerQuantityBaseFallbackInner: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(248, 244, 236, 0.98)",
+    borderWidth: 1,
+    borderColor: "rgba(230, 221, 208, 0.94)"
+  },
+  footerQuantityOrbGlassShell: {
+    position: "absolute",
+    top: 9,
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    overflow: "visible",
+    shadowColor: "#000000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4
+  },
+  footerQuantityOrbGlassLeft: {
+    left: 6
+  },
+  footerQuantityOrbGlassRight: {
+    right: 6
+  },
+  footerQuantityOrbGlassView: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  footerMiniPillFallbackSurface: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(248, 244, 236, 0.98)",
+    borderWidth: 1,
+    borderColor: "rgba(230, 221, 208, 0.94)",
+    padding: 2,
+    justifyContent: "center"
+  },
+  footerQuantityContentLayer: {
+    minHeight: 60,
+    width: "100%",
+    borderRadius: 999,
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  footerOrbButton: {
+    position: "absolute",
+    top: 9,
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  footerQuantityOrbControlLeft: {
+    left: 6
+  },
+  footerQuantityOrbControlRight: {
+    right: 6
+  },
+  footerStepperButtonDisabled: {
+    opacity: 0.5
+  },
+  footerQuantityValue: {
+    minWidth: 28,
+    textAlign: "center",
+    fontSize: 18,
+    lineHeight: 22,
+    color: uiPalette.text,
+    fontWeight: "600"
   }
 });

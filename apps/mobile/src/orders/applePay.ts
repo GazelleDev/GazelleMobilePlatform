@@ -66,7 +66,7 @@ export async function requestNativeApplePayWallet(input: {
     ],
     {
       total: {
-        label: input.label ?? "Gazelle Coffee",
+        label: input.label ?? process.env.EXPO_PUBLIC_BRAND_NAME ?? "Gazelle Coffee",
         amount: (input.amountCents / 100).toFixed(2)
       }
     }

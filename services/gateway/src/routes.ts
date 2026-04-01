@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { apiErrorSchema, authSessionSchema } from "@gazelle/contracts-core";
 import {
@@ -13,7 +14,17 @@ import {
   passkeyVerifyRequestSchema,
   refreshRequestSchema
 } from "@gazelle/contracts-auth";
-import { catalogContract, menuResponseSchema, storeConfigResponseSchema } from "@gazelle/contracts-catalog";
+import {
+  adminMenuItemSchema,
+  adminMenuItemUpdateSchema,
+  adminMenuResponseSchema,
+  adminStoreConfigSchema,
+  adminStoreConfigUpdateSchema,
+  appConfigSchema,
+  catalogContract,
+  menuResponseSchema,
+  storeConfigResponseSchema
+} from "@gazelle/contracts-catalog";
 import {
   ordersContract,
   createOrderRequestSchema,
@@ -29,13 +40,42 @@ import {
   pushTokenUpsertSchema
 } from "@gazelle/contracts-notifications";
 
+declare module "fastify" {
+  interface FastifyRequest {
+    authenticatedUserId?: string;
+  }
+}
+
 const authHeaderSchema = z.object({
   authorization: z.string().startsWith("Bearer ").optional()
 });
+const jwtHeaderSchema = z.object({
+  alg: z.literal("HS256"),
+  typ: z.literal("JWT")
+});
+const jwtAccessTokenClaimsSchema = z.object({
+  sub: z.string().uuid(),
+  exp: z.number().int(),
+  iat: z.number().int()
+});
 const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
+const menuItemParamsSchema = z.object({ itemId: z.string().min(1) });
 const cancelOrderRequestSchema = z.object({ reason: z.string().min(1) });
+const staffHeaderSchema = z.object({ "x-staff-token": z.string().min(1).optional() });
+const adminOrderStatusUpdateSchema = z.object({
+  status: z.enum(["IN_PREP", "READY", "COMPLETED", "CANCELED"]),
+  note: z.string().min(1).optional()
+});
 const defaultRateLimitWindowMs = 60_000;
 const defaultUpstreamTimeoutMs = 5_000;
+const defaultOrderStreamPollIntervalMs = 2_000;
+type StreamOrderFetchSuccess = {
+  order: z.output<typeof orderSchema>;
+};
+type StreamOrderFetchError = {
+  statusCode: number;
+  error: z.output<typeof apiErrorSchema>;
+};
 
 function unauthorized(requestId: string) {
   return apiErrorSchema.parse({
@@ -63,9 +103,92 @@ async function requireBearerAuth(request: FastifyRequest, reply: FastifyReply) {
   return undefined;
 }
 
+function staffAccessUnavailable(requestId: string) {
+  return apiErrorSchema.parse({
+    code: "STAFF_ACCESS_NOT_CONFIGURED",
+    message: "Staff access token is not configured",
+    requestId
+  });
+}
+
+function ensureStaffTokenAuth(request: FastifyRequest, reply: FastifyReply, staffToken: string | undefined) {
+  if (!staffToken) {
+    reply.status(503).send(staffAccessUnavailable(request.id));
+    return false;
+  }
+
+  const parsed = staffHeaderSchema.safeParse(request.headers);
+  if (!parsed.success || parsed.data["x-staff-token"] !== staffToken) {
+    reply.status(401).send(
+      apiErrorSchema.parse({
+        code: "UNAUTHORIZED_STAFF_REQUEST",
+        message: "Missing or invalid staff token",
+        requestId: request.id
+      })
+    );
+    return false;
+  }
+
+  return true;
+}
+
+async function requireStaffAccess(request: FastifyRequest, reply: FastifyReply, staffToken: string | undefined) {
+  if (!ensureBearerAuth(request, reply)) {
+    return reply;
+  }
+
+  if (!ensureStaffTokenAuth(request, reply, staffToken)) {
+    return reply;
+  }
+
+  return undefined;
+}
+
 function trimToUndefined(value: string | undefined) {
   const next = value?.trim();
   return next && next.length > 0 ? next : undefined;
+}
+
+// Local JWT verification is intentionally fail-closed. Once JWT mode is enabled, malformed or tampered
+// bearer tokens are treated as unauthorized instead of falling back to identity roundtrips.
+function verifyJwtAccessToken(token: string, secret: string): { userId: string } | undefined {
+  const parts = token.split(".");
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    return undefined;
+  }
+
+  const [encodedHeader, encodedPayload, encodedSignature] = parts;
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const expectedSignature = createHmac("sha256", secret).update(signingInput).digest("base64url");
+  const actualSignatureBuffer = Buffer.from(encodedSignature, "utf8");
+  const expectedSignatureBuffer = Buffer.from(expectedSignature, "utf8");
+
+  if (actualSignatureBuffer.length !== expectedSignatureBuffer.length) {
+    return undefined;
+  }
+
+  if (!timingSafeEqual(actualSignatureBuffer, expectedSignatureBuffer)) {
+    return undefined;
+  }
+
+  try {
+    const header = jwtHeaderSchema.parse(JSON.parse(Buffer.from(encodedHeader, "base64url").toString("utf8")));
+    const claims = jwtAccessTokenClaimsSchema.parse(
+      JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"))
+    );
+
+    if (header.alg !== "HS256" || header.typ !== "JWT") {
+      return undefined;
+    }
+
+    if (claims.exp <= Math.floor(Date.now() / 1000)) {
+      return undefined;
+    }
+
+    return { userId: claims.sub };
+  } catch {
+    return undefined;
+  }
 }
 
 function toPositiveInteger(value: string | undefined, fallback: number) {
@@ -86,7 +209,8 @@ function toHeaderValue(value: string | string[] | undefined) {
 }
 
 function userScopedRateLimitKey(request: FastifyRequest) {
-  const userId = trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
+  const userId =
+    trimToUndefined(request.authenticatedUserId) ?? trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
   if (userId) {
     return `user:${userId.toLowerCase()}`;
   }
@@ -141,6 +265,7 @@ async function proxyUpstream<TResponse>(params: {
   path: string;
   body?: unknown;
   additionalHeaders?: Record<string, string | undefined>;
+  forwardUserIdHeader?: boolean;
   timeoutMs?: number;
   responseSchema: z.ZodType<TResponse>;
 }) {
@@ -153,6 +278,7 @@ async function proxyUpstream<TResponse>(params: {
     path,
     body,
     additionalHeaders,
+    forwardUserIdHeader = true,
     timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs),
     responseSchema
   } = params;
@@ -161,12 +287,14 @@ async function proxyUpstream<TResponse>(params: {
     "x-request-id": request.id
   };
   const authorization = request.headers.authorization;
-  const userIdHeader = request.headers["x-user-id"];
+  // Gateway prefers verified auth context for downstream customer calls and only falls back to a raw
+  // inbound header on routes that intentionally remain unscoped.
+  const userIdHeader = request.authenticatedUserId ?? toHeaderValue(request.headers["x-user-id"]);
 
   if (typeof authorization === "string") {
     headers.authorization = authorization;
   }
-  if (typeof userIdHeader === "string") {
+  if (forwardUserIdHeader && typeof userIdHeader === "string") {
     headers["x-user-id"] = userIdHeader;
   }
   if (additionalHeaders) {
@@ -194,6 +322,10 @@ async function proxyUpstream<TResponse>(params: {
     });
   } catch (error) {
     if (isAbortError(error)) {
+      request.log.warn(
+        { requestId: request.id, serviceLabel, method, path, timeoutMs },
+        "upstream request timed out"
+      );
       return reply.status(504).send(
         apiErrorSchema.parse({
           code: "UPSTREAM_TIMEOUT",
@@ -203,6 +335,10 @@ async function proxyUpstream<TResponse>(params: {
       );
     }
 
+    request.log.error(
+      { error, requestId: request.id, serviceLabel, method, path },
+      "upstream request failed before response"
+    );
     return reply.status(502).send(
       apiErrorSchema.parse({
         code: "UPSTREAM_UNAVAILABLE",
@@ -250,13 +386,276 @@ async function proxyUpstream<TResponse>(params: {
   return reply.status(upstreamResponse.status).send(parsedResponse.data);
 }
 
+async function fetchOrderForStream(params: {
+  requestId: string;
+  ordersBaseUrl: string;
+  gatewayInternalApiToken: string | undefined;
+  orderId: string;
+  userId: string;
+  authorization: string;
+  timeoutMs?: number;
+}): Promise<StreamOrderFetchSuccess | StreamOrderFetchError> {
+  const {
+    requestId,
+    ordersBaseUrl,
+    gatewayInternalApiToken,
+    orderId,
+    userId,
+    authorization,
+    timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs)
+  } = params;
+  const headers: Record<string, string> = {
+    authorization,
+    "x-request-id": requestId,
+    "x-user-id": userId
+  };
+
+  if (gatewayInternalApiToken) {
+    headers["x-gateway-token"] = gatewayInternalApiToken;
+  }
+
+  let upstreamResponse: Response;
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  try {
+    upstreamResponse = await fetch(`${ordersBaseUrl}/v1/orders/${orderId}`, {
+      method: "GET",
+      headers,
+      signal: timeoutController.signal
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      return {
+        statusCode: 504,
+        error: apiErrorSchema.parse({
+          code: "UPSTREAM_TIMEOUT",
+          message: "Orders service timed out",
+          requestId
+        })
+      } as const;
+    }
+
+    return {
+      statusCode: 502,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Orders service is unavailable",
+        requestId
+      })
+    } as const;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  const rawBody = await upstreamResponse.text();
+  const parsedBody = parseJsonSafely(rawBody);
+
+  if (!upstreamResponse.ok) {
+    const upstreamError = apiErrorSchema.safeParse(parsedBody);
+    if (upstreamError.success) {
+      return {
+        statusCode: upstreamResponse.status,
+        error: upstreamError.data
+      } as const;
+    }
+
+    return {
+      statusCode: upstreamResponse.status,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_ERROR",
+        message: `Orders request failed with status ${upstreamResponse.status}`,
+        requestId,
+        details: toErrorDetails(parsedBody)
+      })
+    } as const;
+  }
+
+  const parsedResponse = orderSchema.safeParse(parsedBody);
+  if (!parsedResponse.success) {
+    return {
+      statusCode: 502,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_INVALID_RESPONSE",
+        message: "Orders response did not match contract",
+        requestId,
+        details: parsedResponse.error.flatten()
+      })
+    } as const;
+  }
+
+  return {
+    order: parsedResponse.data
+  } as const;
+}
+
+function isTerminalOrderStatus(status: z.output<typeof orderSchema>["status"]) {
+  return status === "COMPLETED" || status === "CANCELED";
+}
+
+async function resolveAuthenticatedUserId(params: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  identityBaseUrl: string;
+  jwtSecretConfigured?: boolean;
+  timeoutMs?: number;
+}) {
+  const {
+    request,
+    reply,
+    identityBaseUrl,
+    jwtSecretConfigured = false,
+    timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs)
+  } = params;
+  if (request.authenticatedUserId) {
+    return request.authenticatedUserId;
+  }
+
+  if (jwtSecretConfigured) {
+    // JWT mode is fail-closed: once local verification is enabled, we do not fall back to
+    // identity for bearer verification. Revocation remains bounded by the short access-token TTL.
+    reply.status(401).send(unauthorized(request.id));
+    return undefined;
+  }
+
+  const authorization = request.headers.authorization;
+
+  if (typeof authorization !== "string") {
+    reply.status(401).send(unauthorized(request.id));
+    return undefined;
+  }
+
+  let upstreamResponse: Response;
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  try {
+    upstreamResponse = await fetch(`${identityBaseUrl}/v1/auth/me`, {
+      method: "GET",
+      headers: {
+        authorization,
+        "x-request-id": request.id
+      },
+      signal: timeoutController.signal
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      request.log.warn({ requestId: request.id, timeoutMs }, "identity auth lookup timed out");
+      reply.status(504).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_TIMEOUT",
+          message: "Identity service timed out",
+          requestId: request.id
+        })
+      );
+      return undefined;
+    }
+
+    request.log.error({ error, requestId: request.id }, "identity auth lookup failed before response");
+    reply.status(502).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Identity service is unavailable",
+        requestId: request.id
+      })
+    );
+    return undefined;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  const rawBody = await upstreamResponse.text();
+  const parsedBody = parseJsonSafely(rawBody);
+
+  if (!upstreamResponse.ok) {
+    const upstreamError = apiErrorSchema.safeParse(parsedBody);
+    if (upstreamError.success) {
+      reply.status(upstreamResponse.status).send(upstreamError.data);
+      return undefined;
+    }
+
+    reply.status(upstreamResponse.status).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_ERROR",
+        message: `Identity request failed with status ${upstreamResponse.status}`,
+        requestId: request.id,
+        details: toErrorDetails(parsedBody)
+      })
+    );
+    return undefined;
+  }
+
+  const parsedResponse = meResponseSchema.safeParse(parsedBody);
+  if (!parsedResponse.success) {
+    reply.status(502).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_INVALID_RESPONSE",
+        message: "Identity response did not match contract",
+        requestId: request.id,
+        details: parsedResponse.error.flatten()
+      })
+    );
+    return undefined;
+  }
+
+  request.authenticatedUserId = parsedResponse.data.userId;
+  return parsedResponse.data.userId;
+}
+
+async function requireAuthenticatedCustomer(params: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  identityBaseUrl: string;
+  jwtSecret?: string;
+}) {
+  const { request, reply, identityBaseUrl, jwtSecret } = params;
+
+  if (!ensureBearerAuth(request, reply)) {
+    return reply;
+  }
+
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string") {
+    return reply.status(401).send(unauthorized(request.id));
+  }
+
+  const accessToken = authorization.slice("Bearer ".length);
+
+  if (jwtSecret) {
+    const verified = verifyJwtAccessToken(accessToken, jwtSecret);
+    if (!verified) {
+      return reply.status(401).send(unauthorized(request.id));
+    }
+
+    request.authenticatedUserId = verified.userId;
+    return undefined;
+  }
+
+  // Legacy opaque-token mode still resolves the caller through identity so rollout can happen
+  // incrementally when JWT signing is not configured yet.
+  const userId = await resolveAuthenticatedUserId({
+    request,
+    reply,
+    identityBaseUrl
+  });
+  if (!userId) {
+    return reply;
+  }
+
+  request.authenticatedUserId = userId;
+  return undefined;
+}
+
 export async function registerRoutes(app: FastifyInstance) {
   const identityBaseUrl = process.env.IDENTITY_SERVICE_BASE_URL ?? "http://127.0.0.1:3000";
   const ordersBaseUrl = process.env.ORDERS_SERVICE_BASE_URL ?? "http://127.0.0.1:3001";
+  const ordersInternalApiToken = trimToUndefined(process.env.ORDERS_INTERNAL_API_TOKEN);
   const catalogBaseUrl = process.env.CATALOG_SERVICE_BASE_URL ?? "http://127.0.0.1:3002";
   const loyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL ?? "http://127.0.0.1:3004";
   const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
   const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
+  const gatewayStaffApiToken = trimToUndefined(process.env.GATEWAY_STAFF_API_TOKEN);
+  const jwtSecret = trimToUndefined(process.env.JWT_SECRET);
   const rateLimitWindowMs = toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const authWriteRateLimit = {
     max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_AUTH_WRITE_MAX, 24),
@@ -297,6 +696,27 @@ export async function registerRoutes(app: FastifyInstance) {
     timeWindow: rateLimitWindowMs,
     keyGenerator: userScopedRateLimitKey
   };
+  const orderStreamPollIntervalMs = toPositiveInteger(
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS,
+    defaultOrderStreamPollIntervalMs
+  );
+  const staffReadRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_STAFF_READ_MAX, 120),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const staffWriteRateLimit = {
+    max: toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_STAFF_WRITE_MAX, 60),
+    timeWindow: rateLimitWindowMs,
+    keyGenerator: userScopedRateLimitKey
+  };
+  const requireCustomerAuth = async (request: FastifyRequest, reply: FastifyReply) =>
+    requireAuthenticatedCustomer({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecret
+    });
 
   app.get("/health", async () => ({ status: "ok", service: "gateway" }));
   app.get("/ready", async () => ({ status: "ready", service: "gateway" }));
@@ -546,6 +966,18 @@ export async function registerRoutes(app: FastifyInstance) {
     })
   );
 
+  app.get("/v1/app-config", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
+    proxyUpstream({
+      request,
+      reply,
+      baseUrl: catalogBaseUrl,
+      serviceLabel: "Catalog",
+      method: "GET",
+      path: "/v1/app-config",
+      responseSchema: appConfigSchema
+    })
+  );
+
   app.get("/v1/store/config", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
     proxyUpstream({
       request,
@@ -560,7 +992,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
   app.post(
     "/v1/orders/quote",
-    { preHandler: [app.rateLimit(ordersWriteRateLimit), requireBearerAuth] },
+    { preHandler: [app.rateLimit(ordersWriteRateLimit), requireCustomerAuth] },
     async (request, reply) => {
     const input = quoteRequestSchema.parse(request.body);
 
@@ -580,8 +1012,17 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post("/v1/orders", { preHandler: [app.rateLimit(ordersWriteRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.post("/v1/orders", { preHandler: [app.rateLimit(ordersWriteRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const input = createOrderRequestSchema.parse(request.body);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -592,15 +1033,25 @@ export async function registerRoutes(app: FastifyInstance) {
       path: "/v1/orders",
       body: input,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
   });
 
-  app.post("/v1/orders/:orderId/pay", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.post("/v1/orders/:orderId/pay", { preHandler: [app.rateLimit(checkoutRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = payOrderRequestSchema.parse(request.body);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -611,13 +1062,24 @@ export async function registerRoutes(app: FastifyInstance) {
       path: `/v1/orders/${orderId}/pay`,
       body: input,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
   });
 
-  app.get("/v1/orders", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get("/v1/orders", { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
+    });
+    if (!userId) {
+      return;
+    }
+
     return proxyUpstream({
       request,
       reply,
@@ -626,14 +1088,24 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: "/v1/orders",
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: z.array(orderSchema)
     });
   });
 
-  app.get("/v1/orders/:orderId", { preHandler: [app.rateLimit(ordersReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get("/v1/orders/:orderId", { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -643,15 +1115,158 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: `/v1/orders/${orderId}`,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
   });
 
-  app.post("/v1/orders/:orderId/cancel", { preHandler: [app.rateLimit(checkoutRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get(
+    "/v1/orders/:orderId/stream",
+    { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] },
+    async (request, reply) => {
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const userId = await resolveAuthenticatedUserId({
+        request,
+        reply,
+        identityBaseUrl,
+        jwtSecretConfigured: Boolean(jwtSecret)
+      });
+      if (!userId) {
+        return;
+      }
+
+      const authorization = request.headers.authorization;
+      if (typeof authorization !== "string") {
+        return reply.status(401).send(unauthorized(request.id));
+      }
+
+      const initialOrderResult = await fetchOrderForStream({
+        requestId: request.id,
+        ordersBaseUrl,
+        gatewayInternalApiToken,
+        orderId,
+        userId,
+        authorization
+      });
+      if ("error" in initialOrderResult) {
+        const { statusCode, error } = initialOrderResult;
+        return reply.status(statusCode).send(error);
+      }
+
+      reply.hijack();
+      reply.raw.statusCode = 200;
+      reply.raw.setHeader("Content-Type", "text/event-stream");
+      reply.raw.setHeader("Cache-Control", "no-cache");
+      reply.raw.setHeader("Connection", "keep-alive");
+      reply.raw.setHeader("X-Accel-Buffering", "no");
+      if (typeof reply.raw.flushHeaders === "function") {
+        reply.raw.flushHeaders();
+      }
+
+      // This is SSE backed by gateway polling rather than a dedicated websocket/event bus. The stream keeps
+      // client integration simple today while the gateway re-reads order state on an interval behind the scenes.
+      let closed = false;
+      let pollTimeout: ReturnType<typeof setTimeout> | undefined;
+      let lastSeenStatus = initialOrderResult.order.status;
+
+      const cleanup = () => {
+        if (pollTimeout) {
+          clearTimeout(pollTimeout);
+          pollTimeout = undefined;
+        }
+        if (closed) {
+          return;
+        }
+        closed = true;
+        request.raw.removeListener("close", handleDisconnect);
+        if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+          reply.raw.end();
+        }
+      };
+
+      const sendEvent = (data: unknown) => {
+        if (closed || reply.raw.destroyed || reply.raw.writableEnded) {
+          return;
+        }
+        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      const handleDisconnect = () => {
+        cleanup();
+      };
+
+      const pollForUpdates = async () => {
+        if (closed) {
+          return;
+        }
+
+        const nextOrderResult = await fetchOrderForStream({
+          requestId: request.id,
+          ordersBaseUrl,
+          gatewayInternalApiToken,
+          orderId,
+          userId,
+          authorization
+        });
+
+        if ("error" in nextOrderResult) {
+          const { statusCode, error } = nextOrderResult;
+          request.log.warn(
+            {
+              requestId: request.id,
+              orderId,
+              statusCode,
+              errorCode: error.code
+            },
+            "order stream poll failed"
+          );
+          cleanup();
+          return;
+        }
+
+        if (nextOrderResult.order.status !== lastSeenStatus) {
+          lastSeenStatus = nextOrderResult.order.status;
+          sendEvent(nextOrderResult.order);
+        }
+
+        if (isTerminalOrderStatus(lastSeenStatus)) {
+          cleanup();
+          return;
+        }
+
+        pollTimeout = setTimeout(() => {
+          void pollForUpdates();
+        }, orderStreamPollIntervalMs);
+      };
+
+      request.raw.on("close", handleDisconnect);
+      sendEvent(initialOrderResult.order);
+
+      if (isTerminalOrderStatus(lastSeenStatus)) {
+        cleanup();
+        return;
+      }
+
+      pollTimeout = setTimeout(() => {
+        void pollForUpdates();
+      }, orderStreamPollIntervalMs);
+    }
+  );
+
+  app.post("/v1/orders/:orderId/cancel", { preHandler: [app.rateLimit(checkoutRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const { orderId } = orderIdParamsSchema.parse(request.params);
     const input = cancelOrderRequestSchema.parse(request.body);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -662,13 +1277,217 @@ export async function registerRoutes(app: FastifyInstance) {
       path: `/v1/orders/${orderId}/cancel`,
       body: input,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderSchema
     });
   });
 
-  app.get("/v1/loyalty/balance", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get(
+    "/v1/admin/orders",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "GET",
+        path: "/v1/orders",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: z.array(orderSchema)
+      })
+  );
+
+  app.get(
+    "/v1/admin/orders/:orderId",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "GET",
+        path: `/v1/orders/${orderId}`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: orderSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/admin/orders/:orderId/status",
+    {
+      preHandler: [
+        app.rateLimit(staffWriteRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const input = adminOrderStatusUpdateSchema.parse(request.body);
+
+      if (input.status === "CANCELED") {
+        const cancelPayload = cancelOrderRequestSchema.parse({
+          reason: input.note ?? "Canceled by staff"
+        });
+
+        return proxyUpstream({
+          request,
+          reply,
+          baseUrl: ordersBaseUrl,
+          serviceLabel: "Orders",
+          method: "POST",
+          path: `/v1/orders/${orderId}/cancel`,
+          body: cancelPayload,
+          additionalHeaders: {
+            "x-gateway-token": gatewayInternalApiToken,
+            "x-order-cancel-source": "staff"
+          },
+          forwardUserIdHeader: false,
+          responseSchema: orderSchema
+        });
+      }
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "POST",
+        path: `/v1/orders/${orderId}/status`,
+        body: input,
+        additionalHeaders: {
+          "x-internal-token": ordersInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: orderSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/menu",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: "/v1/catalog/admin/menu",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMenuResponseSchema
+      })
+  );
+
+  app.put(
+    "/v1/admin/menu/:itemId",
+    {
+      preHandler: [
+        app.rateLimit(staffWriteRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const { itemId } = menuItemParamsSchema.parse(request.params);
+      const input = adminMenuItemUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PUT",
+        path: `/v1/catalog/admin/menu/${itemId}`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMenuItemSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/store/config",
+    {
+      preHandler: [
+        app.rateLimit(staffReadRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: "/v1/catalog/admin/store/config",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminStoreConfigSchema
+      })
+  );
+
+  app.put(
+    "/v1/admin/store/config",
+    {
+      preHandler: [
+        app.rateLimit(staffWriteRateLimit),
+        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
+      ]
+    },
+    async (request, reply) => {
+      const input = adminStoreConfigUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PUT",
+        path: "/v1/catalog/admin/store/config",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminStoreConfigSchema
+      });
+    }
+  );
+
+  app.get("/v1/loyalty/balance", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -683,7 +1502,7 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get("/v1/loyalty/ledger", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.get("/v1/loyalty/ledger", { preHandler: [app.rateLimit(loyaltyReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
     return proxyUpstream({
       request,
       reply,
@@ -698,7 +1517,7 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
-  app.put("/v1/devices/push-token", { preHandler: [app.rateLimit(pushTokenRateLimit), requireBearerAuth] }, async (request, reply) => {
+  app.put("/v1/devices/push-token", { preHandler: [app.rateLimit(pushTokenRateLimit), requireCustomerAuth] }, async (request, reply) => {
     const input = pushTokenUpsertSchema.parse(request.body);
 
     return proxyUpstream({

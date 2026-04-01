@@ -3,9 +3,16 @@ import Fastify from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import rateLimit from "@fastify/rate-limit";
+import type { MailSender } from "./mail.js";
+import type { IdentityRepository } from "./repository.js";
 import { registerRoutes } from "./routes.js";
 
-export async function buildApp() {
+export type BuildAppOptions = {
+  mailSender?: MailSender;
+  repository?: IdentityRepository;
+};
+
+export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
@@ -82,8 +89,8 @@ export async function buildApp() {
     service: "identity",
     uptimeSeconds: Math.floor((Date.now() - startedAtMs) / 1000),
     requests: requestMetrics
-  }));
+    }));
 
-  await registerRoutes(app);
+  await registerRoutes(app, options);
   return app;
 }

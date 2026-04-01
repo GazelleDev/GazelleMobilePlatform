@@ -1,36 +1,109 @@
 import { describe, expect, it } from "vitest";
+import { normalizeCustomizationGroups } from "@gazelle/contracts-catalog";
 import { createCartItem, DEFAULT_CUSTOMIZATION } from "../src/cart/model";
 import { createCheckoutIdempotencyKey, createDemoApplePayToken, toQuoteItems } from "../src/orders/checkout";
+
+const espressoGroups = normalizeCustomizationGroups([
+  {
+    id: "size",
+    label: "Size",
+    selectionType: "single" as const,
+    required: true,
+    minSelections: 1,
+    maxSelections: 1,
+    sortOrder: 0,
+    options: [
+      { id: "regular", label: "Regular", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+      { id: "large", label: "Large", priceDeltaCents: 100, sortOrder: 1, available: true }
+    ]
+  },
+  {
+    id: "milk",
+    label: "Milk",
+    selectionType: "single" as const,
+    required: true,
+    minSelections: 1,
+    maxSelections: 1,
+    sortOrder: 1,
+    options: [
+      { id: "whole", label: "Whole milk", priceDeltaCents: 0, default: true, sortOrder: 0, available: true },
+      { id: "oat", label: "Oat milk", priceDeltaCents: 75, sortOrder: 1, available: true }
+    ]
+  }
+]);
 
 describe("checkout helpers", () => {
   it("aggregates cart lines by menu item id for quote input", () => {
     const items = [
       createCartItem({
         menuItemId: "latte",
-        name: "Latte",
+        itemName: "Latte",
         basePriceCents: 575,
-        customization: { ...DEFAULT_CUSTOMIZATION, milk: "Whole" },
+        customizationGroups: espressoGroups,
+        customization: {
+          ...DEFAULT_CUSTOMIZATION,
+          selectedOptions: [
+            { groupId: "size", optionId: "regular" },
+            { groupId: "milk", optionId: "whole" }
+          ]
+        },
         quantity: 1
       }),
       createCartItem({
         menuItemId: "latte",
-        name: "Latte",
+        itemName: "Latte",
         basePriceCents: 575,
-        customization: { ...DEFAULT_CUSTOMIZATION, milk: "Oat" },
+        customizationGroups: espressoGroups,
+        customization: {
+          ...DEFAULT_CUSTOMIZATION,
+          selectedOptions: [
+            { groupId: "size", optionId: "regular" },
+            { groupId: "milk", optionId: "oat" }
+          ]
+        },
         quantity: 2
       }),
       createCartItem({
         menuItemId: "croissant",
-        name: "Croissant",
+        itemName: "Croissant",
         basePriceCents: 425,
+        customizationGroups: [],
         customization: DEFAULT_CUSTOMIZATION,
         quantity: 3
       })
     ];
 
     expect(toQuoteItems(items)).toEqual([
-      { itemId: "latte", quantity: 3 },
-      { itemId: "croissant", quantity: 3 }
+      {
+        itemId: "latte",
+        quantity: 1,
+        customization: {
+          selectedOptions: [
+            { groupId: "milk", optionId: "whole" },
+            { groupId: "size", optionId: "regular" }
+          ],
+          notes: ""
+        }
+      },
+      {
+        itemId: "latte",
+        quantity: 2,
+        customization: {
+          selectedOptions: [
+            { groupId: "milk", optionId: "oat" },
+            { groupId: "size", optionId: "regular" }
+          ],
+          notes: ""
+        }
+      },
+      {
+        itemId: "croissant",
+        quantity: 3,
+        customization: {
+          selectedOptions: [],
+          notes: ""
+        }
+      }
     ]);
   });
 

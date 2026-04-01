@@ -6,11 +6,28 @@ import { buildApp } from "../src/app.js";
 const sampleQuotePayload = {
   locationId: "flagship-01",
   items: [
-    { itemId: "latte", quantity: 2 },
+    {
+      itemId: "latte",
+      quantity: 2,
+      customization: {
+        selectedOptions: [
+          { groupId: "size", optionId: "regular" },
+          { groupId: "milk", optionId: "whole" }
+        ],
+        notes: ""
+      }
+    },
     { itemId: "croissant", quantity: 1 }
   ],
   pointsToRedeem: 125
 };
+const defaultTestUserId = "123e4567-e89b-12d3-a456-426614174019";
+
+function customerHeaders(userId = defaultTestUserId) {
+  return {
+    "x-user-id": userId
+  };
+}
 
 function paymentsResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -19,12 +36,48 @@ function paymentsResponse(payload: unknown, status = 200) {
   });
 }
 
+async function createQuotedOrder(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  options: {
+    userId?: string;
+    payload?: typeof sampleQuotePayload;
+  } = {}
+) {
+  const payload = options.payload ?? sampleQuotePayload;
+  const quoteResponse = await app.inject({
+    method: "POST",
+    url: "/v1/orders/quote",
+    payload
+  });
+  expect(quoteResponse.statusCode).toBe(200);
+  const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+  const createResponse = await app.inject({
+    method: "POST",
+    url: "/v1/orders",
+    headers: customerHeaders(options.userId ?? defaultTestUserId),
+    payload: {
+      quoteId: quote.quoteId,
+      quoteHash: quote.quoteHash
+    }
+  });
+  expect(createResponse.statusCode).toBe(200);
+
+  return {
+    quote,
+    order: orderSchema.parse(createResponse.json())
+  };
+}
+
 describe("orders service", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("ORDERS_INTERNAL_API_TOKEN", "orders-internal-token");
+    vi.stubEnv("LOYALTY_INTERNAL_API_TOKEN", "loyalty-internal-token");
+    vi.stubEnv("NOTIFICATIONS_INTERNAL_API_TOKEN", "notifications-internal-token");
     const defaultUserId = "123e4567-e89b-12d3-a456-426614174000";
     const loyaltyIdempotency = new Map<
       string,
@@ -51,6 +104,9 @@ describe("orders service", () => {
           : {};
 
       if (url.endsWith("/v1/payments/charges") && method === "POST") {
+        const expectedInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-internal-token")).toBe(expectedInternalToken);
         const walletData =
           typeof body.applePayWallet === "object" && body.applePayWallet !== null && "data" in body.applePayWallet
             ? (body.applePayWallet as { data?: unknown }).data
@@ -99,6 +155,9 @@ describe("orders service", () => {
       }
 
       if (url.endsWith("/v1/payments/refunds") && method === "POST") {
+        const expectedInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-internal-token")).toBe(expectedInternalToken);
         const reason = String(body.reason ?? "").toLowerCase();
         const rejected = reason.includes("reject");
 
@@ -118,6 +177,9 @@ describe("orders service", () => {
       }
 
       if (url.endsWith("/v1/loyalty/internal/ledger/apply") && method === "POST") {
+        const expectedInternalToken = process.env.LOYALTY_INTERNAL_API_TOKEN;
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-internal-token")).toBe(expectedInternalToken);
         const userId = String(body.userId ?? defaultUserId);
         const idempotencyKey = String(body.idempotencyKey ?? "");
         const mutationType = String(body.type ?? "");
@@ -202,6 +264,9 @@ describe("orders service", () => {
       }
 
       if (url.endsWith("/v1/notifications/internal/order-state") && method === "POST") {
+        const expectedInternalToken = process.env.NOTIFICATIONS_INTERNAL_API_TOKEN;
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-internal-token")).toBe(expectedInternalToken);
         const userId = String(body.userId ?? defaultUserId);
         const orderId = String(body.orderId ?? "");
         const status = String(body.status ?? "");
@@ -223,6 +288,7 @@ describe("orders service", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
@@ -253,10 +319,25 @@ describe("orders service", () => {
     expect(quoteResponse.statusCode).toBe(200);
     const quote = orderQuoteSchema.parse(quoteResponse.json());
     expect(quote.total.amountCents).toBeGreaterThan(0);
+    expect(quote.tax.amountCents).toBe(99);
+    expect(quote.total.amountCents).toBe(1749);
+    expect(quote.items[0]).toMatchObject({
+      itemId: "latte",
+      itemName: "Honey Oat Latte",
+      customization: {
+        selectedOptions: expect.arrayContaining([
+          expect.objectContaining({ groupId: "size", optionId: "regular" }),
+          expect.objectContaining({ groupId: "milk", optionId: "whole" })
+        ])
+      }
+    });
 
     const createResponse = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: {
+        "x-user-id": defaultTestUserId
+      },
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -285,6 +366,129 @@ describe("orders service", () => {
     await app.close();
   });
 
+  it("rejects order creation when x-user-id is missing", async () => {
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    expect(quoteResponse.statusCode).toBe(200);
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+
+    expect(createResponse.statusCode).toBe(400);
+    expect(createResponse.json()).toMatchObject({
+      code: "INVALID_USER_CONTEXT"
+    });
+
+    await app.close();
+  });
+
+  it("fails startup when DATABASE_URL is missing outside explicit in-memory mode", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DATABASE_URL", "");
+    vi.stubEnv("ALLOW_IN_MEMORY_PERSISTENCE", "");
+
+    await expect(buildApp()).rejects.toThrow(/DATABASE_URL/);
+  });
+
+  it("scopes order history to the provided x-user-id header", async () => {
+    const app = await buildApp();
+    const firstUserId = "123e4567-e89b-12d3-a456-426614174001";
+    const secondUserId = "123e4567-e89b-12d3-a456-426614174002";
+
+    const firstOrder = await createQuotedOrder(app, { userId: firstUserId });
+    const secondOrder = await createQuotedOrder(app, { userId: secondUserId });
+
+    const firstUserListResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders",
+      headers: {
+        "x-user-id": firstUserId
+      }
+    });
+    const secondUserListResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders",
+      headers: {
+        "x-user-id": secondUserId
+      }
+    });
+
+    expect(firstUserListResponse.statusCode).toBe(200);
+    expect(secondUserListResponse.statusCode).toBe(200);
+    expect(firstUserListResponse.json()).toEqual([expect.objectContaining({ id: firstOrder.order.id })]);
+    expect(secondUserListResponse.json()).toEqual([expect.objectContaining({ id: secondOrder.order.id })]);
+
+    await app.close();
+  });
+
+  it("preserves unscoped order history when x-user-id is not provided", async () => {
+    const app = await buildApp();
+
+    const firstOrder = await createQuotedOrder(app, {
+      userId: "123e4567-e89b-12d3-a456-426614174011"
+    });
+    const secondOrder = await createQuotedOrder(app, {
+      userId: "123e4567-e89b-12d3-a456-426614174012"
+    });
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders"
+    });
+
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: firstOrder.order.id }),
+        expect.objectContaining({ id: secondOrder.order.id })
+      ])
+    );
+
+    await app.close();
+  });
+
+  it("rejects quote requests with missing required customization groups", async () => {
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: {
+        locationId: "flagship-01",
+        items: [
+          {
+            itemId: "latte",
+            quantity: 1,
+            customization: {
+              selectedOptions: [{ groupId: "size", optionId: "regular" }],
+              notes: ""
+            }
+          }
+        ],
+        pointsToRedeem: 0
+      }
+    });
+
+    expect(quoteResponse.statusCode).toBe(400);
+    expect(quoteResponse.json()).toMatchObject({
+      code: "INVALID_CUSTOMIZATION"
+    });
+
+    await app.close();
+  });
+
   it("treats create and pay operations as idempotent", async () => {
     const app = await buildApp();
     const quoteResponse = await app.inject({
@@ -302,11 +506,13 @@ describe("orders service", () => {
     const firstCreate = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: createPayload
     });
     const secondCreate = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: createPayload
     });
 
@@ -354,6 +560,403 @@ describe("orders service", () => {
     await app.close();
   });
 
+  it("advances staff-controlled fulfillment states and emits notifications", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "staff");
+    vi.stubEnv("ORDERS_INTERNAL_API_TOKEN", "orders-staff-token");
+    const app = await buildApp();
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const order = orderSchema.parse(createResponse.json());
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "staff-flow-pay"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+
+    const inPrepResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/status`,
+      headers: {
+        "x-internal-token": "orders-staff-token"
+      },
+      payload: {
+        status: "IN_PREP"
+      }
+    });
+    expect(inPrepResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(inPrepResponse.json()).status).toBe("IN_PREP");
+
+    const readyResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/status`,
+      headers: {
+        "x-internal-token": "orders-staff-token"
+      },
+      payload: {
+        status: "READY"
+      }
+    });
+    expect(readyResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(readyResponse.json()).status).toBe("READY");
+
+    const completedResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/status`,
+      headers: {
+        "x-internal-token": "orders-staff-token"
+      },
+      payload: {
+        status: "COMPLETED"
+      }
+    });
+    expect(completedResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(completedResponse.json()).status).toBe("COMPLETED");
+
+    const notificationPayloads = fetchMock.mock.calls
+      .filter(
+        ([input, init]) =>
+          (typeof input === "string" ? input : input.toString()).endsWith("/v1/notifications/internal/order-state") &&
+          (init?.method ?? "GET") === "POST"
+      )
+      .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>)
+      .filter((payload) => payload.orderId === order.id);
+
+    expect(notificationPayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "PAID" }),
+        expect.objectContaining({ status: "IN_PREP" }),
+        expect.objectContaining({ status: "READY" })
+      ])
+    );
+
+    await app.close();
+  });
+
+  it("cancels and refunds a fulfilled order after it has progressed past payment", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "staff");
+    vi.stubEnv("ORDERS_INTERNAL_API_TOKEN", "orders-staff-token");
+    const app = await buildApp();
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const order = orderSchema.parse(createResponse.json());
+
+    await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "cancel-after-ready-pay"
+      }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/status`,
+      headers: {
+        "x-internal-token": "orders-staff-token"
+      },
+      payload: {
+        status: "IN_PREP"
+      }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/status`,
+      headers: {
+        "x-internal-token": "orders-staff-token"
+      },
+      payload: {
+        status: "READY"
+      }
+    });
+
+    const cancelResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/cancel`,
+      payload: { reason: "changed mind" }
+    });
+    expect(cancelResponse.statusCode).toBe(200);
+    const canceledOrder = orderSchema.parse(cancelResponse.json());
+    expect(canceledOrder.status).toBe("CANCELED");
+    expect(canceledOrder.timeline.map((entry) => entry.status)).toEqual([
+      "PENDING_PAYMENT",
+      "PAID",
+      "IN_PREP",
+      "READY",
+      "CANCELED"
+    ]);
+
+    const loyaltyMutations = fetchMock.mock.calls
+      .filter(
+        ([input, init]) =>
+          (typeof input === "string" ? input : input.toString()).endsWith("/v1/loyalty/internal/ledger/apply") &&
+          (init?.method ?? "GET") === "POST"
+      )
+      .map(([, init]) => JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    expect(loyaltyMutations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "REDEEM",
+          idempotencyKey: `order:${order.id}:loyalty:redeem`
+        }),
+        expect.objectContaining({
+          type: "EARN",
+          idempotencyKey: `order:${order.id}:loyalty:earn`
+        }),
+        expect.objectContaining({
+          type: "ADJUSTMENT",
+          idempotencyKey: `order:${order.id}:loyalty:reverse-earn`
+        }),
+        expect.objectContaining({
+          type: "REFUND",
+          idempotencyKey: `order:${order.id}:loyalty:refund-redeem`
+        })
+      ])
+    );
+
+    await app.close();
+  });
+
+  it("attributes staff-triggered cancellations when the gateway forwards a staff cancel source", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "staff");
+    const app = await buildApp();
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const order = orderSchema.parse(createResponse.json());
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "staff-cancel-pay"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+
+    const cancelResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/cancel`,
+      headers: {
+        "x-order-cancel-source": "staff"
+      },
+      payload: { reason: "machine issue" }
+    });
+    expect(cancelResponse.statusCode).toBe(200);
+
+    const canceledOrder = orderSchema.parse(cancelResponse.json());
+    expect(canceledOrder.timeline.at(-1)).toMatchObject({
+      status: "CANCELED",
+      source: "staff",
+      note: expect.stringContaining("Canceled by staff: machine issue.")
+    });
+
+    await app.close();
+  });
+
+  it("lazily reconciles fulfillment state forward on get and list reads when time-based mode is enabled", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "time_based");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-10T00:00:00.000Z"));
+
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const createdOrder = orderSchema.parse(createResponse.json());
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${createdOrder.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "pay-time-based-1"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(payResponse.json()).status).toBe("PAID");
+
+    vi.setSystemTime(new Date("2026-03-10T00:04:59.000Z"));
+    const beforePrepResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    expect(orderSchema.parse(beforePrepResponse.json()).status).toBe("PAID");
+
+    vi.setSystemTime(new Date("2026-03-10T00:05:00.000Z"));
+    const inPrepResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    const inPrepOrder = orderSchema.parse(inPrepResponse.json());
+    expect(inPrepOrder.status).toBe("IN_PREP");
+    expect(inPrepOrder.timeline.map((entry) => entry.status)).toEqual([
+      "PENDING_PAYMENT",
+      "PAID",
+      "IN_PREP"
+    ]);
+
+    vi.setSystemTime(new Date("2026-03-10T00:10:00.000Z"));
+    const readyListResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders"
+    });
+    const readyList = orderSchema.array().parse(readyListResponse.json());
+    const readyOrder = readyList.find((entry) => entry.id === createdOrder.id);
+    expect(readyOrder).toMatchObject({
+      id: createdOrder.id,
+      status: "READY"
+    });
+    expect(readyOrder?.timeline.map((entry) => entry.status)).toEqual([
+      "PENDING_PAYMENT",
+      "PAID",
+      "IN_PREP",
+      "READY"
+    ]);
+
+    vi.setSystemTime(new Date("2026-03-10T00:15:00.000Z"));
+    const completedResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    const completedOrder = orderSchema.parse(completedResponse.json());
+    expect(completedOrder.status).toBe("COMPLETED");
+    expect(completedOrder.timeline.map((entry) => entry.status)).toEqual([
+      "PENDING_PAYMENT",
+      "PAID",
+      "IN_PREP",
+      "READY",
+      "COMPLETED"
+    ]);
+
+    const repeatedCompletedResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    const repeatedCompletedOrder = orderSchema.parse(repeatedCompletedResponse.json());
+    expect(repeatedCompletedOrder.timeline).toHaveLength(completedOrder.timeline.length);
+
+    await app.close();
+  });
+
+  it("does not auto-progress fulfillment on read when staff mode is enabled", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "staff");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-10T00:00:00.000Z"));
+
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const createdOrder = orderSchema.parse(createResponse.json());
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${createdOrder.id}/pay`,
+      payload: {
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "pay-staff-mode-1"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+
+    vi.setSystemTime(new Date("2026-03-10T00:30:00.000Z"));
+    const getResponse = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${createdOrder.id}`
+    });
+    const orderAfterRead = orderSchema.parse(getResponse.json());
+    expect(orderAfterRead.status).toBe("PAID");
+    expect(orderAfterRead.timeline.map((entry) => entry.status)).toEqual(["PENDING_PAYMENT", "PAID"]);
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/orders"
+    });
+    const orders = orderSchema.array().parse(listResponse.json());
+    const listedOrder = orders.find((entry) => entry.id === createdOrder.id);
+    expect(listedOrder?.status).toBe("PAID");
+    expect(listedOrder?.timeline.map((entry) => entry.status)).toEqual(["PENDING_PAYMENT", "PAID"]);
+
+    await app.close();
+  });
+
   it("accepts structured Apple Pay wallet payloads for payment", async () => {
     const app = await buildApp();
     const quoteResponse = await app.inject({
@@ -366,6 +969,7 @@ describe("orders service", () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -422,6 +1026,7 @@ describe("orders service", () => {
     const mismatchedCreate = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: quote.quoteId,
         quoteHash: "incorrect-hash"
@@ -433,6 +1038,7 @@ describe("orders service", () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -482,6 +1088,7 @@ describe("orders service", () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -533,6 +1140,7 @@ describe("orders service", () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -595,6 +1203,7 @@ describe("orders service", () => {
     const rejectedCreate = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: rejectedQuote.quoteId,
         quoteHash: rejectedQuote.quoteHash
@@ -633,6 +1242,7 @@ describe("orders service", () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -707,6 +1317,7 @@ describe("orders service", () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/v1/orders",
+      headers: customerHeaders(),
       payload: {
         quoteId: quote.quoteId,
         quoteHash: quote.quoteHash
@@ -718,6 +1329,9 @@ describe("orders service", () => {
     const chargeReconcile = await app.inject({
       method: "POST",
       url: "/v1/orders/internal/payments/reconcile",
+      headers: {
+        "x-internal-token": "orders-internal-token"
+      },
       payload: {
         eventId: "evt_charge_internal_1",
         provider: "CLOVER",
@@ -739,6 +1353,9 @@ describe("orders service", () => {
     const repeatedChargeReconcile = await app.inject({
       method: "POST",
       url: "/v1/orders/internal/payments/reconcile",
+      headers: {
+        "x-internal-token": "orders-internal-token"
+      },
       payload: {
         eventId: "evt_charge_internal_1",
         provider: "CLOVER",
@@ -760,6 +1377,9 @@ describe("orders service", () => {
     const refundReconcile = await app.inject({
       method: "POST",
       url: "/v1/orders/internal/payments/reconcile",
+      headers: {
+        "x-internal-token": "orders-internal-token"
+      },
       payload: {
         eventId: "evt_refund_internal_1",
         provider: "CLOVER",
@@ -834,6 +1454,155 @@ describe("orders service", () => {
 
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ code: "UNAUTHORIZED_INTERNAL_REQUEST" });
+    await app.close();
+  });
+
+  it("allows staff-driven status updates when staff fulfillment mode is active", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "staff");
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    expect(quoteResponse.statusCode).toBe(200);
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const order = orderSchema.parse(createResponse.json());
+
+    const payResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/pay`,
+      payload: {
+        applePayToken: "staff-progress-success",
+        idempotencyKey: "staff-progress-1"
+      }
+    });
+    expect(payResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(payResponse.json()).status).toBe("PAID");
+
+    const statusResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/status`,
+      headers: {
+        "x-internal-token": "orders-internal-token"
+      },
+      payload: {
+        status: "IN_PREP",
+        note: "Started by staff"
+      }
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    expect(orderSchema.parse(statusResponse.json())).toMatchObject({
+      id: order.id,
+      status: "IN_PREP"
+    });
+
+    await app.close();
+  });
+
+  it("rejects staff-driven status updates when time-based fulfillment mode is active", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "time_based");
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    expect(quoteResponse.statusCode).toBe(200);
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const order = orderSchema.parse(createResponse.json());
+
+    const statusResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/status`,
+      headers: {
+        "x-internal-token": "orders-internal-token"
+      },
+      payload: {
+        status: "IN_PREP",
+        note: "Started by staff"
+      }
+    });
+
+    expect(statusResponse.statusCode).toBe(409);
+    expect(statusResponse.json()).toMatchObject({
+      code: "STAFF_FULFILLMENT_DISABLED",
+      details: {
+        fulfillmentMode: "time_based"
+      }
+    });
+
+    await app.close();
+  });
+
+  it("rejects staff-driven cancel requests when time-based fulfillment mode is active", async () => {
+    vi.stubEnv("ORDER_FULFILLMENT_MODE", "time_based");
+    const app = await buildApp();
+
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    expect(quoteResponse.statusCode).toBe(200);
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    const order = orderSchema.parse(createResponse.json());
+
+    const cancelResponse = await app.inject({
+      method: "POST",
+      url: `/v1/orders/${order.id}/cancel`,
+      headers: {
+        "x-order-cancel-source": "staff"
+      },
+      payload: {
+        reason: "Canceled by operator"
+      }
+    });
+
+    expect(cancelResponse.statusCode).toBe(409);
+    expect(cancelResponse.json()).toMatchObject({
+      code: "STAFF_FULFILLMENT_DISABLED",
+      details: {
+        fulfillmentMode: "time_based"
+      }
+    });
+
     await app.close();
   });
 
