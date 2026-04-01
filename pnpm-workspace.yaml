@@ -5,3 +5,7 @@ packages:
   - packages/*
   - packages/contracts/*
   - infra/terraform/envs/*
+
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
