@@ -1,6 +1,6 @@
 # Persistence Foundation (Postgres Bootstrap)
 
-Last reviewed: `2026-03-11`
+Last reviewed: `2026-04-01`
 
 ## Scope
 
@@ -28,6 +28,8 @@ It provides:
 
 - `payments_charges`
 - `payments_refunds`
+- `payments_webhook_deduplication`
+- `payments_clover_connections`
 - `loyalty_balances`
 - `loyalty_ledger_entries`
 - `loyalty_idempotency_keys`
@@ -35,12 +37,21 @@ It provides:
 - `orders`
 - `orders_create_idempotency`
 - `orders_payment_idempotency`
+- `identity_users`
+- `identity_magic_links`
 - `identity_sessions`
 - `identity_passkey_challenges`
 - `identity_passkey_credentials`
+- `operator_users`
+- `operator_magic_links`
+- `operator_sessions`
 - `notifications_push_tokens`
 - `notifications_order_state_dispatches`
 - `notifications_outbox`
+- `catalog_menu_categories`
+- `catalog_menu_items`
+- `catalog_store_configs`
+- `catalog_app_configs`
 
 ## Payments Integration
 
@@ -108,3 +119,4 @@ Without `DATABASE_URL`, services now require `ALLOW_IN_MEMORY_PERSISTENCE=true` 
 
 - Add transactional boundaries for cross-service side effects.
 - Expand migration coverage as new persistence-backed features land.
+- Keep the free-first scratch restore drill current as new persistence-backed tables are added.

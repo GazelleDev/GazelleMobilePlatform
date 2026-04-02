@@ -803,6 +803,20 @@ function sendError(
   );
 }
 
+function logPaymentsMutation(
+  request: FastifyRequest,
+  message: string,
+  details: Record<string, unknown>
+) {
+  request.log.info(
+    {
+      requestId: request.id,
+      ...details
+    },
+    message
+  );
+}
+
 function secretsMatch(expected: string, provided: string) {
   const expectedBuffer = Buffer.from(expected, "utf8");
   const providedBuffer = Buffer.from(provided, "utf8");
@@ -2508,7 +2522,13 @@ export async function registerRoutes(app: FastifyInstance) {
         apiAccessKey
       });
 
-      return buildCloverOauthStatus();
+      const status = await buildCloverOauthStatus();
+      logPaymentsMutation(request, "clover oauth callback connected merchant", {
+        merchantId,
+        providerMode: status.providerMode,
+        credentialSource: status.credentialSource
+      });
+      return status;
     } catch (error) {
       request.log.error({ error, requestId: request.id }, "Clover OAuth callback exchange failed");
       return reply.status(502).send(
@@ -2560,7 +2580,13 @@ export async function registerRoutes(app: FastifyInstance) {
         ...refreshedConnection,
         apiAccessKey
       });
-      return buildCloverOauthStatus();
+      const status = await buildCloverOauthStatus();
+      logPaymentsMutation(request, "clover oauth connection refreshed", {
+        merchantId: status.connectedMerchantId ?? status.merchantId ?? null,
+        providerMode: status.providerMode,
+        credentialSource: status.credentialSource
+      });
+      return status;
     } catch (error) {
       request.log.error({ error, requestId: request.id }, "Clover OAuth refresh failed");
       return reply.status(502).send(
@@ -2601,16 +2627,30 @@ export async function registerRoutes(app: FastifyInstance) {
         );
       }
 
+      logPaymentsMutation(request, "charge idempotency replayed", {
+        orderId: existing.orderId,
+        paymentId: existing.paymentId,
+        status: existing.status,
+        provider: existing.provider
+      });
       return existing;
     }
 
     if (cloverProvider.mode === "simulated") {
       const chargeResponse = createSimulatedChargeResponse(input);
-      return repository.saveCharge({
+      const savedCharge = await repository.saveCharge({
         request: input,
         response: chargeResponse,
         providerPaymentId: chargeResponse.paymentId
       });
+      logPaymentsMutation(request, "charge accepted", {
+        orderId: savedCharge.orderId,
+        paymentId: savedCharge.paymentId,
+        status: savedCharge.status,
+        provider: savedCharge.provider,
+        providerMode: cloverProvider.mode
+      });
+      return savedCharge;
     }
 
     try {
@@ -2643,11 +2683,19 @@ export async function registerRoutes(app: FastifyInstance) {
         oauthConfig: cloverOAuthConfig
       });
 
-      return repository.saveCharge({
+      const savedCharge = await repository.saveCharge({
         request: input,
         response: result.response,
         providerPaymentId: result.providerPaymentId
       });
+      logPaymentsMutation(request, "charge accepted", {
+        orderId: savedCharge.orderId,
+        paymentId: savedCharge.paymentId,
+        status: savedCharge.status,
+        provider: savedCharge.provider,
+        providerMode: cloverProvider.mode
+      });
+      return savedCharge;
     } catch (error) {
       request.log.error({ error, requestId: request.id, orderId: input.orderId }, "live Clover charge failed");
       return reply.status(502).send(
@@ -2690,6 +2738,13 @@ export async function registerRoutes(app: FastifyInstance) {
         );
       }
 
+      logPaymentsMutation(request, "refund idempotency replayed", {
+        orderId: existingRefund.orderId,
+        paymentId: existingRefund.paymentId,
+        refundId: existingRefund.refundId,
+        status: existingRefund.status,
+        provider: existingRefund.provider
+      });
       return existingRefund;
     }
 
@@ -2719,7 +2774,16 @@ export async function registerRoutes(app: FastifyInstance) {
 
     if (cloverProvider.mode === "simulated") {
       const refundResponse = createSimulatedRefundResponse(input);
-      return repository.saveRefund({ request: input, response: refundResponse });
+      const savedRefund = await repository.saveRefund({ request: input, response: refundResponse });
+      logPaymentsMutation(request, "refund accepted", {
+        orderId: savedRefund.orderId,
+        paymentId: savedRefund.paymentId,
+        refundId: savedRefund.refundId,
+        status: savedRefund.status,
+        provider: savedRefund.provider,
+        providerMode: cloverProvider.mode
+      });
+      return savedRefund;
     }
 
     try {
@@ -2752,7 +2816,16 @@ export async function registerRoutes(app: FastifyInstance) {
         repository,
         oauthConfig: cloverOAuthConfig
       });
-      return repository.saveRefund({ request: input, response: refundResponse });
+      const savedRefund = await repository.saveRefund({ request: input, response: refundResponse });
+      logPaymentsMutation(request, "refund accepted", {
+        orderId: savedRefund.orderId,
+        paymentId: savedRefund.paymentId,
+        refundId: savedRefund.refundId,
+        status: savedRefund.status,
+        provider: savedRefund.provider,
+        providerMode: cloverProvider.mode
+      });
+      return savedRefund;
     } catch (error) {
       request.log.error(
         { error, requestId: request.id, orderId: input.orderId, paymentId: input.paymentId },
@@ -2883,6 +2956,13 @@ export async function registerRoutes(app: FastifyInstance) {
         orderApplied: dispatchResult.response.applied
       };
       await repository.saveWebhookResult(webhookEventKey, response);
+      logPaymentsMutation(request, "charge webhook reconciled", {
+        orderId,
+        paymentId,
+        webhookEventId: resolved.eventId,
+        status: response.status,
+        orderApplied: response.orderApplied
+      });
       return response;
     }
 
@@ -2948,6 +3028,13 @@ export async function registerRoutes(app: FastifyInstance) {
       orderApplied: dispatchResult.response.applied
     };
     await repository.saveWebhookResult(webhookEventKey, response);
+    logPaymentsMutation(request, "refund webhook reconciled", {
+      orderId,
+      paymentId,
+      webhookEventId: resolved.eventId,
+      status: response.status,
+      orderApplied: response.orderApplied
+    });
     return response;
   });
 

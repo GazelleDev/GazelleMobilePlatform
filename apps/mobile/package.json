@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "build": "echo 'Use EAS build for mobile artifacts'",
+    "release:check": "node scripts/validate-release-env.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint app src test --max-warnings=0",
     "test": "vitest run"

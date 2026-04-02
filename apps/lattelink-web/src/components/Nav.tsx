@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { LogoIcon, Wordmark } from "./Logo";
 import { demoHref } from "@/lib/site";
+import { TrackedAnchor } from "./TrackedAnchor";
 
 const links = [
   { href: "#features", label: "Features" },
@@ -75,9 +76,14 @@ export function Nav() {
           </ul>
 
           {/* CTA */}
-          <Link href={demoHref} className="btn-primary-nav nav-cta">
-            Book intro
-          </Link>
+          <TrackedAnchor
+            href={demoHref}
+            className="btn-primary-nav nav-cta"
+            eventName="cta_click"
+            eventProperties={{ placement: "nav", label: "request_intro", destination: "contact" }}
+          >
+            Request intro
+          </TrackedAnchor>
         </div>
       </nav>
 
@@ -162,8 +168,13 @@ function NavLink({
   children: React.ReactNode;
 }) {
   return (
-    <a href={href} className="nav-link-item">
+    <TrackedAnchor
+      href={href}
+      className="nav-link-item"
+      eventName="section_navigation_click"
+      eventProperties={{ placement: "nav", destination: href }}
+    >
       {children}
-    </a>
+    </TrackedAnchor>
   );
 }

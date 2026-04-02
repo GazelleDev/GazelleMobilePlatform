@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { appleExchangeRequestSchema, magicLinkRequestSchema, passkeyVerifyRequestSchema } from "../src";
+import {
+  appleExchangeRequestSchema,
+  googleOAuthStartRequestSchema,
+  internalOwnerProvisionRequestSchema,
+  internalOwnerProvisionResponseSchema,
+  internalOwnerSummarySchema,
+  magicLinkRequestSchema,
+  operatorGoogleExchangeRequestSchema,
+  operatorPasswordSignInSchema,
+  operatorUserCreateSchema,
+  passkeyVerifyRequestSchema
+} from "../src";
 
 describe("contracts-auth", () => {
   it("validates apple exchange payload", () => {
@@ -18,6 +29,25 @@ describe("contracts-auth", () => {
     });
 
     expect(data.nonce).toBe("legacy-nonce");
+  });
+
+  it("accepts Google OAuth start payloads", () => {
+    const data = googleOAuthStartRequestSchema.parse({
+      redirectUri: "http://localhost:5173/?google_auth_callback=1"
+    });
+
+    expect(data.redirectUri).toContain("google_auth_callback=1");
+  });
+
+  it("accepts operator Google exchange payloads", () => {
+    const data = operatorGoogleExchangeRequestSchema.parse({
+      code: "google-auth-code",
+      state: "signed-state",
+      redirectUri: "http://localhost:5173/?google_auth_callback=1"
+    });
+
+    expect(data.code).toBe("google-auth-code");
+    expect(data.state).toBe("signed-state");
   });
 
   it("accepts passkey register verify payload", () => {
@@ -69,5 +99,71 @@ describe("contracts-auth", () => {
     });
 
     expect(payload.email).toBe("owner@gazellecoffee.com");
+  });
+
+  it("accepts operator password sign-in payloads", () => {
+    const payload = operatorPasswordSignInSchema.parse({
+      email: " owner@gazellecoffee.com ",
+      password: "Password123!"
+    });
+
+    expect(payload.email).toBe("owner@gazellecoffee.com");
+    expect(payload.password).toBe("Password123!");
+  });
+
+  it("requires passwords when creating operator users", () => {
+    const payload = operatorUserCreateSchema.parse({
+      displayName: " Avery Quinn ",
+      email: " avery@store.com ",
+      role: "manager",
+      password: "Password123!"
+    });
+
+    expect(payload.displayName).toBe("Avery Quinn");
+    expect(payload.email).toBe("avery@store.com");
+  });
+
+  it("validates internal owner provisioning payloads", () => {
+    const request = internalOwnerProvisionRequestSchema.parse({
+      displayName: " Pilot Owner ",
+      email: " owner@northside.com ",
+      dashboardUrl: "https://client.example.com"
+    });
+
+    const response = internalOwnerProvisionResponseSchema.parse({
+      operator: {
+        operatorUserId: "123e4567-e89b-12d3-a456-426614174000",
+        displayName: "Pilot Owner",
+        email: "owner@northside.com",
+        role: "owner",
+        locationId: "northside-01",
+        active: true,
+        capabilities: [
+          "orders:read",
+          "orders:write",
+          "menu:read",
+          "menu:write",
+          "menu:visibility",
+          "store:read",
+          "store:write",
+          "staff:read",
+          "staff:write"
+        ],
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z"
+      },
+      temporaryPassword: "Temporary123!",
+      action: "created"
+    });
+
+    expect(request.email).toBe("owner@northside.com");
+    expect(response.operator.role).toBe("owner");
+
+    const summary = internalOwnerSummarySchema.parse({
+      locationId: "northside-01",
+      owner: response.operator
+    });
+
+    expect(summary.owner?.email).toBe("owner@northside.com");
   });
 });

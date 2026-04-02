@@ -29,6 +29,7 @@ concurrency:
 env:
   VERCEL_ORG_ID: ${{ secrets.LATTELINK_VERCEL_ORG_ID }}
   VERCEL_PROJECT_ID: ${{ secrets.LATTELINK_VERCEL_PROJECT_ID }}
+  VERCEL_WORKING_DIR: apps/lattelink-web
 
 jobs:
   verify:
@@ -78,13 +79,17 @@ jobs:
         run: npm install --global vercel@latest
       - name: Pull Vercel preview configuration
         if: steps.preview-check.outputs.enabled == 'true'
-        run: vercel pull --yes --environment=preview --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=preview --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+      - name: Validate LatteLink preview env
+        if: steps.preview-check.outputs.enabled == 'true'
+        working-directory: ${{ env.VERCEL_WORKING_DIR }}
+        run: pnpm release:check preview .vercel/.env.preview.local
       - name: Build LatteLink preview artifacts for Vercel
         if: steps.preview-check.outputs.enabled == 'true'
-        run: vercel build --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+        run: vercel build --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
       - name: Deploy LatteLink preview to Vercel
         if: steps.preview-check.outputs.enabled == 'true'
-        run: vercel deploy --prebuilt --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
       - name: Skip Vercel preview deploy
         if: steps.preview-check.outputs.enabled != 'true'
         run: echo "Preview deploy skipped until LATTELINK_VERCEL_TOKEN, LATTELINK_VERCEL_ORG_ID, and LATTELINK_VERCEL_PROJECT_ID are configured."
@@ -123,13 +128,17 @@ jobs:
         run: npm install --global vercel@latest
       - name: Pull Vercel production configuration
         if: steps.production-check.outputs.enabled == 'true'
-        run: vercel pull --yes --environment=production --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+      - name: Validate LatteLink production env
+        if: steps.production-check.outputs.enabled == 'true'
+        working-directory: ${{ env.VERCEL_WORKING_DIR }}
+        run: pnpm release:check production .vercel/.env.production.local
       - name: Build LatteLink production artifacts for Vercel
         if: steps.production-check.outputs.enabled == 'true'
-        run: vercel build --prod --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+        run: vercel build --prod --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
       - name: Deploy LatteLink production to Vercel
         if: steps.production-check.outputs.enabled == 'true'
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.LATTELINK_VERCEL_TOKEN }}
       - name: Skip Vercel production deploy
         if: steps.production-check.outputs.enabled != 'true'
         run: echo "Production deploy skipped until LATTELINK_VERCEL_TOKEN, LATTELINK_VERCEL_ORG_ID, and LATTELINK_VERCEL_PROJECT_ID are configured."

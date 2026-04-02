@@ -2,9 +2,10 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getSettingsRecoveryCopy } from "../../src/auth/recovery";
 import { useAuthSession } from "../../src/auth/session";
 import { AccountFloatingHeader, ACCOUNT_HEADER_HEIGHT } from "../../src/account/AccountFloatingHeader";
-import { resolveAppConfigData, useAppConfigQuery } from "../../src/menu/catalog";
+import { isMobileLoyaltyVisible, resolveAppConfigData, useAppConfigQuery } from "../../src/menu/catalog";
 import { Button, Card, Chip, GlassCard, ScreenScroll, SectionLabel, uiPalette, uiTypography } from "../../src/ui/system";
 
 function DetailRow({
@@ -27,12 +28,14 @@ function DetailRow({
 export default function SettingsPage() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isAuthenticated, signOut } = useAuthSession();
-  const appConfig = resolveAppConfigData(useAppConfigQuery().data);
-  const loyaltyEnabled = appConfig.loyaltyEnabled && appConfig.featureFlags.loyalty;
+  const { isAuthenticated, signOut, authRecoveryState } = useAuthSession();
+  const appConfigQuery = useAppConfigQuery();
+  const appConfig = resolveAppConfigData(appConfigQuery.data);
+  const loyaltyEnabled = isMobileLoyaltyVisible(appConfigQuery.data);
   const pushEnabled = appConfig.featureFlags.pushNotifications;
   const headerOffset = insets.top + ACCOUNT_HEADER_HEIGHT;
   const [signOutPending, setSignOutPending] = useState(false);
+  const recoveryCopy = getSettingsRecoveryCopy(authRecoveryState);
 
   function goBack() {
     if (router.canGoBack()) {
@@ -59,10 +62,10 @@ export default function SettingsPage() {
         <ScreenScroll bottomInset={48} contentContainerStyle={[styles.screenContentNoTopPadding, { paddingTop: headerOffset }]}>
           <GlassCard style={styles.heroCard}>
             <SectionLabel label="Settings" />
-            <Text style={styles.heroTitle}>Sign in to manage settings.</Text>
-            <Text style={styles.heroBody}>Account settings and sign-out controls appear here once you are signed in.</Text>
+            <Text style={styles.heroTitle}>{recoveryCopy.title}</Text>
+            <Text style={styles.heroBody}>{recoveryCopy.body}</Text>
             <Button
-              label="Sign In"
+              label={recoveryCopy.actionLabel}
               variant="secondary"
               onPress={() => router.push({ pathname: "/auth", params: { returnTo: "/account/settings" } })}
               style={styles.heroAction}

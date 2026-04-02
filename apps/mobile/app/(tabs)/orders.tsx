@@ -14,6 +14,7 @@ import Animated, {
   type SharedValue
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { getOrdersRecoveryCopy } from "../../src/auth/recovery";
 import { useAuthSession } from "../../src/auth/session";
 import {
   findActiveOrder,
@@ -29,6 +30,7 @@ import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../../src/navigation/tabB
 import {
   findLatestOrderTime,
   formatOrderDateTime,
+  formatOrderReference,
   formatOrderStatus,
   hasRefundActivity
 } from "../../src/orders/history";
@@ -483,7 +485,10 @@ function HistoryRow({
 
       <OrderItemStrip order={order} menuItemsById={menuItemsById} />
 
-      <Text style={styles.historyMeta}>{formatOrderDateTime(findLatestOrderTime(order))}</Text>
+      <View style={styles.historyMetaRow}>
+        <Text style={styles.historyMeta}>{formatOrderDateTime(findLatestOrderTime(order))}</Text>
+        <Text style={styles.historyMeta}>{`Pickup ${order.pickupCode}`}</Text>
+      </View>
       <Text style={styles.historyBody}>{getLatestTimelineNote(order)}</Text>
 
       {canOpenRefund ? (
@@ -520,7 +525,7 @@ export default function OrdersScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
-  const { isAuthenticated, isHydrating } = useAuthSession();
+  const { isAuthenticated, isHydrating, authRecoveryState } = useAuthSession();
   const ordersQuery = useOrderHistoryQuery(isAuthenticated);
   const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
   const menuQuery = useMenuQuery();
@@ -545,6 +550,7 @@ export default function OrdersScreen() {
   const staticBottomInset = getTabBarBottomOffset(insets.bottom > 0) + TAB_BAR_HEIGHT + 12;
   const isInitialOrdersLoading = isAuthenticated && ordersQuery.isLoading && !ordersQuery.data;
   const shouldShowInitialLoading = !didFinishInitialReveal && (isHydrating || isInitialOrdersLoading);
+  const recoveryCopy = getOrdersRecoveryCopy(authRecoveryState);
 
   useEffect(() => {
     if (!isAuthenticated || !activeOrder?.id) {
@@ -619,10 +625,14 @@ export default function OrdersScreen() {
       <View style={styles.screenShell}>
         <ScreenStatic style={[styles.loggedOutStaticPage, { paddingTop: headerOffset, paddingBottom: staticBottomInset }]}>
           <View style={styles.loggedOutStaticBody}>
-            <Text style={styles.loggedOutStaticTitle}>Track pickup and revisit past orders.</Text>
-            <Text style={styles.loggedOutStaticText}>
-              Sign in to keep live status, pickup codes, and previous receipts attached to one account every time you come back.
-            </Text>
+            <Text style={styles.loggedOutStaticTitle}>{recoveryCopy.title}</Text>
+            <Text style={styles.loggedOutStaticText}>{recoveryCopy.body}</Text>
+            <Button
+              label={recoveryCopy.actionLabel}
+              variant="secondary"
+              onPress={() => router.push({ pathname: "/auth", params: { returnTo: "/(tabs)/orders" } })}
+              style={styles.loggedOutStaticAction}
+            />
           </View>
         </ScreenStatic>
 
@@ -658,12 +668,28 @@ export default function OrdersScreen() {
               <Text style={styles.activeTitle}>{getActiveOrderTitle(activeOrderStatus ?? activeOrder.status)}</Text>
               <Text style={styles.activeBody}>{getActiveOrderBody(activeOrderStatus ?? activeOrder.status)}</Text>
 
+              <OrderItemStrip order={activeOrder} menuItemsById={menuItemsById} />
+
               <View style={styles.pickupCodeBlock}>
                 <Text style={styles.metricLabel}>Pickup code</Text>
                 <Text style={styles.pickupCodeValue}>{activeOrder.pickupCode}</Text>
               </View>
 
               <OrderProgress status={activeOrderStatus ?? activeOrder.status} />
+
+              <View style={styles.activeSupportBlock}>
+                <View style={styles.activeSupportRow}>
+                  <Text style={styles.activeSupportLabel}>Updated</Text>
+                  <Text style={styles.activeSupportValue}>{formatOrderDateTime(findLatestOrderTime(activeOrder))}</Text>
+                </View>
+                <View style={styles.activeSupportRow}>
+                  <Text style={styles.activeSupportLabel}>Order ref</Text>
+                  <Text style={[styles.activeSupportValue, styles.activeSupportMono]}>{formatOrderReference(activeOrder.id)}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.activeStatusNote}>{getLatestTimelineNote(activeOrder)}</Text>
+              <Button label="Refresh Status" variant="secondary" onPress={refreshOrders} style={styles.activeRefreshButton} />
 
               {(activeOrderStatus ?? activeOrder.status) === "PENDING_PAYMENT" ? (
                 <Button
@@ -683,7 +709,12 @@ export default function OrdersScreen() {
             trailing={!ordersQuery.isLoading && !ordersQuery.error ? `${orderHistory.length} total` : undefined}
           />
 
-          {ordersQuery.error ? <Text style={styles.sectionMessage}>Unable to load recent orders.</Text> : null}
+          {ordersQuery.error ? (
+            <View style={styles.sectionMessageBlock}>
+              <Text style={styles.sectionMessage}>Unable to load recent orders.</Text>
+              <Button label="Retry" variant="secondary" onPress={refreshOrders} style={styles.sectionMessageAction} />
+            </View>
+          ) : null}
           {!ordersQuery.isLoading && !ordersQuery.error && orderHistory.length === 0 ? (
             <Text style={styles.sectionMessage}>Completed pickups and older orders will collect here.</Text>
           ) : null}
@@ -795,6 +826,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
     color: uiPalette.textSecondary
+  },
+  loggedOutStaticAction: {
+    marginTop: 20,
+    alignSelf: "flex-start"
   },
   sectionBlock: {
     marginTop: 28
@@ -1002,11 +1037,63 @@ const styles = StyleSheet.create({
     marginTop: 22,
     alignSelf: "flex-start"
   },
+  activeSupportBlock: {
+    marginTop: 20,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border,
+    gap: 12
+  },
+  activeSupportRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 16
+  },
+  activeSupportLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    color: uiPalette.textMuted,
+    fontWeight: "700"
+  },
+  activeSupportValue: {
+    flexShrink: 1,
+    textAlign: "right",
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
+  },
+  activeSupportMono: {
+    letterSpacing: 1.2,
+    fontFamily: uiTypography.monoFamily
+  },
+  activeStatusNote: {
+    marginTop: 16,
+    fontSize: 14,
+    lineHeight: 21,
+    color: uiPalette.textSecondary
+  },
+  activeRefreshButton: {
+    marginTop: 18,
+    alignSelf: "flex-start"
+  },
   sectionMessage: {
     marginTop: 18,
     fontSize: 15,
     lineHeight: 23,
     color: uiPalette.textSecondary
+  },
+  sectionMessageBlock: {
+    marginTop: 18,
+    alignItems: "flex-start",
+    gap: 12
+  },
+  sectionMessageAction: {
+    alignSelf: "flex-start"
   },
   historyList: {
     marginTop: 8
@@ -1079,10 +1166,16 @@ const styles = StyleSheet.create({
     color: uiPalette.textSecondary
   },
   historyMeta: {
-    marginTop: 6,
     fontSize: 13,
     lineHeight: 19,
     color: uiPalette.textSecondary
+  },
+  historyMetaRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
   },
   historyBody: {
     marginTop: 8,

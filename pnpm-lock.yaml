@@ -36,6 +36,40 @@ importers:
         specifier: ^3.0.8
         version: 3.2.4(@types/node@22.19.13)(jiti@1.21.7)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2)
 
+  apps/admin-console:
+    dependencies:
+      '@gazelle/contracts-auth':
+        specifier: workspace:*
+        version: link:../../packages/contracts/auth
+      '@gazelle/contracts-catalog':
+        specifier: workspace:*
+        version: link:../../packages/contracts/catalog
+      next:
+        specifier: ^15.1.0
+        version: 15.5.14(babel-plugin-react-compiler@1.0.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      react:
+        specifier: 19.1.0
+        version: 19.1.0
+      react-dom:
+        specifier: 19.1.0
+        version: 19.1.0(react@19.1.0)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.13
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.1.17
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.1.17)
+      eslint:
+        specifier: ^9.21.0
+        version: 9.39.3(jiti@1.21.7)
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
   apps/lattelink-web:
     dependencies:
       framer-motion:
@@ -184,6 +218,9 @@ importers:
 
   apps/operator-web:
     dependencies:
+      '@gazelle/contracts-auth':
+        specifier: workspace:*
+        version: link:../../packages/contracts/auth
       '@gazelle/contracts-catalog':
         specifier: workspace:*
         version: link:../../packages/contracts/catalog
@@ -474,6 +511,9 @@ importers:
 
   services/catalog:
     dependencies:
+      '@fastify/rate-limit':
+        specifier: ^9.1.0
+        version: 9.1.0
       '@fastify/swagger':
         specifier: ^8.15.0
         version: 8.15.0

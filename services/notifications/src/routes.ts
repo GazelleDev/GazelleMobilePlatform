@@ -252,6 +252,15 @@ export async function registerRoutes(app: FastifyInstance) {
 
       const input = pushTokenUpsertSchema.parse(request.body);
       await repository.upsertPushToken(userId, input);
+      request.log.info(
+        {
+          requestId: request.id,
+          userId,
+          deviceId: input.deviceId,
+          platform: input.platform
+        },
+        "push token upserted"
+      );
 
       return pushTokenUpsertResponseSchema.parse({ success: true });
     }
@@ -286,6 +295,7 @@ export async function registerRoutes(app: FastifyInstance) {
       const recipients = await repository.enqueueOrderStateOutbox(input);
       request.log.info(
         {
+          requestId: request.id,
           orderId: input.orderId,
           userId: input.userId,
           status: input.status,

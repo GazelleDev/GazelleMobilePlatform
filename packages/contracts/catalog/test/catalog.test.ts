@@ -6,10 +6,17 @@ import {
   adminStoreConfigUpdateSchema,
   appConfigSchema,
   buildDefaultCustomizationInput,
-  describeCustomizationSelection,
   catalogContract,
+  describeCustomizationSelection,
+  internalLocationBootstrapSchema,
+  internalLocationListResponseSchema,
+  internalLocationSummarySchema,
+  isLoyaltyVisible,
+  isOrderTrackingEnabled,
+  isPlatformManagedMenu,
   menuResponseSchema,
   priceMenuItemCustomization,
+  resolveAppConfigFulfillmentMode,
   resolveMenuItemCustomization,
   storeConfigResponseSchema
 } from "../src";
@@ -144,6 +151,11 @@ describe("contracts-catalog", () => {
 
     expect(config.brand.marketLabel).toBe("Ann Arbor, MI");
     expect(config.fulfillment.mode).toBe("staff");
+    expect(config.storeCapabilities.menu.source).toBe("external_sync");
+    expect(isPlatformManagedMenu(config)).toBe(false);
+    expect(isOrderTrackingEnabled(config)).toBe(true);
+    expect(isLoyaltyVisible(config)).toBe(true);
+    expect(resolveAppConfigFulfillmentMode(config)).toBe("staff");
   });
 
   it("defaults fulfillment config for older app-config payloads", () => {
@@ -219,6 +231,7 @@ describe("contracts-catalog", () => {
 
     expect(adminItem.categoryTitle).toBe("Espresso Bar");
     expect(adminStoreConfig.storeName).toBe("Gazelle Coffee Flagship");
+    expect(adminStoreConfig.capabilities.operations.dashboardEnabled).toBe(true);
   });
 
   it("validates admin update payloads", () => {
@@ -230,13 +243,68 @@ describe("contracts-catalog", () => {
     const storeUpdate = adminStoreConfigUpdateSchema.parse({
       storeName: "Gazelle Coffee Downtown",
       hours: "Weekdays · 6:30 AM - 5:00 PM",
-      pickupInstructions: "Use the front pickup shelves."
+      pickupInstructions: "Use the front pickup shelves.",
+      capabilities: {
+        menu: {
+          source: "external_sync"
+        },
+        operations: {
+          fulfillmentMode: "staff",
+          liveOrderTrackingEnabled: false,
+          dashboardEnabled: false
+        },
+        loyalty: {
+          visible: false
+        }
+      }
     });
 
     expect(menuUpdate.visible).toBe(false);
     expect(storeUpdate.hours).toContain("Weekdays");
+    expect(storeUpdate.capabilities?.menu.source).toBe("external_sync");
     expect(catalogContract.routes.adminMenu.path).toBe("/admin/menu");
     expect(catalogContract.routes.adminStoreConfig.path).toBe("/admin/store/config");
+  });
+
+  it("validates internal location bootstrap and summary payloads", () => {
+    const bootstrap = internalLocationBootstrapSchema.parse({
+      brandId: "northside-coffee",
+      brandName: "Northside Coffee",
+      locationId: "northside-01",
+      locationName: "Northside Flagship",
+      marketLabel: "Detroit, MI",
+      capabilities: {
+        menu: {
+          source: "platform_managed"
+        },
+        operations: {
+          fulfillmentMode: "staff",
+          liveOrderTrackingEnabled: true,
+          dashboardEnabled: true
+        },
+        loyalty: {
+          visible: true
+        }
+      }
+    });
+
+    const summary = internalLocationSummarySchema.parse({
+      ...bootstrap,
+      storeName: "Northside Coffee",
+      hours: "Daily · 7:00 AM - 6:00 PM",
+      pickupInstructions: "Pickup at the espresso counter.",
+      capabilities: bootstrap.capabilities,
+      action: "created"
+    });
+
+    expect(summary.locationId).toBe("northside-01");
+    expect(summary.action).toBe("created");
+
+    const list = internalLocationListResponseSchema.parse({
+      locations: [summary]
+    });
+
+    expect(list.locations).toHaveLength(1);
   });
 
   it("rejects invalid store tax rate", () => {

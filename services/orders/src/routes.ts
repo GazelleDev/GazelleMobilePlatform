@@ -121,6 +121,20 @@ function sendServiceError(reply: FastifyReply, request: FastifyRequest, error: S
   });
 }
 
+function logOrderMutation(
+  request: FastifyRequest,
+  message: string,
+  details: Record<string, unknown>
+) {
+  request.log.info(
+    {
+      requestId: request.id,
+      ...details
+    },
+    message
+  );
+}
+
 function parseRequestUserContext(request: FastifyRequest): RequestUserContext {
   const parsedHeaders = userHeadersSchema.safeParse(request.headers);
   if (!parsedHeaders.success) {
@@ -261,6 +275,13 @@ export async function registerRoutes(app: FastifyInstance) {
         return sendServiceError(reply, request, result.error);
       }
 
+      logOrderMutation(request, "payment reconciliation processed", {
+        orderId: input.orderId,
+        paymentId: input.paymentId,
+        kind: input.kind,
+        reconciliationApplied: result.result.applied,
+        reconciledOrderStatus: result.result.orderStatus
+      });
       return result.result;
     }
   );
@@ -313,6 +334,12 @@ export async function registerRoutes(app: FastifyInstance) {
         return sendServiceError(reply, request, result.error);
       }
 
+      logOrderMutation(request, "order created", {
+        orderId: result.order.id,
+        locationId: result.order.locationId,
+        status: result.order.status,
+        totalAmountCents: result.order.total.amountCents
+      });
       return result.order;
     }
   );
@@ -342,6 +369,12 @@ export async function registerRoutes(app: FastifyInstance) {
         return sendServiceError(reply, request, result.error);
       }
 
+      logOrderMutation(request, "order payment accepted", {
+        orderId: result.order.id,
+        locationId: result.order.locationId,
+        status: result.order.status,
+        pickupCode: result.order.pickupCode
+      });
       return result.order;
     }
   );
@@ -414,6 +447,13 @@ export async function registerRoutes(app: FastifyInstance) {
         return sendServiceError(reply, request, result.error);
       }
 
+      logOrderMutation(request, "order canceled", {
+        orderId: result.order.id,
+        locationId: result.order.locationId,
+        status: result.order.status,
+        cancelSource,
+        reason: input.reason
+      });
       return result.order;
     }
   );
@@ -441,6 +481,12 @@ export async function registerRoutes(app: FastifyInstance) {
         return sendServiceError(reply, request, result.error);
       }
 
+      logOrderMutation(request, "order status advanced", {
+        orderId: result.order.id,
+        locationId: result.order.locationId,
+        status: result.order.status,
+        note: input.note ?? null
+      });
       return result.order;
     }
   );

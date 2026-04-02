@@ -1,5 +1,12 @@
 # Release Runbook
 
+For the current pilot/free-first path, use `deploy-free` plus:
+
+- [`free-first-smoke-check.md`](./free-first-smoke-check.md)
+- [`free-first-deployment.md`](./free-first-deployment.md)
+
+The staged `promote-staging` / `promote-prod` flow below remains the AWS/ECS release path.
+
 1. Merge approved PR into `main`.
 2. Confirm required checks are green (`lint`, `typecheck`, `unit-tests`, `contract-tests`, `build`, `terraform-validate`, `codeql`, `dependency-review`, `secret-scan`).
 3. Verify `deploy-dev` workflow started successfully.

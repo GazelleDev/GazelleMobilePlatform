@@ -9,15 +9,15 @@ const steps = [
   {
     num: "01",
     icon: "☎️",
-    title: "Book a pilot intro",
-    desc: "Tell us about your shop, your menu, and how customers order today. We will quickly tell you whether LatteLink is the right fit.",
+    title: "Request a pilot intro",
+    desc: "Tell us about your shop, your menu, and how customers order today. We quickly confirm whether LatteLink is the right fit before scheduling the walkthrough.",
     visual: "We start with fit, not a hard sell.",
   },
   {
     num: "02",
     icon: "🎨",
     title: "We configure your launch",
-    desc: "We set up your brand, menu, loyalty rules, and operator flow. You review and approve, and we handle the technical heavy lifting.",
+    desc: "We set up your brand, menu, loyalty rules, and client dashboard flow. You review and approve, and we handle the technical heavy lifting.",
     visual: "Your brand, your menu, your rules. We handle setup.",
   },
   {
@@ -31,7 +31,7 @@ const steps = [
     num: "04",
     icon: "📈",
     title: "Operate and iterate",
-    desc: "Once the app is live, orders, loyalty activity, and customer data flow into the operator dashboard so you can keep improving the experience.",
+    desc: "Once the app is live, orders, loyalty activity, and customer data flow into the client dashboard so you can keep improving the experience.",
     visual: "Launch fast, then improve with real customer behavior.",
   },
 ];
@@ -118,7 +118,7 @@ export function HowItWorks() {
           <SectionEye>Process</SectionEye>
         </AnimateIn>
         <AnimateIn delay={0.05}>
-          <SectionH>From intro call to pilot launch, fast.</SectionH>
+          <SectionH>From intro request to pilot launch, fast.</SectionH>
         </AnimateIn>
         <AnimateIn delay={0.1}>
           <SectionP>

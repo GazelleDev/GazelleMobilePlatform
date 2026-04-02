@@ -1,0 +1,156 @@
+"use server";
+
+import type { AppConfigStoreCapabilities } from "@gazelle/contracts-catalog";
+import { redirect } from "next/navigation";
+import { clearAdminSession, requireAdminSession, setAdminSession, validateAdminCredentials } from "@/lib/auth";
+import { bootstrapInternalLocation, buildCapabilities, provisionLocationOwner } from "@/lib/internal-api";
+
+function readString(formData: FormData, key: string) {
+  return String(formData.get(key) ?? "").trim();
+}
+
+function readOptionalString(formData: FormData, key: string) {
+  const value = readString(formData, key);
+  return value.length > 0 ? value : undefined;
+}
+
+function readBoolean(formData: FormData, key: string) {
+  return formData.get(key) === "on";
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function toRedirectError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Something went wrong. Please try again.";
+}
+
+function readCapabilities(formData: FormData): AppConfigStoreCapabilities {
+  return buildCapabilities({
+    menuSource: readString(formData, "menuSource") === "external_sync" ? "external_sync" : "platform_managed",
+    fulfillmentMode: readString(formData, "fulfillmentMode") === "staff" ? "staff" : "time_based",
+    liveOrderTrackingEnabled: readBoolean(formData, "liveOrderTrackingEnabled"),
+    dashboardEnabled: readBoolean(formData, "dashboardEnabled"),
+    loyaltyVisible: readBoolean(formData, "loyaltyVisible")
+  });
+}
+
+export async function signInAction(formData: FormData) {
+  const result = validateAdminCredentials({
+    email: readString(formData, "email"),
+    password: readString(formData, "password")
+  });
+
+  if (!result.ok) {
+    redirect(`/sign-in?error=${encodeURIComponent(result.message)}`);
+  }
+
+  await setAdminSession(result.session);
+  redirect("/clients");
+}
+
+export async function signOutAction() {
+  await clearAdminSession();
+  redirect("/sign-in");
+}
+
+export async function createClientAction(formData: FormData) {
+  await requireAdminSession();
+
+  try {
+    const clientName = readString(formData, "clientName");
+    const locationName = readString(formData, "locationName");
+    const marketLabel = readString(formData, "marketLabel");
+    const ownerDisplayName = readString(formData, "ownerDisplayName");
+    const ownerEmail = readString(formData, "ownerEmail");
+
+    if (!clientName || !locationName || !marketLabel || !ownerDisplayName || !ownerEmail) {
+      throw new Error("Client name, location name, market, and owner fields are required.");
+    }
+
+    const brandId = readOptionalString(formData, "brandId") ?? slugify(clientName);
+    const locationId = readOptionalString(formData, "locationId") ?? `${brandId}-01`;
+
+    await bootstrapInternalLocation({
+      brandId,
+      brandName: clientName,
+      locationId,
+      locationName,
+      marketLabel,
+      storeName: readOptionalString(formData, "storeName") ?? clientName,
+      hours: readOptionalString(formData, "hours"),
+      pickupInstructions: readOptionalString(formData, "pickupInstructions"),
+      capabilities: readCapabilities(formData)
+    });
+
+    await provisionLocationOwner(locationId, {
+      displayName: ownerDisplayName,
+      email: ownerEmail,
+      password: readOptionalString(formData, "temporaryPassword"),
+      dashboardUrl: readOptionalString(formData, "dashboardUrl") ?? process.env.ADMIN_CONSOLE_CLIENT_DASHBOARD_URL
+    });
+
+    redirect(`/clients/${locationId}?created=1`);
+  } catch (error) {
+    redirect(`/clients/new?error=${encodeURIComponent(toRedirectError(error))}`);
+  }
+}
+
+export async function updateClientCapabilitiesAction(formData: FormData) {
+  await requireAdminSession();
+
+  const locationId = readString(formData, "locationId");
+  if (!locationId) {
+    redirect("/clients?error=Location ID is required.");
+  }
+
+  try {
+    await bootstrapInternalLocation({
+      brandId: readString(formData, "brandId"),
+      brandName: readString(formData, "brandName"),
+      locationId,
+      locationName: readString(formData, "locationName"),
+      marketLabel: readString(formData, "marketLabel"),
+      storeName: readString(formData, "storeName"),
+      hours: readString(formData, "hours"),
+      pickupInstructions: readString(formData, "pickupInstructions"),
+      capabilities: readCapabilities(formData)
+    });
+
+    redirect(`/clients/${locationId}/capabilities?updated=1`);
+  } catch (error) {
+    redirect(`/clients/${locationId}/capabilities?error=${encodeURIComponent(toRedirectError(error))}`);
+  }
+}
+
+export async function reprovisionOwnerAction(formData: FormData) {
+  await requireAdminSession();
+
+  const locationId = readString(formData, "locationId");
+  if (!locationId) {
+    redirect("/clients?error=Location ID is required.");
+  }
+
+  try {
+    await provisionLocationOwner(locationId, {
+      displayName: readString(formData, "displayName"),
+      email: readString(formData, "email"),
+      password: readOptionalString(formData, "temporaryPassword"),
+      dashboardUrl: readOptionalString(formData, "dashboardUrl") ?? process.env.ADMIN_CONSOLE_CLIENT_DASHBOARD_URL
+    });
+
+    redirect(`/clients/${locationId}/owner?updated=1`);
+  } catch (error) {
+    redirect(`/clients/${locationId}/owner?error=${encodeURIComponent(toRedirectError(error))}`);
+  }
+}

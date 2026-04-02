@@ -15,9 +15,26 @@ import {
 } from "react-native";
 import Animated, { Easing, Extrapolation, interpolate, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { formatUsd, resolveMenuData, useMenuQuery, type MenuCategory, type MenuItem } from "../../src/menu/catalog";
+import {
+  Button,
+  ScreenBackdrop,
+  SectionLabel,
+  TabBarDepthBackdrop,
+  uiPalette,
+  uiTypography
+} from "../../src/ui/system";
+import {
+  formatUsd,
+  resolveAppConfigData,
+  resolveMenuData,
+  resolveStoreConfigData,
+  useAppConfigQuery,
+  useMenuQuery,
+  useStoreConfigQuery,
+  type MenuCategory,
+  type MenuItem
+} from "../../src/menu/catalog";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../../src/navigation/tabBarMetrics";
-import { ScreenBackdrop, SectionLabel, TabBarDepthBackdrop, uiPalette, uiTypography } from "../../src/ui/system";
 
 type MenuSection = {
   id: string;
@@ -253,9 +270,16 @@ function buildSections(categories: MenuCategory[]): MenuSection[] {
 export default function MenuScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const appConfigQuery = useAppConfigQuery();
   const menuQuery = useMenuQuery();
+  const storeConfigQuery = useStoreConfigQuery();
   const isInitialLoading = menuQuery.isLoading && !menuQuery.data;
-  const menu = isInitialLoading ? null : resolveMenuData(menuQuery.data);
+  const appConfig = appConfigQuery.data ? resolveAppConfigData(appConfigQuery.data) : null;
+  const storeConfig = storeConfigQuery.data ? resolveStoreConfigData(storeConfigQuery.data) : null;
+  const hasBlockingConfigError =
+    (!!appConfigQuery.error && !appConfigQuery.data) || (!!storeConfigQuery.error && !storeConfigQuery.data);
+  const hasBlockingMenuError = (!!menuQuery.error && !menuQuery.data) || hasBlockingConfigError;
+  const menu = isInitialLoading || hasBlockingMenuError ? null : resolveMenuData(menuQuery.data);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
   const scrollY = useSharedValue(0);
@@ -405,10 +429,25 @@ export default function MenuScreen() {
     if (isManualRefresh) return;
 
     setIsManualRefresh(true);
-    void menuQuery.refetch().finally(() => {
+    void Promise.allSettled([menuQuery.refetch(), appConfigQuery.refetch(), storeConfigQuery.refetch()]).finally(() => {
       setIsManualRefresh(false);
     });
-  }, [isManualRefresh, menuQuery]);
+  }, [appConfigQuery, isManualRefresh, menuQuery, storeConfigQuery]);
+
+  if (!isInitialLoading && hasBlockingMenuError) {
+    return (
+      <View style={styles.screen}>
+        <ScreenBackdrop />
+        <View style={[styles.errorShell, { paddingTop: insets.top + 88, paddingBottom: contentBottomInset }]}>
+          <SectionLabel label="Menu" />
+          <Text style={styles.errorTitle}>Menu temporarily unavailable.</Text>
+          <Text style={styles.errorBody}>We couldn’t load the live menu and store details. Pull to refresh or try again in a moment.</Text>
+          <Button label="Retry" variant="secondary" onPress={handleRefresh} style={styles.errorAction} />
+        </View>
+        <TabBarDepthBackdrop />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -467,9 +506,13 @@ export default function MenuScreen() {
         <View style={styles.header}>
           <View style={styles.headerCopy}>
             <Animated.View style={[styles.pickupMetaWrap, pickupMetaStyle]}>
-              <Text style={styles.pickupMeta}>Estimated pick-up is 12 mins</Text>
+              <Text style={styles.pickupMeta}>
+                {storeConfig ? `Estimated pick-up is ${storeConfig.prepEtaMinutes} min` : "Estimated pick-up unavailable"}
+              </Text>
             </Animated.View>
-            <Animated.Text style={[styles.locationText, locationStyle]}>Ann Arbor, Mi.</Animated.Text>
+            <Animated.Text style={[styles.locationText, locationStyle]}>
+              {appConfig?.brand.marketLabel ?? appConfig?.brand.locationName ?? "Store info unavailable"}
+            </Animated.Text>
           </View>
         </View>
 
@@ -602,6 +645,30 @@ const styles = StyleSheet.create({
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 30
+  },
+  errorShell: {
+    flex: 1,
+    paddingHorizontal: 20
+  },
+  errorTitle: {
+    marginTop: 12,
+    fontSize: 34,
+    lineHeight: 38,
+    letterSpacing: -1,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700"
+  },
+  errorBody: {
+    marginTop: 10,
+    maxWidth: 320,
+    fontSize: 15,
+    lineHeight: 23,
+    color: uiPalette.textSecondary
+  },
+  errorAction: {
+    marginTop: 22,
+    alignSelf: "flex-start"
   },
   menuBodyWrap: {
     flex: 1,

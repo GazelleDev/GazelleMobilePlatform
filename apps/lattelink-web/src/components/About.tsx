@@ -4,17 +4,19 @@ import Link from "next/link";
 import { AnimateIn, Stagger, StaggerItem } from "./AnimateIn";
 import { SectionEye, SectionH } from "./Features";
 import { contactEmail, demoHref } from "@/lib/site";
+import { LeadCapture } from "./LeadCapture";
+import { TrackedAnchor } from "./TrackedAnchor";
 
 const stats = [
-  { value: "1", suffix: "st", label: "Pilot launch in progress" },
-  { value: "100", suffix: "%", label: "Coffee-shop focus" },
-  { value: "2", suffix: "wk", label: "Targeted launch window" },
+  { value: "Pilot", suffix: "", label: "Current stage" },
+  { value: "Coffee", suffix: "-only", label: "Product focus" },
   { value: "0", suffix: "%", label: "LatteLink order markup" },
+  { value: "Founder", suffix: "-led", label: "Build approach" },
 ];
 
 const fitPoints = [
   "Independent coffee shops that want repeat ordering under their own brand",
-  "Operators who care about loyalty, retention, and direct customer ownership",
+  "Owners who care about loyalty, retention, and direct customer ownership",
   "Teams that want setup handled for them rather than piecing together tools",
   "Single-location shops today, with room for multi-location growth later",
 ];
@@ -28,7 +30,7 @@ const nextSteps = [
   {
     step: "02",
     title: "Review brand and menu",
-    desc: "We map the customer flow, loyalty setup, and operator needs around your real menu.",
+    desc: "We map the customer flow, loyalty setup, and store-team needs around your real menu.",
   },
   {
     step: "03",
@@ -133,7 +135,7 @@ export function About() {
                 <br />
                 The goal is narrower and more practical than that. Build one
                 strong product for coffee shops, handle the setup with them, and
-                give operators a direct relationship with their regulars.
+                give coffee shops a direct relationship with their regulars.
               </p>
 
               <Stagger className="about-stats">
@@ -261,7 +263,7 @@ export function About() {
 
 export function CTA() {
   return (
-    <section id="cta" style={{ padding: "140px 0", position: "relative", zIndex: 1 }}>
+    <section id="contact" style={{ padding: "140px 0", position: "relative", zIndex: 1 }}>
       <div className="page-shell">
         <AnimateIn direction="scale">
           <div
@@ -314,43 +316,41 @@ export function CTA() {
                 fontSize: 16,
                 color: "var(--color-gray-400)",
                 lineHeight: 1.75,
-                maxWidth: 480,
-                margin: "0 auto 52px",
+                maxWidth: 560,
+                margin: "0 auto 44px",
               }}
             >
-              Book a 30-minute intro and see whether LatteLink is the right fit
-              for your shop. No commitment, no pressure.
+              Request an intro and we will reply with the fastest path to a
+              pilot. We look at fit first, then confirm the walkthrough.
             </p>
 
-            <div className="cta-actions">
-              <Link href={demoHref} className="cta-btn-fill">
-                Book a pilot intro
-                <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
-                  <path
-                    d="M1 7.5h13M7.5 1l6.5 6.5-6.5 6.5"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </Link>
-              <Link href={`mailto:${contactEmail}`} className="cta-btn-ghost">
-                {contactEmail}
-              </Link>
-            </div>
-            <div className="cta-subnote">
-              Best for independent coffee shops that want a branded repeat-ordering
-              channel and direct customer ownership.
-            </div>
-            <div className="cta-steps">
-              {nextSteps.map((item) => (
-                <div key={item.step} className="cta-step-card">
-                  <div className="cta-step-num">{item.step}</div>
-                  <div className="cta-step-title">{item.title}</div>
-                  <div className="cta-step-copy">{item.desc}</div>
+            <div className="cta-grid">
+              <div className="cta-copy-column">
+                <div className="cta-subnote">
+                  Best for independent coffee shops that want a branded
+                  repeat-ordering channel and direct customer ownership.
                 </div>
-              ))}
+                <div className="cta-steps">
+                  {nextSteps.map((item) => (
+                    <div key={item.step} className="cta-step-card">
+                      <div className="cta-step-num">{item.step}</div>
+                      <div className="cta-step-title">{item.title}</div>
+                      <div className="cta-step-copy">{item.desc}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="cta-contact-line">
+                  Prefer a direct thread?{" "}
+                  <TrackedAnchor
+                    href={`mailto:${contactEmail}`}
+                    eventName="email_contact_click"
+                    eventProperties={{ placement: "contact_section", destination: "email" }}
+                  >
+                    {contactEmail}
+                  </TrackedAnchor>
+                </div>
+              </div>
+              <LeadCapture />
             </div>
           </div>
         </AnimateIn>
@@ -360,56 +360,27 @@ export function CTA() {
         .cta-card {
           text-align: center;
         }
-        .cta-actions {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          flex-wrap: wrap;
+        .cta-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+          gap: 24px;
+          align-items: start;
         }
-        .cta-btn-fill {
-          font-family: var(--font-body);
-          font-size: 16px; font-weight: 600; color: #fff;
-          background: linear-gradient(135deg, #2a5fff, #4a7eff);
-          border: none; border-radius: 12px;
-          padding: 16px 36px;
-          text-decoration: none;
-          display: inline-flex; align-items: center; gap: 10px;
-          box-shadow: 0 0 40px rgba(74,126,255,0.35);
-          transition: opacity 0.2s, box-shadow 0.3s, transform 0.2s;
-        }
-        .cta-btn-fill:hover {
-          opacity: 0.93; box-shadow: 0 0 64px rgba(74,126,255,0.55);
-          transform: translateY(-2px);
-        }
-        .cta-btn-ghost {
-          font-family: var(--font-body);
-          font-size: 16px; font-weight: 500;
-          color: var(--color-gray-400);
-          background: transparent;
-          border: 1px solid var(--color-border);
-          border-radius: 12px; padding: 16px 36px;
-          text-decoration: none;
-          display: inline-flex; align-items: center; gap: 8px;
-          transition: border-color 0.2s, color 0.2s, transform 0.2s;
-        }
-        .cta-btn-ghost:hover {
-          border-color: var(--color-blue-600);
-          color: var(--color-gray-100);
-          transform: translateY(-2px);
+        .cta-copy-column {
+          text-align: left;
         }
         .cta-subnote {
-          margin: 20px auto 36px;
-          max-width: 640px;
-          font-size: 13px;
+          margin: 8px 0 24px;
+          max-width: 520px;
+          font-size: 14px;
           line-height: 1.7;
-          color: var(--color-gray-500);
+          color: var(--color-gray-400);
         }
         .cta-steps {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: 1fr;
           gap: 14px;
-          margin-top: 12px;
+          margin-top: 0;
           text-align: left;
         }
         .cta-step-card {
@@ -439,19 +410,26 @@ export function CTA() {
           line-height: 1.7;
           color: var(--color-gray-400);
         }
+        .cta-contact-line {
+          margin-top: 18px;
+          font-size: 13px;
+          color: var(--color-gray-500);
+        }
+        .cta-contact-line a {
+          color: var(--color-gray-200);
+          text-decoration: none;
+        }
+        .cta-contact-line a:hover {
+          color: white;
+        }
         @media (max-width: 960px) {
-          .cta-steps {
+          .cta-grid {
             grid-template-columns: 1fr;
           }
         }
         @media (max-width: 720px) {
           .cta-card {
             padding: 76px 24px !important;
-          }
-          .cta-btn-fill,
-          .cta-btn-ghost {
-            width: 100%;
-            justify-content: center;
           }
         }
       `}</style>
@@ -544,7 +522,7 @@ export function Footer() {
             { href: "#features", label: "Features" },
             { href: "#pricing", label: "Pricing" },
             { href: "#about", label: "About" },
-            { href: `mailto:${contactEmail}`, label: "Contact" },
+            { href: demoHref, label: "Contact" },
           ].map((l) => (
             <li key={l.href}>
               <a

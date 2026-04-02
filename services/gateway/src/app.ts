@@ -7,6 +7,7 @@ import swaggerUi from "@fastify/swagger-ui";
 import { registerRoutes } from "./routes.js";
 
 export async function buildApp() {
+  const publicApiBaseUrl = process.env.PUBLIC_API_BASE_URL ?? "http://localhost:8080/v1";
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
@@ -51,7 +52,7 @@ export async function buildApp() {
         title: "Gazelle Public API Gateway",
         version: "0.1.0"
       },
-      servers: [{ url: "https://api.gazellecoffee.com/v1" }]
+      servers: [{ url: publicApiBaseUrl }]
     }
   });
 

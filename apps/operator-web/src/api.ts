@@ -1,26 +1,65 @@
 import { z } from "zod";
 import {
+  googleOAuthStartResponseSchema,
+  operatorAuthProvidersSchema,
+  operatorDevAccessRequestSchema,
+  operatorGoogleExchangeRequestSchema,
+  operatorPasswordSignInSchema,
+  operatorSessionSchema,
+  operatorUserListResponseSchema,
+  operatorUserSchema
+} from "@gazelle/contracts-auth";
+import {
+  adminMenuItemCreateSchema,
   adminMenuItemSchema,
+  adminMenuItemUpdateSchema,
+  adminMenuItemVisibilityUpdateSchema,
   adminMenuResponseSchema,
+  adminMutationSuccessSchema,
   adminStoreConfigSchema,
+  adminStoreConfigUpdateSchema,
   appConfigSchema
 } from "@gazelle/contracts-catalog";
 import { orderSchema } from "@gazelle/contracts-orders";
-import { normalizeMenuItemForm, normalizeStoreConfigForm, type OperatorOrder } from "./model.js";
+import {
+  normalizeMenuItemCreateForm,
+  normalizeMenuItemForm,
+  normalizeOperatorUserCreateForm,
+  normalizeOperatorUserUpdateForm,
+  normalizeStoreConfigForm,
+  type OperatorOrder
+} from "./model.js";
 
 const ordersSchema = z.array(orderSchema);
 
-export type OperatorSession = {
-  apiBaseUrl: string;
-  staffToken: string;
-};
+const storedOperatorSessionSchema = operatorSessionSchema.extend({
+  apiBaseUrl: z.string().min(1)
+});
 
+export type OperatorUser = z.output<typeof operatorUserSchema>;
+export type OperatorSession = z.output<typeof storedOperatorSessionSchema>;
+export type OperatorAuthProviders = z.output<typeof operatorAuthProvidersSchema>;
 export type OperatorDashboardSnapshot = {
   appConfig: z.output<typeof appConfigSchema>;
   orders: OperatorOrder[];
   menu: z.output<typeof adminMenuResponseSchema>;
   storeConfig: z.output<typeof adminStoreConfigSchema>;
+  staff: OperatorUser[];
 };
+
+type RequestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export class ApiRequestError extends Error {
+  statusCode: number;
+  payload: unknown;
+
+  constructor(message: string, statusCode: number, payload: unknown) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.statusCode = statusCode;
+    this.payload = payload;
+  }
+}
 
 function trimToUndefined(value: string | undefined | null) {
   const next = value?.trim();
@@ -52,10 +91,9 @@ export function resolveDefaultApiBaseUrl() {
   return normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL);
 }
 
-export function buildStaffHeaders(token: string, includeJsonContentType = false): Record<string, string> {
+export function buildOperatorHeaders(accessToken: string, includeJsonContentType = false): Record<string, string> {
   const headers: Record<string, string> = {
-    authorization: `Bearer ${token}`,
-    "x-staff-token": token
+    authorization: `Bearer ${accessToken}`
   };
 
   if (includeJsonContentType) {
@@ -76,57 +114,192 @@ export function extractApiErrorMessage(payload: unknown, statusCode: number) {
   return `Request failed (${statusCode})`;
 }
 
+export function isApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError;
+}
+
+function toStoredSession(apiBaseUrl: string, payload: z.output<typeof operatorSessionSchema>): OperatorSession {
+  return storedOperatorSessionSchema.parse({
+    apiBaseUrl: normalizeApiBaseUrl(apiBaseUrl),
+    ...payload
+  });
+}
+
 async function requestJson<TSchema extends z.ZodTypeAny>(params: {
-  session: OperatorSession;
+  apiBaseUrl: string;
+  accessToken?: string;
   path: string;
-  method?: "GET" | "POST" | "PUT";
+  method?: RequestMethod;
   body?: unknown;
   schema: TSchema;
 }): Promise<z.output<TSchema>> {
-  const { session, path, method = "GET", body, schema } = params;
-  const response = await fetch(`${session.apiBaseUrl}${path}`, {
+  const { apiBaseUrl, accessToken, path, method = "GET", body, schema } = params;
+  const response = await fetch(`${normalizeApiBaseUrl(apiBaseUrl)}${path}`, {
     method,
-    headers: buildStaffHeaders(session.staffToken, body !== undefined),
+    headers: accessToken ? buildOperatorHeaders(accessToken, body !== undefined) : body !== undefined ? { "content-type": "application/json" } : undefined,
     body: body === undefined ? undefined : JSON.stringify(body)
   });
 
   const parsedPayload = parseJsonSafely(await response.text());
   if (!response.ok) {
-    throw new Error(extractApiErrorMessage(parsedPayload, response.status));
+    throw new ApiRequestError(extractApiErrorMessage(parsedPayload, response.status), response.status, parsedPayload);
   }
 
   return schema.parse(parsedPayload);
 }
 
+export async function signInOperatorWithPassword(params: { apiBaseUrl: string; email: string; password: string }) {
+  const session = await requestJson({
+    apiBaseUrl: params.apiBaseUrl,
+    path: "/operator/auth/sign-in",
+    method: "POST",
+    body: operatorPasswordSignInSchema.parse({
+      email: params.email.trim(),
+      password: params.password
+    }),
+    schema: operatorSessionSchema
+  });
+
+  return toStoredSession(params.apiBaseUrl, session);
+}
+
+export async function requestOperatorDevAccess(params: { apiBaseUrl: string; email: string }) {
+  const session = await requestJson({
+    apiBaseUrl: params.apiBaseUrl,
+    path: "/operator/auth/dev-access",
+    method: "POST",
+    body: operatorDevAccessRequestSchema.parse({
+      email: params.email.trim()
+    }),
+    schema: operatorSessionSchema
+  });
+
+  return toStoredSession(params.apiBaseUrl, session);
+}
+
+export function startOperatorGoogleSignIn(params: { apiBaseUrl: string; redirectUri: string }) {
+  const search = new URLSearchParams({
+    redirectUri: params.redirectUri
+  });
+
+  return requestJson({
+    apiBaseUrl: params.apiBaseUrl,
+    path: `/operator/auth/google/start?${search.toString()}`,
+    schema: googleOAuthStartResponseSchema
+  });
+}
+
+export function fetchOperatorAuthProviders(params: { apiBaseUrl: string }) {
+  return requestJson({
+    apiBaseUrl: params.apiBaseUrl,
+    path: "/operator/auth/providers",
+    schema: operatorAuthProvidersSchema
+  });
+}
+
+export async function exchangeOperatorGoogleCode(params: {
+  apiBaseUrl: string;
+  code: string;
+  state: string;
+  redirectUri: string;
+}) {
+  const session = await requestJson({
+    apiBaseUrl: params.apiBaseUrl,
+    path: "/operator/auth/google/exchange",
+    method: "POST",
+    body: operatorGoogleExchangeRequestSchema.parse({
+      code: params.code,
+      state: params.state,
+      redirectUri: params.redirectUri
+    }),
+    schema: operatorSessionSchema
+  });
+
+  return toStoredSession(params.apiBaseUrl, session);
+}
+
+export async function refreshOperatorSession(session: OperatorSession) {
+  const nextSession = await requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    path: "/operator/auth/refresh",
+    method: "POST",
+    body: {
+      refreshToken: session.refreshToken
+    },
+    schema: operatorSessionSchema
+  });
+
+  return toStoredSession(session.apiBaseUrl, nextSession);
+}
+
+export async function logoutOperatorSession(session: OperatorSession) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: "/operator/auth/logout",
+    method: "POST",
+    body: {
+      refreshToken: session.refreshToken
+    },
+    schema: z.object({ success: z.literal(true) })
+  });
+}
+
 export async function fetchOperatorSnapshot(session: OperatorSession): Promise<OperatorDashboardSnapshot> {
-  const [appConfig, orders, menu, storeConfig] = await Promise.all([
+  const capabilitySet = new Set(session.operator.capabilities);
+  const [appConfig, orders, menu, storeConfig, staffResponse] = await Promise.all([
     requestJson({
-      session,
+      apiBaseUrl: session.apiBaseUrl,
       path: "/app-config",
       schema: appConfigSchema
     }),
-    requestJson({
-      session,
-      path: "/admin/orders",
-      schema: ordersSchema
-    }),
-    requestJson({
-      session,
-      path: "/admin/menu",
-      schema: adminMenuResponseSchema
-    }),
-    requestJson({
-      session,
-      path: "/admin/store/config",
-      schema: adminStoreConfigSchema
-    })
+    capabilitySet.has("orders:read")
+      ? requestJson({
+          apiBaseUrl: session.apiBaseUrl,
+          accessToken: session.accessToken,
+          path: "/admin/orders",
+          schema: ordersSchema
+        })
+      : Promise.resolve([] as z.output<typeof ordersSchema>),
+    capabilitySet.has("menu:read")
+      ? requestJson({
+          apiBaseUrl: session.apiBaseUrl,
+          accessToken: session.accessToken,
+          path: "/admin/menu",
+          schema: adminMenuResponseSchema
+        })
+      : Promise.resolve(adminMenuResponseSchema.parse({ locationId: session.operator.locationId, categories: [] })),
+    capabilitySet.has("store:read")
+      ? requestJson({
+          apiBaseUrl: session.apiBaseUrl,
+          accessToken: session.accessToken,
+          path: "/admin/store/config",
+          schema: adminStoreConfigSchema
+        })
+      : Promise.resolve(
+          adminStoreConfigSchema.parse({
+            locationId: session.operator.locationId,
+            storeName: "Store access unavailable",
+            hours: "Permissions required",
+            pickupInstructions: "Permissions required"
+          })
+        ),
+    capabilitySet.has("staff:read")
+      ? requestJson({
+          apiBaseUrl: session.apiBaseUrl,
+          accessToken: session.accessToken,
+          path: "/admin/staff",
+          schema: operatorUserListResponseSchema
+        })
+      : Promise.resolve(operatorUserListResponseSchema.parse({ users: [] }))
   ]);
 
   return {
     appConfig,
     orders: orders as OperatorOrder[],
     menu,
-    storeConfig
+    storeConfig,
+    staff: staffResponse.users
   };
 }
 
@@ -139,7 +312,8 @@ export function updateOperatorOrderStatus(
   }
 ) {
   return requestJson({
-    session,
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
     path: `/admin/orders/${orderId}/status`,
     method: "POST",
     body: {
@@ -150,17 +324,53 @@ export function updateOperatorOrderStatus(
   });
 }
 
+export function createOperatorMenuItem(
+  session: OperatorSession,
+  input: Parameters<typeof normalizeMenuItemCreateForm>[0]
+) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: "/admin/menu",
+    method: "POST",
+    body: adminMenuItemCreateSchema.parse(normalizeMenuItemCreateForm(input)),
+    schema: adminMenuItemSchema
+  });
+}
+
 export function updateOperatorMenuItem(
   session: OperatorSession,
   itemId: string,
   input: Parameters<typeof normalizeMenuItemForm>[0]
 ) {
   return requestJson({
-    session,
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
     path: `/admin/menu/${itemId}`,
     method: "PUT",
-    body: normalizeMenuItemForm(input),
+    body: adminMenuItemUpdateSchema.parse(normalizeMenuItemForm(input)),
     schema: adminMenuItemSchema
+  });
+}
+
+export function updateOperatorMenuItemVisibility(session: OperatorSession, itemId: string, visible: boolean) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: `/admin/menu/${itemId}/visibility`,
+    method: "PATCH",
+    body: adminMenuItemVisibilityUpdateSchema.parse({ visible }),
+    schema: adminMenuItemSchema
+  });
+}
+
+export function deleteOperatorMenuItem(session: OperatorSession, itemId: string) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: `/admin/menu/${itemId}`,
+    method: "DELETE",
+    schema: adminMutationSuccessSchema
   });
 }
 
@@ -169,12 +379,42 @@ export function updateOperatorStoreConfig(
   input: Parameters<typeof normalizeStoreConfigForm>[0]
 ) {
   return requestJson({
-    session,
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
     path: "/admin/store/config",
     method: "PUT",
-    body: normalizeStoreConfigForm(input),
+    body: adminStoreConfigUpdateSchema.parse(normalizeStoreConfigForm(input)),
     schema: adminStoreConfigSchema
   });
 }
 
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8080/v1";
+export function createOperatorStaffUser(
+  session: OperatorSession,
+  input: Parameters<typeof normalizeOperatorUserCreateForm>[0]
+) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: "/admin/staff",
+    method: "POST",
+    body: normalizeOperatorUserCreateForm(input),
+    schema: operatorUserSchema
+  });
+}
+
+export function updateOperatorStaffUser(
+  session: OperatorSession,
+  operatorUserId: string,
+  input: Parameters<typeof normalizeOperatorUserUpdateForm>[0]
+) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: `/admin/staff/${operatorUserId}`,
+    method: "PATCH",
+    body: normalizeOperatorUserUpdateForm(input),
+    schema: operatorUserSchema
+  });
+}
+
+export const DEFAULT_API_BASE_URL = "http://127.0.0.1:8080/v1";

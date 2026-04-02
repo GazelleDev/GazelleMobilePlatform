@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { AnimateIn, Stagger, StaggerItem } from "./AnimateIn";
 import { SectionEye, SectionH, SectionP } from "./Features";
 import { demoHref } from "@/lib/site";
+import { TrackedAnchor } from "./TrackedAnchor";
 
 const plans = [
   {
@@ -15,12 +15,12 @@ const plans = [
       "Branded iOS app",
       "Mobile ordering",
       "Basic loyalty program",
-      "Operator dashboard",
+      "Client dashboard",
       "Push notifications",
       "Stripe payments",
     ],
     featured: false,
-    cta: "Book intro",
+    cta: "Request intro",
   },
   {
     tier: "Growth",
@@ -37,7 +37,7 @@ const plans = [
     ],
     featured: true,
     badge: "Most Popular",
-    cta: "Book intro",
+    cta: "Request intro",
   },
   {
     tier: "Enterprise",
@@ -264,12 +264,19 @@ export function Pricing() {
                   ))}
                 </div>
 
-                <Link
+                <TrackedAnchor
                   href={demoHref}
                   className={p.featured ? "btn-p-fill" : "btn-p-out"}
+                  eventName="cta_click"
+                  eventProperties={{
+                    placement: "pricing",
+                    label: p.cta.toLowerCase().replaceAll(" ", "_"),
+                    plan: p.tier.toLowerCase(),
+                    destination: "contact",
+                  }}
                 >
                   {p.cta}
-                </Link>
+                </TrackedAnchor>
               </div>
             </StaggerItem>
           ))}

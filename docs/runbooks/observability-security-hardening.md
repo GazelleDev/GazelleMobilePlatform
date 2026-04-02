@@ -16,6 +16,13 @@ Critical services expose:
 - `GET /ready`
 - `GET /metrics`
 
+Critical pilot mutations now emit structured info logs with `requestId`, including:
+- operator session issue / rotation / revocation
+- operator user create / update
+- order create / pay / cancel / status advance / payment reconciliation
+- Clover charge / refund acceptance and webhook reconciliation
+- push-token upsert and order-state notification enqueue
+
 `/metrics` returns:
 - service name
 - uptime in seconds
@@ -53,6 +60,12 @@ curl -s http://127.0.0.1:8080/v1/orders/quote \
 Expected:
 - response includes `x-request-id: runbook-trace-001`
 - gateway logs contain request completion with method/url/status/responseTime
+- downstream mutation logs can be traced with the same `requestId`
+
+For the deployed free-first host, use:
+
+- `infra/free/bin/smoke-check.sh`
+- `docs/runbooks/free-first-smoke-check.md`
 
 ## Security Regression Checks
 

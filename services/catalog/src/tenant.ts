@@ -1,7 +1,9 @@
 import {
+  DEFAULT_APP_CONFIG_STORE_CAPABILITIES,
   DEFAULT_APP_CONFIG_FULFILLMENT,
   appConfigFulfillmentModeSchema,
   appConfigSchema,
+  type AppConfigStoreCapabilities,
   type AppConfig
 } from "@gazelle/contracts-catalog";
 
@@ -75,7 +77,52 @@ export function resolveDefaultAppConfigPayload(
     fulfillment: {
       ...DEFAULT_APP_CONFIG_FULFILLMENT,
       mode: resolveConfiguredFulfillmentMode(env.ORDER_FULFILLMENT_MODE)
+    },
+    storeCapabilities: {
+      ...DEFAULT_APP_CONFIG_STORE_CAPABILITIES,
+      operations: {
+        ...DEFAULT_APP_CONFIG_STORE_CAPABILITIES.operations,
+        fulfillmentMode: resolveConfiguredFulfillmentMode(env.ORDER_FULFILLMENT_MODE)
+      }
     }
+  });
+}
+
+export function resolveProvisionedAppConfigPayload(
+  input: {
+    brandId: string;
+    brandName: string;
+    locationId: string;
+    locationName: string;
+    marketLabel: string;
+    capabilities?: AppConfigStoreCapabilities;
+  },
+  env: Record<string, string | undefined> = process.env
+): AppConfig {
+  const base = resolveDefaultAppConfigPayload(env);
+  const capabilities = input.capabilities ?? base.storeCapabilities;
+
+  return appConfigSchema.parse({
+    ...base,
+    brand: {
+      brandId: input.brandId.trim(),
+      brandName: input.brandName.trim(),
+      locationId: input.locationId.trim(),
+      locationName: input.locationName.trim(),
+      marketLabel: input.marketLabel.trim()
+    },
+    paymentCapabilities: {
+      ...base.paymentCapabilities,
+      clover: {
+        ...base.paymentCapabilities.clover,
+        merchantRef: input.locationId.trim()
+      }
+    },
+    fulfillment: {
+      ...base.fulfillment,
+      mode: capabilities.operations.fulfillmentMode
+    },
+    storeCapabilities: capabilities
   });
 }
 

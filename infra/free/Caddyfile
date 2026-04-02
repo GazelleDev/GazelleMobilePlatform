@@ -1,7 +1,5 @@
-{$API_DOMAIN} {
+{$API_DOMAIN:localhost} {
   encode gzip
 
   reverse_proxy gateway:8080
-
-  tls {$LETSENCRYPT_EMAIL}
 }

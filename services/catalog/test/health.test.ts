@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   adminMenuItemSchema,
   adminMenuResponseSchema,
   adminStoreConfigSchema,
   appConfigSchema,
+  internalLocationListResponseSchema,
+  internalLocationSummarySchema,
   menuResponseSchema,
   storeConfigResponseSchema
 } from "@gazelle/contracts-catalog";
@@ -54,6 +56,9 @@ describe("catalog service", () => {
     const parsed = appConfigSchema.parse(response.json());
     expect(parsed.brand.brandName).toBe("Gazelle Coffee");
     expect(parsed.enabledTabs).toEqual(["home", "menu", "orders", "account"]);
+    expect(parsed.storeCapabilities.menu.source).toBe("platform_managed");
+    expect(parsed.storeCapabilities.operations.dashboardEnabled).toBe(true);
+    expect(parsed.storeCapabilities.loyalty.visible).toBe(true);
     expect(parsed.fulfillment.mode).toBe("time_based");
     await app.close();
   });
@@ -66,6 +71,7 @@ describe("catalog service", () => {
     expect(response.statusCode).toBe(200);
     const parsed = appConfigSchema.parse(response.json());
     expect(parsed.fulfillment.mode).toBe("staff");
+    expect(parsed.storeCapabilities.operations.fulfillmentMode).toBe("staff");
     expect(parsed.fulfillment.timeBasedScheduleMinutes.completed).toBe(15);
 
     await app.close();
@@ -123,6 +129,7 @@ describe("catalog service", () => {
     expect(adminStoreConfigResponse.statusCode).toBe(200);
     const adminStoreConfig = adminStoreConfigSchema.parse(adminStoreConfigResponse.json());
     expect(adminStoreConfig.storeName).toContain("Gazelle");
+    expect(adminStoreConfig.capabilities.menu.source).toBe("platform_managed");
 
     const storeUpdateResponse = await app.inject({
       method: "PUT",
@@ -133,13 +140,70 @@ describe("catalog service", () => {
       payload: {
         storeName: "Gazelle Coffee Downtown",
         hours: "Weekdays · 6:30 AM - 5:00 PM",
-        pickupInstructions: "Use the front pickup shelves."
+        pickupInstructions: "Use the front pickup shelves.",
+        capabilities: {
+          menu: {
+            source: "external_sync"
+          },
+          operations: {
+            fulfillmentMode: "staff",
+            liveOrderTrackingEnabled: false,
+            dashboardEnabled: false
+          },
+          loyalty: {
+            visible: false
+          }
+        }
       }
     });
     expect(storeUpdateResponse.statusCode).toBe(200);
     expect(adminStoreConfigSchema.parse(storeUpdateResponse.json())).toMatchObject({
       storeName: "Gazelle Coffee Downtown",
-      hours: "Weekdays · 6:30 AM - 5:00 PM"
+      hours: "Weekdays · 6:30 AM - 5:00 PM",
+      capabilities: {
+        menu: {
+          source: "external_sync"
+        },
+        operations: {
+          fulfillmentMode: "staff",
+          liveOrderTrackingEnabled: false,
+          dashboardEnabled: false
+        },
+        loyalty: {
+          visible: false
+        }
+      }
+    });
+
+    const appConfigResponse = await app.inject({ method: "GET", url: "/v1/app-config" });
+    expect(appConfigResponse.statusCode).toBe(200);
+    expect(appConfigSchema.parse(appConfigResponse.json())).toMatchObject({
+      brand: {
+        locationName: "Gazelle Coffee Downtown"
+      },
+      storeCapabilities: {
+        menu: {
+          source: "external_sync"
+        },
+        operations: {
+          fulfillmentMode: "staff",
+          liveOrderTrackingEnabled: false,
+          dashboardEnabled: false
+        },
+        loyalty: {
+          visible: false
+        }
+      },
+      fulfillment: {
+        mode: "staff"
+      },
+      featureFlags: {
+        loyalty: false,
+        orderTracking: false,
+        staffDashboard: false,
+        menuEditing: false
+      },
+      loyaltyEnabled: false
     });
 
     await app.close();
@@ -209,6 +273,61 @@ describe("catalog service", () => {
     await app.close();
   });
 
+  it("rate limits gateway-protected catalog routes when configured threshold is reached", async () => {
+    process.env.GATEWAY_INTERNAL_API_TOKEN = "catalog-gateway-token";
+    vi.stubEnv("CATALOG_RATE_LIMIT_GATEWAY_READ_MAX", "1");
+    vi.stubEnv("CATALOG_RATE_LIMIT_GATEWAY_WRITE_MAX", "1");
+    vi.stubEnv("CATALOG_RATE_LIMIT_WINDOW_MS", "60000");
+    const app = await buildApp();
+
+    try {
+      const firstRead = await app.inject({
+        method: "GET",
+        url: "/v1/catalog/admin/menu",
+        headers: {
+          "x-gateway-token": "catalog-gateway-token"
+        }
+      });
+      expect(firstRead.statusCode).toBe(200);
+
+      const secondRead = await app.inject({
+        method: "GET",
+        url: "/v1/catalog/admin/menu",
+        headers: {
+          "x-gateway-token": "catalog-gateway-token"
+        }
+      });
+      expect(secondRead.statusCode).toBe(429);
+
+      const firstWrite = await app.inject({
+        method: "POST",
+        url: "/v1/catalog/internal/ping",
+        headers: {
+          "x-gateway-token": "catalog-gateway-token"
+        },
+        payload: {
+          id: "123e4567-e89b-12d3-a456-426614174998"
+        }
+      });
+      expect(firstWrite.statusCode).toBe(200);
+
+      const secondWrite = await app.inject({
+        method: "POST",
+        url: "/v1/catalog/internal/ping",
+        headers: {
+          "x-gateway-token": "catalog-gateway-token"
+        },
+        payload: {
+          id: "123e4567-e89b-12d3-a456-426614174998"
+        }
+      });
+      expect(secondWrite.statusCode).toBe(429);
+    } finally {
+      vi.unstubAllEnvs();
+      await app.close();
+    }
+  });
+
   it("propagates x-request-id and exposes metrics counters", async () => {
     const app = await buildApp();
     const requestId = "catalog-trace-1";
@@ -252,6 +371,91 @@ describe("catalog service", () => {
       status: "ready",
       service: "catalog",
       persistence: expect.stringMatching(/^(memory|postgres)$/)
+    });
+
+    await app.close();
+  });
+
+  it("bootstraps and fetches an internal pilot location through gateway-protected routes", async () => {
+    process.env.GATEWAY_INTERNAL_API_TOKEN = "catalog-gateway-token";
+    const app = await buildApp();
+
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/v1/catalog/internal/locations/bootstrap",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      },
+      payload: {
+        brandId: "northside-coffee",
+        brandName: "Northside Coffee",
+        locationId: "northside-01",
+        locationName: "Northside Flagship",
+        marketLabel: "Detroit, MI",
+        storeName: "Northside Coffee",
+        hours: "Daily · 7:00 AM - 6:00 PM",
+        pickupInstructions: "Pickup at the espresso counter.",
+        capabilities: {
+          menu: {
+            source: "platform_managed"
+          },
+          operations: {
+            fulfillmentMode: "staff",
+            liveOrderTrackingEnabled: true,
+            dashboardEnabled: true
+          },
+          loyalty: {
+            visible: true
+          }
+        }
+      }
+    });
+
+    expect(bootstrapResponse.statusCode).toBe(200);
+    const bootstrap = internalLocationSummarySchema.parse(bootstrapResponse.json());
+    expect(bootstrap.action).toBe("created");
+    expect(bootstrap.locationId).toBe("northside-01");
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/catalog/internal/locations",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      }
+    });
+
+    expect(listResponse.statusCode).toBe(200);
+    const locationList = internalLocationListResponseSchema.parse(listResponse.json());
+    expect(locationList.locations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          locationId: "flagship-01",
+          brandName: "Gazelle Coffee"
+        }),
+        expect.objectContaining({
+          locationId: "northside-01",
+          brandName: "Northside Coffee"
+        })
+      ])
+    );
+
+    const summaryResponse = await app.inject({
+      method: "GET",
+      url: "/v1/catalog/internal/locations/northside-01",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      }
+    });
+
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(internalLocationSummarySchema.parse(summaryResponse.json())).toMatchObject({
+      brandName: "Northside Coffee",
+      locationId: "northside-01",
+      capabilities: {
+        operations: {
+          fulfillmentMode: "staff"
+        }
+      }
     });
 
     await app.close();

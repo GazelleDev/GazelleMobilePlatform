@@ -5,23 +5,45 @@ import { apiErrorSchema, authSessionSchema } from "@gazelle/contracts-core";
 import {
   appleExchangeRequestSchema,
   authContract,
+  googleOAuthStartRequestSchema,
+  googleOAuthStartResponseSchema,
+  internalOwnerProvisionParamsSchema,
+  internalOwnerProvisionRequestSchema,
+  internalOwnerProvisionResponseSchema,
+  internalOwnerSummarySchema,
   logoutRequestSchema,
   magicLinkRequestSchema,
   magicLinkVerifySchema,
   meResponseSchema,
+  operatorAuthContract,
+  operatorDevAccessRequestSchema,
+  operatorGoogleExchangeRequestSchema,
+  operatorMeResponseSchema,
+  operatorPasswordSignInSchema,
+  operatorUserCreateSchema,
+  operatorUserListResponseSchema,
+  operatorUserParamsSchema,
+  operatorUserUpdateSchema,
   passkeyChallengeRequestSchema,
   passkeyChallengeResponseSchema,
   passkeyVerifyRequestSchema,
   refreshRequestSchema
 } from "@gazelle/contracts-auth";
 import {
+  adminMenuItemCreateSchema,
   adminMenuItemSchema,
   adminMenuItemUpdateSchema,
+  adminMenuItemVisibilityUpdateSchema,
+  adminMutationSuccessSchema,
   adminMenuResponseSchema,
   adminStoreConfigSchema,
   adminStoreConfigUpdateSchema,
   appConfigSchema,
   catalogContract,
+  internalLocationBootstrapSchema,
+  internalLocationListResponseSchema,
+  internalLocationParamsSchema,
+  internalLocationSummarySchema,
   menuResponseSchema,
   storeConfigResponseSchema
 } from "@gazelle/contracts-catalog";
@@ -43,11 +65,15 @@ import {
 declare module "fastify" {
   interface FastifyRequest {
     authenticatedUserId?: string;
+    authenticatedOperator?: z.output<typeof operatorMeResponseSchema>;
   }
 }
 
 const authHeaderSchema = z.object({
   authorization: z.string().startsWith("Bearer ").optional()
+});
+const internalAdminHeaderSchema = z.object({
+  "x-internal-admin-token": z.string().optional()
 });
 const jwtHeaderSchema = z.object({
   alg: z.literal("HS256"),
@@ -61,7 +87,6 @@ const jwtAccessTokenClaimsSchema = z.object({
 const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
 const menuItemParamsSchema = z.object({ itemId: z.string().min(1) });
 const cancelOrderRequestSchema = z.object({ reason: z.string().min(1) });
-const staffHeaderSchema = z.object({ "x-staff-token": z.string().min(1).optional() });
 const adminOrderStatusUpdateSchema = z.object({
   status: z.enum(["IN_PREP", "READY", "COMPLETED", "CANCELED"]),
   note: z.string().min(1).optional()
@@ -103,45 +128,155 @@ async function requireBearerAuth(request: FastifyRequest, reply: FastifyReply) {
   return undefined;
 }
 
-function staffAccessUnavailable(requestId: string) {
+function forbidden(requestId: string, capability?: string) {
   return apiErrorSchema.parse({
-    code: "STAFF_ACCESS_NOT_CONFIGURED",
-    message: "Staff access token is not configured",
+    code: "FORBIDDEN",
+    message: capability
+      ? `Operator is missing required capability: ${capability}`
+      : "Operator is not authorized to access this resource",
     requestId
   });
 }
 
-function ensureStaffTokenAuth(request: FastifyRequest, reply: FastifyReply, staffToken: string | undefined) {
-  if (!staffToken) {
-    reply.status(503).send(staffAccessUnavailable(request.id));
+function internalAdminUnauthorized(requestId: string, message: string, code = "UNAUTHORIZED_INTERNAL_ADMIN") {
+  return apiErrorSchema.parse({
+    code,
+    message,
+    requestId
+  });
+}
+
+function ensureInternalAdminToken(request: FastifyRequest, reply: FastifyReply, expectedToken: string | undefined) {
+  if (!expectedToken) {
+    reply.status(503).send(
+      internalAdminUnauthorized(
+        request.id,
+        "INTERNAL_ADMIN_API_TOKEN must be configured before accepting internal admin requests",
+        "INTERNAL_ADMIN_NOT_CONFIGURED"
+      )
+    );
     return false;
   }
 
-  const parsed = staffHeaderSchema.safeParse(request.headers);
-  if (!parsed.success || parsed.data["x-staff-token"] !== staffToken) {
-    reply.status(401).send(
-      apiErrorSchema.parse({
-        code: "UNAUTHORIZED_STAFF_REQUEST",
-        message: "Missing or invalid staff token",
-        requestId: request.id
-      })
-    );
+  const parsed = internalAdminHeaderSchema.safeParse(request.headers);
+  const providedToken = parsed.success ? parsed.data["x-internal-admin-token"] : undefined;
+  if (!providedToken) {
+    reply.status(401).send(internalAdminUnauthorized(request.id, "Missing internal admin token"));
+    return false;
+  }
+
+  const expectedBuffer = Buffer.from(expectedToken, "utf8");
+  const providedBuffer = Buffer.from(providedToken, "utf8");
+  if (expectedBuffer.length !== providedBuffer.length || !timingSafeEqual(expectedBuffer, providedBuffer)) {
+    reply.status(401).send(internalAdminUnauthorized(request.id, "Invalid internal admin token"));
     return false;
   }
 
   return true;
 }
 
-async function requireStaffAccess(request: FastifyRequest, reply: FastifyReply, staffToken: string | undefined) {
+async function resolveOperatorAccess(params: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  identityBaseUrl: string;
+  requiredCapability: z.output<typeof operatorMeResponseSchema>["capabilities"][number];
+}) {
+  const { request, reply, identityBaseUrl, requiredCapability } = params;
   if (!ensureBearerAuth(request, reply)) {
-    return reply;
+    return undefined;
   }
 
-  if (!ensureStaffTokenAuth(request, reply, staffToken)) {
-    return reply;
+  if (request.authenticatedOperator) {
+    if (!request.authenticatedOperator.capabilities.includes(requiredCapability)) {
+      reply.status(403).send(forbidden(request.id, requiredCapability));
+      return undefined;
+    }
+
+    return request.authenticatedOperator;
   }
 
-  return undefined;
+  const authorization = request.headers.authorization;
+  const timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs);
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${identityBaseUrl}/v1/operator/auth/me`, {
+      method: "GET",
+      headers: {
+        authorization: String(authorization),
+        "x-request-id": request.id
+      },
+      signal: timeoutController.signal
+    });
+    const parsedPayload = parseJsonSafely(await response.text());
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        reply.status(401).send(unauthorized(request.id));
+        return undefined;
+      }
+
+      const upstreamError = apiErrorSchema.safeParse(parsedPayload);
+      if (upstreamError.success) {
+        reply.status(response.status).send(upstreamError.data);
+        return undefined;
+      }
+
+      reply.status(502).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_INVALID_RESPONSE",
+          message: "Identity response did not match contract",
+          requestId: request.id
+        })
+      );
+      return undefined;
+    }
+
+    const operator = operatorMeResponseSchema.safeParse(parsedPayload);
+    if (!operator.success) {
+      reply.status(502).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_INVALID_RESPONSE",
+          message: "Identity response did not match contract",
+          requestId: request.id,
+          details: operator.error.flatten()
+        })
+      );
+      return undefined;
+    }
+
+    request.authenticatedOperator = operator.data;
+    if (!operator.data.capabilities.includes(requiredCapability)) {
+      reply.status(403).send(forbidden(request.id, requiredCapability));
+      return undefined;
+    }
+
+    return operator.data;
+  } catch (error) {
+    if (isAbortError(error)) {
+      reply.status(504).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_TIMEOUT",
+          message: "Identity service timed out",
+          requestId: request.id
+        })
+      );
+      return undefined;
+    }
+
+    request.log.error({ error, requestId: request.id }, "operator access check failed");
+    reply.status(502).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Identity service is unavailable",
+        requestId: request.id
+      })
+    );
+    return undefined;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 function trimToUndefined(value: string | undefined) {
@@ -210,7 +345,9 @@ function toHeaderValue(value: string | string[] | undefined) {
 
 function userScopedRateLimitKey(request: FastifyRequest) {
   const userId =
-    trimToUndefined(request.authenticatedUserId) ?? trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
+    trimToUndefined(request.authenticatedUserId) ??
+    trimToUndefined(request.authenticatedOperator?.operatorUserId) ??
+    trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
   if (userId) {
     return `user:${userId.toLowerCase()}`;
   }
@@ -261,7 +398,7 @@ async function proxyUpstream<TResponse>(params: {
   reply: FastifyReply;
   baseUrl: string;
   serviceLabel: string;
-  method: "GET" | "POST" | "PUT";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
   additionalHeaders?: Record<string, string | undefined>;
@@ -654,7 +791,7 @@ export async function registerRoutes(app: FastifyInstance) {
   const loyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL ?? "http://127.0.0.1:3004";
   const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
   const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
-  const gatewayStaffApiToken = trimToUndefined(process.env.GATEWAY_STAFF_API_TOKEN);
+  const internalAdminApiToken = trimToUndefined(process.env.INTERNAL_ADMIN_API_TOKEN);
   const jwtSecret = trimToUndefined(process.env.JWT_SECRET);
   const rateLimitWindowMs = toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const authWriteRateLimit = {
@@ -717,12 +854,21 @@ export async function registerRoutes(app: FastifyInstance) {
       identityBaseUrl,
       jwtSecret
     });
+  const requireOperatorCapability = (capability: z.output<typeof operatorMeResponseSchema>["capabilities"][number]) =>
+    async (request: FastifyRequest, reply: FastifyReply) =>
+      resolveOperatorAccess({
+        request,
+        reply,
+        identityBaseUrl,
+        requiredCapability: capability
+      });
 
   app.get("/health", async () => ({ status: "ok", service: "gateway" }));
   app.get("/ready", async () => ({ status: "ready", service: "gateway" }));
 
   app.get("/v1/meta/contracts", async () => ({
     auth: authContract.basePath,
+    operatorAuth: operatorAuthContract.basePath,
     catalog: catalogContract.basePath,
     orders: ordersContract.basePath,
     loyalty: loyaltyContract.basePath,
@@ -952,6 +1098,211 @@ export async function registerRoutes(app: FastifyInstance) {
       responseSchema: meResponseSchema
     });
     }
+  );
+
+  app.post(
+    "/v1/operator/auth/sign-in",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = operatorPasswordSignInSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/auth/sign-in",
+        body: input,
+        responseSchema: operatorAuthContract.routes.signIn.response
+      });
+    }
+  );
+
+  app.get(
+    "/v1/operator/auth/providers",
+    {
+      preHandler: app.rateLimit(authReadRateLimit)
+    },
+    async (request, reply) => {
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "GET",
+        path: "/v1/operator/auth/providers",
+        responseSchema: operatorAuthContract.routes.providers.response
+      });
+    }
+  );
+
+  app.get(
+    "/v1/operator/auth/google/start",
+    {
+      preHandler: app.rateLimit(authReadRateLimit)
+    },
+    async (request, reply) => {
+      const input = googleOAuthStartRequestSchema.parse(request.query);
+      const search = new URLSearchParams({
+        redirectUri: input.redirectUri
+      });
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "GET",
+        path: `/v1/operator/auth/google/start?${search.toString()}`,
+        responseSchema: googleOAuthStartResponseSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/operator/auth/google/exchange",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = operatorGoogleExchangeRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/auth/google/exchange",
+        body: input,
+        responseSchema: operatorAuthContract.routes.googleExchange.response
+      });
+    }
+  );
+
+  app.post(
+    "/v1/operator/auth/magic-link/request",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = magicLinkRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/auth/magic-link/request",
+        body: input,
+        responseSchema: authSuccessSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/operator/auth/magic-link/verify",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = magicLinkVerifySchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/auth/magic-link/verify",
+        body: input,
+        responseSchema: operatorAuthContract.routes.magicLinkVerify.response
+      });
+    }
+  );
+
+  app.post(
+    "/v1/operator/auth/dev-access",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = operatorDevAccessRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/auth/dev-access",
+        body: input,
+        responseSchema: operatorAuthContract.routes.devAccess.response
+      });
+    }
+  );
+
+  app.post(
+    "/v1/operator/auth/refresh",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = refreshRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/auth/refresh",
+        body: input,
+        responseSchema: operatorAuthContract.routes.refresh.response
+      });
+    }
+  );
+
+  app.post(
+    "/v1/operator/auth/logout",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = logoutRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/auth/logout",
+        body: input,
+        responseSchema: authSuccessSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/operator/auth/me",
+    {
+      preHandler: [app.rateLimit(authReadRateLimit), requireBearerAuth]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "GET",
+        path: "/v1/operator/auth/me",
+        responseSchema: operatorMeResponseSchema
+      })
   );
 
   app.get("/v1/menu", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
@@ -1287,10 +1638,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get(
     "/v1/admin/orders",
     {
-      preHandler: [
-        app.rateLimit(staffReadRateLimit),
-        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
-      ]
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("orders:read")]
     },
     async (request, reply) =>
       proxyUpstream({
@@ -1311,10 +1659,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get(
     "/v1/admin/orders/:orderId",
     {
-      preHandler: [
-        app.rateLimit(staffReadRateLimit),
-        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
-      ]
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("orders:read")]
     },
     async (request, reply) => {
       const { orderId } = orderIdParamsSchema.parse(request.params);
@@ -1338,10 +1683,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post(
     "/v1/admin/orders/:orderId/status",
     {
-      preHandler: [
-        app.rateLimit(staffWriteRateLimit),
-        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
-      ]
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("orders:write")]
     },
     async (request, reply) => {
       const { orderId } = orderIdParamsSchema.parse(request.params);
@@ -1389,10 +1731,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get(
     "/v1/admin/menu",
     {
-      preHandler: [
-        app.rateLimit(staffReadRateLimit),
-        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
-      ]
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("menu:read")]
     },
     async (request, reply) =>
       proxyUpstream({
@@ -1412,10 +1751,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.put(
     "/v1/admin/menu/:itemId",
     {
-      preHandler: [
-        app.rateLimit(staffWriteRateLimit),
-        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
-      ]
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
     },
     async (request, reply) => {
       const { itemId } = menuItemParamsSchema.parse(request.params);
@@ -1437,13 +1773,82 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
+  app.post(
+    "/v1/admin/menu",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const input = adminMenuItemCreateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "POST",
+        path: "/v1/catalog/admin/menu",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMenuItemSchema
+      });
+    }
+  );
+
+  app.patch(
+    "/v1/admin/menu/:itemId/visibility",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:visibility")]
+    },
+    async (request, reply) => {
+      const { itemId } = menuItemParamsSchema.parse(request.params);
+      const input = adminMenuItemVisibilityUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PATCH",
+        path: `/v1/catalog/admin/menu/${itemId}/visibility`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMenuItemSchema
+      });
+    }
+  );
+
+  app.delete(
+    "/v1/admin/menu/:itemId",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const { itemId } = menuItemParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "DELETE",
+        path: `/v1/catalog/admin/menu/${itemId}`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMutationSuccessSchema
+      });
+    }
+  );
+
   app.get(
     "/v1/admin/store/config",
     {
-      preHandler: [
-        app.rateLimit(staffReadRateLimit),
-        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
-      ]
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("store:read")]
     },
     async (request, reply) =>
       proxyUpstream({
@@ -1463,10 +1868,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.put(
     "/v1/admin/store/config",
     {
-      preHandler: [
-        app.rateLimit(staffWriteRateLimit),
-        async (request, reply) => requireStaffAccess(request, reply, gatewayStaffApiToken)
-      ]
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("store:write")]
     },
     async (request, reply) => {
       const input = adminStoreConfigUpdateSchema.parse(request.body);
@@ -1483,6 +1885,217 @@ export async function registerRoutes(app: FastifyInstance) {
           "x-gateway-token": gatewayInternalApiToken
         },
         responseSchema: adminStoreConfigSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/staff",
+    {
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("staff:read")]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "GET",
+        path: "/v1/operator/users",
+        responseSchema: operatorUserListResponseSchema
+      })
+  );
+
+  app.post(
+    "/v1/admin/staff",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("staff:write")]
+    },
+    async (request, reply) => {
+      const input = operatorUserCreateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/operator/users",
+        body: input,
+        responseSchema: operatorMeResponseSchema
+      });
+    }
+  );
+
+  app.patch(
+    "/v1/admin/staff/:operatorUserId",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("staff:write")]
+    },
+    async (request, reply) => {
+      const { operatorUserId } = operatorUserParamsSchema.parse(request.params);
+      const input = operatorUserUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "PATCH",
+        path: `/v1/operator/users/${operatorUserId}`,
+        body: input,
+        responseSchema: operatorMeResponseSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/internal/locations/bootstrap",
+    {
+      preHandler: async (request, reply) => {
+        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
+          return reply;
+        }
+
+        return undefined;
+      }
+    },
+    async (request, reply) => {
+      const input = internalLocationBootstrapSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "POST",
+        path: "/v1/catalog/internal/locations/bootstrap",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: internalLocationSummarySchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/internal/locations",
+    {
+      preHandler: async (request, reply) => {
+        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
+          return reply;
+        }
+
+        return undefined;
+      }
+    },
+    async (request, reply) => {
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: "/v1/catalog/internal/locations",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: internalLocationListResponseSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/internal/locations/:locationId",
+    {
+      preHandler: async (request, reply) => {
+        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
+          return reply;
+        }
+
+        return undefined;
+      }
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: `/v1/catalog/internal/locations/${locationId}`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: internalLocationSummarySchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/internal/locations/:locationId/owner",
+    {
+      preHandler: async (request, reply) => {
+        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
+          return reply;
+        }
+
+        return undefined;
+      }
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "GET",
+        path: `/v1/identity/internal/locations/${locationId}/owner`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: internalOwnerSummarySchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/internal/locations/:locationId/owner/provision",
+    {
+      preHandler: async (request, reply) => {
+        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
+          return reply;
+        }
+
+        return undefined;
+      }
+    },
+    async (request, reply) => {
+      const { locationId } = internalOwnerProvisionParamsSchema.parse(request.params);
+      const input = internalOwnerProvisionRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: `/v1/identity/internal/locations/${locationId}/owner/provision`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: internalOwnerProvisionResponseSchema
       });
     }
   );

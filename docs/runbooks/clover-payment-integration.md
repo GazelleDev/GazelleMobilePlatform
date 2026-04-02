@@ -124,6 +124,13 @@ Loyalty side effects are applied using existing idempotency keys, so duplicate w
 - `DECLINED` -> `402` with `PAYMENT_DECLINED`
 - `TIMEOUT` -> `504` with `PAYMENT_TIMEOUT`
 
+Timeout hardening rule:
+
+- once a timed-out Clover charge snapshot is persisted on the order, subsequent pay attempts for that order return `409 PAYMENT_RECONCILIATION_PENDING`
+- pilot operators should not start a brand-new payment attempt until either:
+  - Clover reconciliation webhook marks the charge `SUCCEEDED` or `DECLINED`
+  - support verifies in Clover that the timed-out charge did not settle and explicitly decides the customer should retry
+
 ## Refund Outcomes
 
 When canceling a `PAID` order:
@@ -141,6 +148,21 @@ For dev simulation, a cancel reason containing `reject` returns a rejected refun
 - Orders keeps pay idempotency per `orderId:idempotencyKey` for paid responses.
 - Orders refund requests use `cancel:<orderId>:<reasonHashPrefix>` so identical cancel retries are idempotent while failed refund attempts can be retried with changed cancellation context.
 
+## Pilot Recovery Matrix
+
+- charge `DECLINED`
+  - customer retry is allowed with a new payment idempotency key
+- charge `TIMEOUT`
+  - do not ask the customer to keep tapping pay
+  - wait for Clover webhook reconciliation or verify the payment outcome in Clover first
+- refund `REJECTED`
+  - order stays in its current state
+  - rejected refund snapshot is persisted so support has the Clover identifiers needed for follow-up
+- refund webhook after `COMPLETED`
+  - orders accepts the reconciliation as a no-op
+  - no automatic order state regression occurs
+  - support reviews the refund separately
+
 ## Verification
 
 ```bash
@@ -152,3 +174,35 @@ pnpm --filter @gazelle/orders lint
 pnpm --filter @gazelle/orders typecheck
 pnpm --filter @gazelle/orders test
 ```
+
+## Free-First Rollout Mapping
+
+For the DigitalOcean/free-first deployment lane, the live Clover inputs are split between GitHub variables and secrets.
+
+GitHub variables:
+
+- `FREE_PAYMENTS_PROVIDER_MODE` -> `PAYMENTS_PROVIDER_MODE` and `CLOVER_PROVIDER_MODE`
+- `FREE_CLOVER_OAUTH_ENVIRONMENT` -> `CLOVER_OAUTH_ENVIRONMENT`
+- `FREE_CLOVER_CHARGE_ENDPOINT` -> `CLOVER_CHARGE_ENDPOINT`
+- `FREE_CLOVER_REFUND_ENDPOINT` -> `CLOVER_REFUND_ENDPOINT`
+- `FREE_CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` -> `CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT`
+
+GitHub secrets:
+
+- `FREE_CLOVER_BEARER_TOKEN` -> `CLOVER_BEARER_TOKEN`
+- `FREE_CLOVER_API_KEY` -> `CLOVER_API_KEY` legacy fallback
+- `FREE_CLOVER_API_ACCESS_KEY` -> `CLOVER_API_ACCESS_KEY`
+- `FREE_CLOVER_MERCHANT_ID` -> `CLOVER_MERCHANT_ID`
+- `FREE_CLOVER_APP_ID` -> `CLOVER_APP_ID`
+- `FREE_CLOVER_APP_SECRET` -> `CLOVER_APP_SECRET`
+- `FREE_CLOVER_OAUTH_REDIRECT_URI` -> `CLOVER_OAUTH_REDIRECT_URI`
+- `FREE_CLOVER_OAUTH_STATE_SECRET` -> `CLOVER_OAUTH_STATE_SECRET`
+- `FREE_CLOVER_WEBHOOK_SHARED_SECRET` -> `CLOVER_WEBHOOK_SHARED_SECRET`
+
+Before enabling `FREE_PAYMENTS_PROVIDER_MODE=live`, validate the final env shape with:
+
+```bash
+./infra/free/bin/check-live-payments-env.sh infra/free/.env.example
+```
+
+On the host, `deploy-free` runs the same validation against the generated server `.env` before `docker compose up`.

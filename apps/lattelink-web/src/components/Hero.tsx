@@ -1,26 +1,26 @@
 "use client";
 
 import { motion, useMotionValue, useSpring } from "framer-motion";
-import Link from "next/link";
 import { useEffect } from "react";
 import { demoHref } from "@/lib/site";
+import { TrackedAnchor } from "./TrackedAnchor";
 
 const ease = [0.16, 1, 0.3, 1] as const;
 
 const proofPoints = [
   {
-    label: "Pilot partner",
-    value: "Rawaq",
-    note: "First launch in motion with a real coffee-shop workflow.",
+    label: "Current stage",
+    value: "Pilot-ready",
+    note: "Built around a real coffee-shop workflow and being prepared for the first live launch.",
   },
   {
-    label: "Founder insight",
-    value: "Coffee-shop operator",
-    note: "Built by someone who has worked the floor and felt the gap firsthand.",
+    label: "Product focus",
+    value: "Coffee only",
+    note: "Designed specifically for independent cafés and repeat-ordering, not every restaurant category at once.",
   },
   {
     label: "Business model",
-    value: "Flat monthly pricing",
+    value: "Flat monthly",
     note: "No LatteLink platform cut on every order as volume grows.",
   },
 ];
@@ -340,7 +340,7 @@ export function Hero() {
             }}
           >
             LatteLink gives independent coffee shops a branded ordering app,
-            loyalty program, and operator dashboard without a giant software
+            loyalty program, and client dashboard without a giant software
             contract or a platform taking a cut of every order.
           </p>
         </AnimEntry>
@@ -357,20 +357,30 @@ export function Hero() {
               marginBottom: 64,
             }}
           >
-            <Link href={demoHref} className="hero-btn">
-              Book a pilot intro
+            <TrackedAnchor
+              href={demoHref}
+              className="hero-btn"
+              eventName="cta_click"
+              eventProperties={{ placement: "hero", label: "request_pilot_intro", destination: "contact" }}
+            >
+              Request a pilot intro
               <ArrowRight />
-            </Link>
-            <Link href="#proof" className="hero-btn-ghost">
+            </TrackedAnchor>
+            <TrackedAnchor
+              href="#proof"
+              className="hero-btn-ghost"
+              eventName="section_navigation_click"
+              eventProperties={{ placement: "hero", label: "why_cafes_take_the_call", destination: "proof" }}
+            >
               Why cafés take the call
               <ArrowDown />
-            </Link>
+            </TrackedAnchor>
           </div>
         </AnimEntry>
         <AnimEntry delay={0.55}>
           <div className="hero-cta-note">
-            30-minute intro. We review fit, walk through the workflow, and map
-            the fastest path to a pilot launch.
+            Send the shop details once. We reply within one business day with
+            fit feedback and the fastest path to a pilot launch.
           </div>
         </AnimEntry>
 

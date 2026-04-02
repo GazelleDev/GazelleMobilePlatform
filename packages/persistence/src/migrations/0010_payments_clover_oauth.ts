@@ -23,3 +23,8 @@ export async function up(db: MigrationDb): Promise<void> {
     ON payments_clover_connections (updated_at DESC)
   `.execute(db);
 }
+
+export async function down(db: MigrationDb): Promise<void> {
+  await sql`DROP INDEX IF EXISTS payments_clover_connections_updated_at_idx`.execute(db);
+  await sql`DROP TABLE IF EXISTS payments_clover_connections`.execute(db);
+}

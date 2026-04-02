@@ -14,6 +14,10 @@ import * as migration0006 from "../src/migrations/0006_add_store_name_hours.js";
 import * as migration0007 from "../src/migrations/0007_identity_users.js";
 import * as migration0008 from "../src/migrations/0008_magic_links.js";
 import * as migration0009 from "../src/migrations/0009_webhook_deduplication.js";
+import * as migration0010 from "../src/migrations/0010_payments_clover_oauth.js";
+import * as migration0011 from "../src/migrations/0011_operator_access.js";
+import * as migration0012 from "../src/migrations/0012_operator_passwords.js";
+import * as migration0013 from "../src/migrations/0013_operator_google_sso.js";
 import { resolveMigrationFolderPath } from "../src/migrate.js";
 
 describe("persistence", () => {
@@ -57,7 +61,11 @@ describe("persistence", () => {
       "0006_add_store_name_hours": migration0006,
       "0007_identity_users": migration0007,
       "0008_magic_links": migration0008,
-      "0009_webhook_deduplication": migration0009
+      "0009_webhook_deduplication": migration0009,
+      "0010_payments_clover_oauth": migration0010,
+      "0011_operator_access": migration0011,
+      "0012_operator_passwords": migration0012,
+      "0013_operator_google_sso": migration0013
     };
 
     expect(basename(resolveMigrationFolderPath())).toBe("migrations");
@@ -70,7 +78,11 @@ describe("persistence", () => {
       "0006_add_store_name_hours",
       "0007_identity_users",
       "0008_magic_links",
-      "0009_webhook_deduplication"
+      "0009_webhook_deduplication",
+      "0010_payments_clover_oauth",
+      "0011_operator_access",
+      "0012_operator_passwords",
+      "0013_operator_google_sso"
     ]);
 
     for (const migration of Object.values(migrations)) {

@@ -4,17 +4,15 @@ import { buildApp } from "../src/app.js";
 describe("gateway", () => {
   const fetchMock = vi.fn<typeof fetch>();
   const authHeader = { authorization: "Bearer access-token" } as const;
-  const staffHeaders = {
-    authorization: "Bearer staff-token",
-    "x-staff-token": "staff-token"
-  } as const;
+  const ownerOperatorHeaders = { authorization: "Bearer operator-owner-access-token" } as const;
+  const staffOperatorHeaders = { authorization: "Bearer operator-staff-access-token" } as const;
   let previousIdentityBaseUrl: string | undefined;
   let previousOrdersBaseUrl: string | undefined;
   let previousCatalogBaseUrl: string | undefined;
   let previousLoyaltyBaseUrl: string | undefined;
   let previousNotificationsBaseUrl: string | undefined;
   let previousGatewayInternalToken: string | undefined;
-  let previousGatewayStaffToken: string | undefined;
+  let previousInternalAdminToken: string | undefined;
   let previousOrdersInternalToken: string | undefined;
   let previousGatewayOrderStreamPollMs: string | undefined;
   let queuedOrderStatuses: Map<string, Array<"PENDING_PAYMENT" | "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED">>;
@@ -79,7 +77,7 @@ describe("gateway", () => {
     previousLoyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL;
     previousNotificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL;
     previousGatewayInternalToken = process.env.GATEWAY_INTERNAL_API_TOKEN;
-    previousGatewayStaffToken = process.env.GATEWAY_STAFF_API_TOKEN;
+    previousInternalAdminToken = process.env.INTERNAL_ADMIN_API_TOKEN;
     previousOrdersInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
     previousGatewayOrderStreamPollMs = process.env.GATEWAY_ORDER_STREAM_POLL_MS;
     queuedOrderStatuses = new Map();
@@ -89,7 +87,7 @@ describe("gateway", () => {
     process.env.LOYALTY_SERVICE_BASE_URL = "http://loyalty.internal";
     process.env.NOTIFICATIONS_SERVICE_BASE_URL = "http://notifications.internal";
     process.env.GATEWAY_INTERNAL_API_TOKEN = "gateway-test-token";
-    process.env.GATEWAY_STAFF_API_TOKEN = "staff-token";
+    process.env.INTERNAL_ADMIN_API_TOKEN = "internal-admin-token";
     process.env.ORDERS_INTERNAL_API_TOKEN = "orders-internal-token";
     vi.stubGlobal("fetch", fetchMock);
 
@@ -118,6 +116,125 @@ describe("gateway", () => {
         });
       }
 
+      if (url.endsWith("/v1/operator/auth/dev-access") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { email?: string };
+        return new Response(
+          JSON.stringify({
+            accessToken: "operator-access-token",
+            refreshToken: "operator-refresh-token",
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            operator: {
+              operatorUserId: "123e4567-e89b-12d3-a456-426614174999",
+              displayName: "Store Owner",
+              email: body.email ?? "owner@gazellecoffee.com",
+              role: "owner",
+              locationId: "flagship-01",
+              active: true,
+              capabilities: [
+                "orders:read",
+                "orders:write",
+                "menu:read",
+                "menu:write",
+                "menu:visibility",
+                "store:read",
+                "store:write",
+                "staff:read",
+                "staff:write"
+              ],
+              createdAt: "2026-03-20T00:00:00.000Z",
+              updatedAt: "2026-03-20T00:00:00.000Z"
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/operator/auth/sign-in") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { email?: string };
+        return new Response(
+          JSON.stringify({
+            accessToken: "operator-access-token",
+            refreshToken: "operator-refresh-token",
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            operator: {
+              operatorUserId: "123e4567-e89b-12d3-a456-426614174999",
+              displayName: "Store Owner",
+              email: body.email ?? "owner@gazellecoffee.com",
+              role: "owner",
+              locationId: "flagship-01",
+              active: true,
+              capabilities: [
+                "orders:read",
+                "orders:write",
+                "menu:read",
+                "menu:write",
+                "menu:visibility",
+                "store:read",
+                "store:write",
+                "staff:read",
+                "staff:write"
+              ],
+              createdAt: "2026-03-20T00:00:00.000Z",
+              updatedAt: "2026-03-20T00:00:00.000Z"
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/operator/auth/providers") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            google: {
+              configured: true
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/v1/operator/auth/google/start") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
+            stateExpiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/operator/auth/google/exchange") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            accessToken: "operator-google-access-token",
+            refreshToken: "operator-google-refresh-token",
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            operator: {
+              operatorUserId: "123e4567-e89b-12d3-a456-426614174999",
+              displayName: "Store Owner",
+              email: "owner@gazellecoffee.com",
+              role: "owner",
+              locationId: "flagship-01",
+              active: true,
+              capabilities: [
+                "orders:read",
+                "orders:write",
+                "menu:read",
+                "menu:write",
+                "menu:visibility",
+                "store:read",
+                "store:write",
+                "staff:read",
+                "staff:write"
+              ],
+              createdAt: "2026-03-20T00:00:00.000Z",
+              updatedAt: "2026-03-20T00:00:00.000Z"
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       if (url.endsWith("/v1/auth/me") && method === "GET") {
         if (!authHeader) {
           return new Response(
@@ -135,6 +252,241 @@ describe("gateway", () => {
             userId: "123e4567-e89b-12d3-a456-426614174000",
             email: "owner@gazellecoffee.com",
             methods: ["apple", "passkey", "magic-link"]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/operator/auth/me") && method === "GET") {
+        if (!authHeader) {
+          return new Response(
+            JSON.stringify({
+              code: "UNAUTHORIZED",
+              message: "Missing or invalid auth token",
+              requestId: "identity-stub"
+            }),
+            { status: 401, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        const operatorByToken: Record<string, Record<string, unknown>> = {
+          "Bearer operator-owner-access-token": {
+            operatorUserId: "123e4567-e89b-12d3-a456-426614174999",
+            displayName: "Store Owner",
+            email: "owner@gazellecoffee.com",
+            role: "owner",
+            locationId: "flagship-01",
+            active: true,
+            capabilities: [
+              "orders:read",
+              "orders:write",
+              "menu:read",
+              "menu:write",
+              "menu:visibility",
+              "store:read",
+              "store:write",
+              "staff:read",
+              "staff:write"
+            ],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z"
+          },
+          "Bearer operator-manager-access-token": {
+            operatorUserId: "123e4567-e89b-12d3-a456-426614174998",
+            displayName: "Store Manager",
+            email: "manager@gazellecoffee.com",
+            role: "manager",
+            locationId: "flagship-01",
+            active: true,
+            capabilities: ["orders:read", "orders:write", "menu:read", "menu:write", "menu:visibility", "store:read", "staff:read"],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z"
+          },
+          "Bearer operator-staff-access-token": {
+            operatorUserId: "123e4567-e89b-12d3-a456-426614174997",
+            displayName: "Lead Barista",
+            email: "staff@gazellecoffee.com",
+            role: "staff",
+            locationId: "flagship-01",
+            active: true,
+            capabilities: ["orders:read", "orders:write", "menu:read", "menu:visibility", "store:read"],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z"
+          }
+        };
+
+        const operator = operatorByToken[authHeader];
+        if (!operator) {
+          return new Response(
+            JSON.stringify({
+              code: "UNAUTHORIZED",
+              message: "Missing or invalid auth token",
+              requestId: "identity-stub"
+            }),
+            { status: 401, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        return new Response(JSON.stringify(operator), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/v1/operator/users") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            users: [
+              {
+                operatorUserId: "123e4567-e89b-12d3-a456-426614174999",
+                displayName: "Store Owner",
+                email: "owner@gazellecoffee.com",
+                role: "owner",
+                locationId: "flagship-01",
+                active: true,
+                capabilities: [
+                  "orders:read",
+                  "orders:write",
+                  "menu:read",
+                  "menu:write",
+                  "menu:visibility",
+                  "store:read",
+                  "store:write",
+                  "staff:read",
+                  "staff:write"
+                ],
+                createdAt: "2026-03-20T00:00:00.000Z",
+                updatedAt: "2026-03-20T00:00:00.000Z"
+              },
+              {
+                operatorUserId: "123e4567-e89b-12d3-a456-426614174997",
+                displayName: "Lead Barista",
+                email: "staff@gazellecoffee.com",
+                role: "staff",
+                locationId: "flagship-01",
+                active: true,
+                capabilities: ["orders:read", "orders:write", "menu:read", "menu:visibility", "store:read"],
+                createdAt: "2026-03-20T00:00:00.000Z",
+                updatedAt: "2026-03-20T00:00:00.000Z"
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/operator/users") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          displayName?: string;
+          email?: string;
+          role?: "owner" | "manager" | "staff";
+        };
+        if (body.email === "owner@gazellecoffee.com") {
+          return new Response(
+            JSON.stringify({
+              requestId: "identity-request-duplicate-create",
+              code: "OPERATOR_EMAIL_ALREADY_EXISTS",
+              message: "A team member with that email already exists"
+            }),
+            { status: 409, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        const role = body.role ?? "staff";
+        const capabilitiesByRole = {
+          owner: [
+            "orders:read",
+            "orders:write",
+            "menu:read",
+            "menu:write",
+            "menu:visibility",
+            "store:read",
+            "store:write",
+            "staff:read",
+            "staff:write"
+          ],
+          manager: [
+            "orders:read",
+            "orders:write",
+            "menu:read",
+            "menu:write",
+            "menu:visibility",
+            "store:read",
+            "staff:read"
+          ],
+          staff: ["orders:read", "orders:write", "menu:read", "menu:visibility", "store:read"]
+        } as const;
+        return new Response(
+          JSON.stringify({
+            operatorUserId: "123e4567-e89b-12d3-a456-426614174996",
+            displayName: body.displayName ?? "New Operator",
+            email: body.email ?? "new-operator@gazellecoffee.com",
+            role,
+            locationId: "flagship-01",
+            active: true,
+            capabilities: capabilitiesByRole[role],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const operatorUserMatch = url.match(/\/v1\/operator\/users\/([0-9a-f-]{36})$/);
+      if (operatorUserMatch && method === "PATCH") {
+        const operatorUserId = operatorUserMatch[1];
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          displayName?: string;
+          email?: string;
+          role?: "owner" | "manager" | "staff";
+          active?: boolean;
+        };
+        if (body.email === "owner@gazellecoffee.com") {
+          return new Response(
+            JSON.stringify({
+              requestId: "identity-request-duplicate-update",
+              code: "OPERATOR_EMAIL_ALREADY_EXISTS",
+              message: "A team member with that email already exists"
+            }),
+            { status: 409, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        const role = body.role ?? "staff";
+        const capabilitiesByRole = {
+          owner: [
+            "orders:read",
+            "orders:write",
+            "menu:read",
+            "menu:write",
+            "menu:visibility",
+            "store:read",
+            "store:write",
+            "staff:read",
+            "staff:write"
+          ],
+          manager: [
+            "orders:read",
+            "orders:write",
+            "menu:read",
+            "menu:write",
+            "menu:visibility",
+            "store:read",
+            "staff:read"
+          ],
+          staff: ["orders:read", "orders:write", "menu:read", "menu:visibility", "store:read"]
+        } as const;
+        return new Response(
+          JSON.stringify({
+            operatorUserId,
+            displayName: body.displayName ?? "Lead Barista",
+            email: body.email ?? "staff@gazellecoffee.com",
+            role,
+            locationId: "flagship-01",
+            active: body.active ?? true,
+            capabilities: capabilitiesByRole[role],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-21T00:00:00.000Z"
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -503,6 +855,182 @@ describe("gateway", () => {
         );
       }
 
+      if (url.endsWith("/v1/catalog/internal/locations/bootstrap") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          brandId?: string;
+          brandName?: string;
+          locationId?: string;
+          locationName?: string;
+          marketLabel?: string;
+          storeName?: string;
+          hours?: string;
+          pickupInstructions?: string;
+          capabilities?: unknown;
+        };
+
+        return new Response(
+          JSON.stringify({
+            brandId: body.brandId ?? "northside-coffee",
+            brandName: body.brandName ?? "Northside Coffee",
+            locationId: body.locationId ?? "northside-01",
+            locationName: body.locationName ?? "Northside Flagship",
+            marketLabel: body.marketLabel ?? "Detroit, MI",
+            storeName: body.storeName ?? body.locationName ?? "Northside Coffee",
+            hours: body.hours ?? "Daily · 7:00 AM - 6:00 PM",
+            pickupInstructions: body.pickupInstructions ?? "Pickup at the espresso counter.",
+            capabilities:
+              body.capabilities ?? {
+                menu: {
+                  source: "platform_managed"
+                },
+                operations: {
+                  fulfillmentMode: "staff",
+                  liveOrderTrackingEnabled: true,
+                  dashboardEnabled: true
+                },
+                loyalty: {
+                  visible: true
+                }
+              },
+            action: "created"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/catalog/internal/locations") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            locations: [
+              {
+                brandId: "northside-coffee",
+                brandName: "Northside Coffee",
+                locationId: "northside-01",
+                locationName: "Northside Flagship",
+                marketLabel: "Detroit, MI",
+                storeName: "Northside Coffee",
+                hours: "Daily · 7:00 AM - 6:00 PM",
+                pickupInstructions: "Pickup at the espresso counter.",
+                capabilities: {
+                  menu: {
+                    source: "platform_managed"
+                  },
+                  operations: {
+                    fulfillmentMode: "staff",
+                    liveOrderTrackingEnabled: true,
+                    dashboardEnabled: true
+                  },
+                  loyalty: {
+                    visible: true
+                  }
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const internalLocationMatch = url.match(/\/v1\/catalog\/internal\/locations\/([^/]+)$/);
+      if (internalLocationMatch && method === "GET") {
+        const locationId = internalLocationMatch[1];
+
+        return new Response(
+          JSON.stringify({
+            brandId: "northside-coffee",
+            brandName: "Northside Coffee",
+            locationId,
+            locationName: "Northside Flagship",
+            marketLabel: "Detroit, MI",
+            storeName: "Northside Coffee",
+            hours: "Daily · 7:00 AM - 6:00 PM",
+            pickupInstructions: "Pickup at the espresso counter.",
+            capabilities: {
+              menu: {
+                source: "platform_managed"
+              },
+              operations: {
+                fulfillmentMode: "staff",
+                liveOrderTrackingEnabled: true,
+                dashboardEnabled: true
+              },
+              loyalty: {
+                visible: true
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const internalOwnerSummaryMatch = url.match(/\/v1\/identity\/internal\/locations\/([^/]+)\/owner$/);
+      if (internalOwnerSummaryMatch && method === "GET") {
+        const locationId = internalOwnerSummaryMatch[1];
+
+        return new Response(
+          JSON.stringify({
+            locationId,
+            owner: {
+              operatorUserId: "123e4567-e89b-12d3-a456-426614174995",
+              displayName: "Pilot Owner",
+              email: "owner@northside.com",
+              role: "owner",
+              locationId,
+              active: true,
+              capabilities: [
+                "orders:read",
+                "orders:write",
+                "menu:read",
+                "menu:write",
+                "menu:visibility",
+                "store:read",
+                "store:write",
+                "staff:read",
+                "staff:write"
+              ],
+              createdAt: "2026-03-20T00:00:00.000Z",
+              updatedAt: "2026-03-20T00:00:00.000Z"
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const internalOwnerProvisionMatch = url.match(/\/v1\/identity\/internal\/locations\/([^/]+)\/owner\/provision$/);
+      if (internalOwnerProvisionMatch && method === "POST") {
+        const locationId = internalOwnerProvisionMatch[1];
+        const body = JSON.parse(String(init?.body ?? "{}")) as { displayName?: string; email?: string };
+
+        return new Response(
+          JSON.stringify({
+            operator: {
+              operatorUserId: "123e4567-e89b-12d3-a456-426614174995",
+              displayName: body.displayName ?? "Pilot Owner",
+              email: body.email ?? "owner@northside.com",
+              role: "owner",
+              locationId,
+              active: true,
+              capabilities: [
+                "orders:read",
+                "orders:write",
+                "menu:read",
+                "menu:write",
+                "menu:visibility",
+                "store:read",
+                "store:write",
+                "staff:read",
+                "staff:write"
+              ],
+              createdAt: "2026-03-20T00:00:00.000Z",
+              updatedAt: "2026-03-20T00:00:00.000Z"
+            },
+            temporaryPassword: "Temporary123!",
+            action: "created"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       if (url.endsWith("/v1/loyalty/balance") && method === "GET") {
         return new Response(
           JSON.stringify({
@@ -586,10 +1114,10 @@ describe("gateway", () => {
       process.env.GATEWAY_INTERNAL_API_TOKEN = previousGatewayInternalToken;
     }
 
-    if (previousGatewayStaffToken === undefined) {
-      delete process.env.GATEWAY_STAFF_API_TOKEN;
+    if (previousInternalAdminToken === undefined) {
+      delete process.env.INTERNAL_ADMIN_API_TOKEN;
     } else {
-      process.env.GATEWAY_STAFF_API_TOKEN = previousGatewayStaffToken;
+      process.env.INTERNAL_ADMIN_API_TOKEN = previousInternalAdminToken;
     }
 
     if (previousOrdersInternalToken === undefined) {
@@ -625,6 +1153,26 @@ describe("gateway", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    await app.close();
+  });
+
+  it("proxies operator dev access sessions", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/operator/auth/dev-access",
+      payload: {
+        email: "owner@gazellecoffee.com"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      operator: {
+        email: "owner@gazellecoffee.com",
+        role: "owner"
+      }
+    });
     await app.close();
   });
 
@@ -697,6 +1245,79 @@ describe("gateway", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ success: true });
+    await app.close();
+  });
+
+  it("forwards operator password sign-in to identity", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/operator/auth/sign-in",
+      payload: {
+        email: "owner@gazellecoffee.com",
+        password: "LatteLinkOwner123!"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      operator: {
+        email: "owner@gazellecoffee.com",
+        role: "owner"
+      }
+    });
+    await app.close();
+  });
+
+  it("starts operator Google sign-in through identity", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/operator/auth/google/start?redirectUri=http%3A%2F%2Flocalhost%3A5173%2F%3Fgoogle_auth_callback%3D1"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      authorizeUrl: expect.stringContaining("accounts.google.com")
+    });
+    await app.close();
+  });
+
+  it("reports operator auth provider readiness through identity", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/operator/auth/providers"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      google: {
+        configured: true
+      }
+    });
+    await app.close();
+  });
+
+  it("exchanges operator Google auth codes through identity", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/operator/auth/google/exchange",
+      payload: {
+        code: "google-auth-code",
+        state: "signed-state",
+        redirectUri: "http://localhost:5173/?google_auth_callback=1"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      operator: {
+        email: "owner@gazellecoffee.com",
+        role: "owner"
+      }
+    });
     await app.close();
   });
 
@@ -910,28 +1531,31 @@ describe("gateway", () => {
     await app.close();
   });
 
-  it("requires a valid staff token before proxying admin routes", async () => {
+  it("requires a valid operator session before proxying admin routes", async () => {
     const app = await buildApp();
     const response = await app.inject({
       method: "GET",
       url: "/v1/admin/orders",
-      headers: authHeader
+      headers: {
+        authorization: "Bearer operator-expired-access-token"
+      }
     });
 
     expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ code: "UNAUTHORIZED_STAFF_REQUEST" });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.json()).toMatchObject({ code: "UNAUTHORIZED" });
+    const requestedUrls = fetchMock.mock.calls.map(([input]) => (typeof input === "string" ? input : input.url));
+    expect(requestedUrls).toEqual(["http://identity.internal/v1/operator/auth/me"]);
     await app.close();
   });
 
-  it("forwards admin reads through the gateway", async () => {
+  it("forwards admin reads through the gateway for owners", async () => {
     const app = await buildApp();
 
     const ordersResponse = await app.inject({
       method: "GET",
       url: "/v1/admin/orders",
       headers: {
-        ...staffHeaders,
+        ...ownerOperatorHeaders,
         "x-user-id": "123e4567-e89b-12d3-a456-426614174099"
       }
     });
@@ -943,7 +1567,7 @@ describe("gateway", () => {
     const menuResponse = await app.inject({
       method: "GET",
       url: "/v1/admin/menu",
-      headers: staffHeaders
+      headers: ownerOperatorHeaders
     });
     expect(menuResponse.statusCode).toBe(200);
     expect(menuResponse.json()).toMatchObject({
@@ -953,7 +1577,7 @@ describe("gateway", () => {
     const storeResponse = await app.inject({
       method: "GET",
       url: "/v1/admin/store/config",
-      headers: staffHeaders
+      headers: ownerOperatorHeaders
     });
     expect(storeResponse.statusCode).toBe(200);
     expect(storeResponse.json()).toMatchObject({
@@ -978,13 +1602,166 @@ describe("gateway", () => {
     await app.close();
   });
 
+  it("blocks staff from owner-only admin routes", async () => {
+    const app = await buildApp();
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/admin/staff",
+      headers: staffOperatorHeaders,
+      payload: {
+        displayName: "Blocked User",
+        email: "blocked@gazellecoffee.com",
+        role: "staff",
+        password: "BlockedUser123!"
+      }
+    });
+    expect(createResponse.statusCode).toBe(403);
+    expect(createResponse.json()).toMatchObject({ code: "FORBIDDEN" });
+
+    const storeUpdateResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/store/config",
+      headers: staffOperatorHeaders,
+      payload: {
+        storeName: "Blocked Rename"
+      }
+    });
+    expect(storeUpdateResponse.statusCode).toBe(403);
+    expect(storeUpdateResponse.json()).toMatchObject({ code: "FORBIDDEN" });
+
+    const requestedUrls = fetchMock.mock.calls.map(([input]) => (typeof input === "string" ? input : input.url));
+    expect(requestedUrls).toEqual([
+      "http://identity.internal/v1/operator/auth/me",
+      "http://identity.internal/v1/operator/auth/me"
+    ]);
+
+    await app.close();
+  });
+
+  it("forwards owner staff and store management routes", async () => {
+    const app = await buildApp();
+    const operatorUserId = "123e4567-e89b-12d3-a456-426614174997";
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/admin/staff",
+      headers: ownerOperatorHeaders
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject({
+      users: expect.arrayContaining([expect.objectContaining({ email: "owner@gazellecoffee.com", role: "owner" })])
+    });
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/admin/staff",
+      headers: ownerOperatorHeaders,
+      payload: {
+        displayName: "Night Lead",
+        email: "nightlead@gazellecoffee.com",
+        role: "manager",
+        password: "NightLead123!"
+      }
+    });
+    expect(createResponse.statusCode).toBe(200);
+    expect(createResponse.json()).toMatchObject({
+      email: "nightlead@gazellecoffee.com",
+      role: "manager",
+      locationId: "flagship-01"
+    });
+
+    const patchResponse = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/staff/${operatorUserId}`,
+      headers: ownerOperatorHeaders,
+      payload: {
+        active: false
+      }
+    });
+    expect(patchResponse.statusCode).toBe(200);
+    expect(patchResponse.json()).toMatchObject({
+      operatorUserId,
+      active: false
+    });
+
+    const storeUpdateResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/store/config",
+      headers: ownerOperatorHeaders,
+      payload: {
+        storeName: "LatteLink Flagship",
+        hours: "Daily · 6:00 AM - 5:00 PM",
+        pickupInstructions: "Pickup at the front bar."
+      }
+    });
+    expect(storeUpdateResponse.statusCode).toBe(200);
+    expect(storeUpdateResponse.json()).toMatchObject({
+      storeName: "LatteLink Flagship",
+      pickupInstructions: "Pickup at the front bar."
+    });
+
+    const requestedUrls = fetchMock.mock.calls.map(([input]) => (typeof input === "string" ? input : input.url));
+    expect(requestedUrls).toContain("http://identity.internal/v1/operator/users");
+    expect(requestedUrls).toContain(`http://identity.internal/v1/operator/users/${operatorUserId}`);
+    expect(requestedUrls).toContain("http://catalog.internal/v1/catalog/admin/store/config");
+
+    const createCall = fetchMock.mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://identity.internal/v1/operator/users" && (init?.method ?? "GET") === "POST";
+    });
+    expect(createCall).toBeDefined();
+    if (createCall) {
+      const upstreamHeaders = new Headers((createCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-user-id")).toBeNull();
+    }
+
+    await app.close();
+  });
+
+  it("surfaces duplicate team-email conflicts from identity", async () => {
+    const app = await buildApp();
+    const operatorUserId = "123e4567-e89b-12d3-a456-426614174997";
+
+    const duplicateCreate = await app.inject({
+      method: "POST",
+      url: "/v1/admin/staff",
+      headers: ownerOperatorHeaders,
+      payload: {
+        displayName: "Duplicate Owner",
+        email: "owner@gazellecoffee.com",
+        role: "manager",
+        password: "DuplicateOwner123!"
+      }
+    });
+    expect(duplicateCreate.statusCode).toBe(409);
+    expect(duplicateCreate.json()).toMatchObject({
+      code: "OPERATOR_EMAIL_ALREADY_EXISTS"
+    });
+
+    const duplicateUpdate = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/staff/${operatorUserId}`,
+      headers: ownerOperatorHeaders,
+      payload: {
+        email: "owner@gazellecoffee.com"
+      }
+    });
+    expect(duplicateUpdate.statusCode).toBe(409);
+    expect(duplicateUpdate.json()).toMatchObject({
+      code: "OPERATOR_EMAIL_ALREADY_EXISTS"
+    });
+
+    await app.close();
+  });
+
   it("forwards admin lifecycle updates with the internal orders token", async () => {
     const app = await buildApp();
     const orderId = "123e4567-e89b-12d3-a456-426614174114";
     const response = await app.inject({
       method: "POST",
       url: `/v1/admin/orders/${orderId}/status`,
-      headers: staffHeaders,
+      headers: staffOperatorHeaders,
       payload: {
         status: "READY",
         note: "Order is bagged and ready."
@@ -1013,7 +1790,7 @@ describe("gateway", () => {
     const response = await app.inject({
       method: "POST",
       url: `/v1/admin/orders/${orderId}/status`,
-      headers: staffHeaders,
+      headers: staffOperatorHeaders,
       payload: {
         status: "CANCELED",
         note: "Espresso machine issue"
@@ -1035,6 +1812,138 @@ describe("gateway", () => {
         reason: "Espresso machine issue"
       });
     }
+
+    await app.close();
+  });
+
+  it("forwards internal pilot bootstrap routes with the internal admin token", async () => {
+    const app = await buildApp();
+
+    const bootstrapResponse = await app.inject({
+      method: "POST",
+      url: "/v1/internal/locations/bootstrap",
+      headers: {
+        "x-internal-admin-token": "internal-admin-token"
+      },
+      payload: {
+        brandId: "northside-coffee",
+        brandName: "Northside Coffee",
+        locationId: "northside-01",
+        locationName: "Northside Flagship",
+        marketLabel: "Detroit, MI"
+      }
+    });
+    expect(bootstrapResponse.statusCode).toBe(200);
+    expect(bootstrapResponse.json()).toMatchObject({
+      brandName: "Northside Coffee",
+      locationId: "northside-01",
+      action: "created"
+    });
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/internal/locations",
+      headers: {
+        "x-internal-admin-token": "internal-admin-token"
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject({
+      locations: [
+        {
+          locationId: "northside-01",
+          brandName: "Northside Coffee"
+        }
+      ]
+    });
+
+    const ownerResponse = await app.inject({
+      method: "POST",
+      url: "/v1/internal/locations/northside-01/owner/provision",
+      headers: {
+        "x-internal-admin-token": "internal-admin-token"
+      },
+      payload: {
+        displayName: "Pilot Owner",
+        email: "owner@northside.com"
+      }
+    });
+    expect(ownerResponse.statusCode).toBe(200);
+    expect(ownerResponse.json()).toMatchObject({
+      operator: {
+        email: "owner@northside.com",
+        locationId: "northside-01",
+        role: "owner"
+      },
+      action: "created"
+    });
+
+    const ownerSummaryResponse = await app.inject({
+      method: "GET",
+      url: "/v1/internal/locations/northside-01/owner",
+      headers: {
+        "x-internal-admin-token": "internal-admin-token"
+      }
+    });
+    expect(ownerSummaryResponse.statusCode).toBe(200);
+    expect(ownerSummaryResponse.json()).toMatchObject({
+      locationId: "northside-01",
+      owner: {
+        email: "owner@northside.com",
+        role: "owner"
+      }
+    });
+
+    const summaryResponse = await app.inject({
+      method: "GET",
+      url: "/v1/internal/locations/northside-01",
+      headers: {
+        "x-internal-admin-token": "internal-admin-token"
+      }
+    });
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(summaryResponse.json()).toMatchObject({
+      locationId: "northside-01",
+      marketLabel: "Detroit, MI"
+    });
+
+    const bootstrapCall = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://catalog.internal/v1/catalog/internal/locations/bootstrap";
+    });
+    expect(bootstrapCall).toBeDefined();
+    if (bootstrapCall) {
+      const upstreamHeaders = new Headers((bootstrapCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
+      expect(upstreamHeaders.get("x-user-id")).toBeNull();
+    }
+
+    await app.close();
+  });
+
+  it("rejects internal pilot routes without the internal admin token", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/internal/locations/bootstrap",
+      payload: {
+        brandId: "northside-coffee",
+        brandName: "Northside Coffee",
+        locationId: "northside-01",
+        locationName: "Northside Flagship",
+        marketLabel: "Detroit, MI"
+      }
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      code: "UNAUTHORIZED_INTERNAL_ADMIN"
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "http://catalog.internal/v1/catalog/internal/locations/bootstrap",
+      expect.anything()
+    );
 
     await app.close();
   });

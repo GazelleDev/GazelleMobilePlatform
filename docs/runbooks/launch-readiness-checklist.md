@@ -37,6 +37,7 @@ Record in release notes:
    - `GET /ready`
    - `GET /metrics`
    - `GET /v1/meta/contracts`
+   - for free-first releases, run [`free-first-smoke-check.md`](./free-first-smoke-check.md)
 4. Run production API sanity:
    - auth me endpoint via gateway
    - quote -> create -> pay idempotency path
@@ -60,4 +61,3 @@ If triggered, execute:
 - Launch marked successful by engineering + product approvers
 - Rollback tag for this launch archived in release notes
 - Post-launch review ticket created for next hardening cycle
-
