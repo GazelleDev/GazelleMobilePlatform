@@ -76,8 +76,8 @@ Status:
 
 - `owner`: Codex
 - `status`: repo-complete, locally validated
-- `done`: aligned `deploy-free`, `infra/free/.env.example`, GHCR namespace usage, Caddy/runtime env wiring, and the free-first smoke check path
-- `blocked`: first live deploy still needs the target host, GitHub deploy secrets/vars, published GHCR images, and a real remote smoke-check transcript
+- `done`: aligned `deploy-free`, `infra/free/.env.example`, GHCR namespace usage, added the missing service-image publish workflow and Docker build path, tightened host bootstrap guidance, and validated the free-first smoke check path
+- `blocked`: first live deploy still needs the target host, GitHub deploy secrets/vars, the first GHCR publish run, and a real remote smoke-check transcript
 
 Goal:
 Make the DigitalOcean/free-first deployment path reliable enough for a real pilot run.

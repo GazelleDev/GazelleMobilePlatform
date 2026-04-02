@@ -28,8 +28,49 @@ Run the full service stack on one low-cost host before AWS cutover.
 - Compose bundle: `infra/free/docker-compose.yml`
 - Caddy config: `infra/free/Caddyfile`
 - Runtime env template: `infra/free/.env.example`
+- Generic service image Dockerfile: `infra/docker/node-service.Dockerfile`
 - Smoke-check script: `infra/free/bin/smoke-check.sh`
+- Host bootstrap script: `infra/free/bin/bootstrap-ubuntu-host.sh`
+- Image publish workflow: `.github/workflows/publish-free-images.yml`
 - Workflow: `.github/workflows/deploy-free.yml`
+
+## Bootstrap Host
+
+Copy the bootstrap script to a fresh Ubuntu 24.04 Droplet and run it as `root`:
+
+```bash
+scp infra/free/bin/bootstrap-ubuntu-host.sh root@<droplet-ip>:/tmp/bootstrap-ubuntu-host.sh
+ssh root@<droplet-ip> 'bash /tmp/bootstrap-ubuntu-host.sh deploy /opt/gazelle-free'
+```
+
+After that:
+
+1. Add the GitHub Actions deploy public key to `~deploy/.ssh/authorized_keys`
+2. Verify Docker works for the deploy user:
+
+```bash
+su - deploy -c 'docker version'
+```
+
+3. Point `api.<your-domain>` to the Droplet IP
+
+## Publish Images
+
+Before `deploy-free`, publish the backend service images:
+
+1. Trigger `publish-free-images` from GitHub Actions
+2. Note the published SHA tag from the workflow summary, for example `sha-abc123def456`
+3. Set `FREE_IMAGE_TAG` to that tag if you want to deploy an exact build, or let `latest` flow from `main`
+
+The publish workflow creates:
+
+- `ghcr.io/<owner>/<repo>/gateway:<tag>`
+- `ghcr.io/<owner>/<repo>/identity:<tag>`
+- `ghcr.io/<owner>/<repo>/orders:<tag>`
+- `ghcr.io/<owner>/<repo>/catalog:<tag>`
+- `ghcr.io/<owner>/<repo>/payments:<tag>`
+- `ghcr.io/<owner>/<repo>/loyalty:<tag>`
+- `ghcr.io/<owner>/<repo>/notifications:<tag>`
 
 ## Required GitHub Variables
 
