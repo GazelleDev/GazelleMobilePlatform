@@ -807,7 +807,7 @@ Status:
 
 - `owner`: Codex
 - `status`: repo-complete, external config blocked
-- `done`: analytics hooks, CTA tracking, metadata, manifest, sitemap, robots, and social image baseline are in place, and the site build is green
+- `done`: analytics hooks, CTA tracking, metadata, manifest, sitemap, robots, and social image baseline are in place, the Vercel lane is scoped correctly to the app directory, and a production env preflight now validates lead-routing and analytics config before deploy
 - `blocked`: production analytics still needs a real measurement ID and live verification in Vercel
 
 Goal:

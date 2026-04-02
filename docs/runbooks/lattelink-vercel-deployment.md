@@ -90,6 +90,31 @@ When it is set, the homepage records:
 
 If the variable is absent, the site stays functional and emits no analytics events.
 
+## Release Preflight
+
+Before a production cut with the GitHub Actions Vercel lane, validate the pulled Vercel env locally from the app directory:
+
+```bash
+cd apps/lattelink-web
+pnpm release:check production .vercel/.env.production.local
+```
+
+For preview validation:
+
+```bash
+cd apps/lattelink-web
+pnpm release:check preview .vercel/.env.preview.local
+```
+
+The preflight verifies:
+
+- at least one lead-delivery path is configured for production
+- webhook URLs are valid `https` URLs
+- Resend delivery has all required values
+- the GA4 measurement ID format is sane when provided
+
+The GitHub Actions workflow now runs the same preflight after `vercel pull` and before `vercel build`.
+
 ## Production Checks
 
 After the first deployment is live:

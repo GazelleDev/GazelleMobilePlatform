@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "release:check": "node scripts/validate-production-env.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings=0"
   },
