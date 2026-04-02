@@ -7,6 +7,7 @@ import {
   adminMutationSuccessSchema,
   adminStoreConfigUpdateSchema,
   internalLocationBootstrapSchema,
+  internalLocationListResponseSchema,
   internalLocationParamsSchema,
   internalLocationSummarySchema
 } from "@gazelle/contracts-catalog";
@@ -231,6 +232,16 @@ export async function registerRoutes(app: FastifyInstance) {
 
     const input = internalLocationBootstrapSchema.parse(request.body);
     return internalLocationSummarySchema.parse(await repository.bootstrapInternalLocation(input));
+  });
+
+  app.get("/v1/catalog/internal/locations", async (request, reply) => {
+    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+      return;
+    }
+
+    return internalLocationListResponseSchema.parse({
+      locations: await repository.listInternalLocations()
+    });
   });
 
   app.get("/v1/catalog/internal/locations/:locationId", async (request, reply) => {

@@ -199,6 +199,11 @@ export const internalOwnerProvisionResponseSchema = z.object({
   action: z.enum(["created", "updated"])
 });
 
+export const internalOwnerSummarySchema = z.object({
+  locationId: z.string().trim().min(1),
+  owner: operatorUserSchema.nullable()
+});
+
 export const operatorPasswordSignInSchema = z.object({
   email: z.string().trim().email(),
   password: operatorPasswordSchema
@@ -345,4 +350,5 @@ export type OperatorCapability = z.output<typeof operatorCapabilitySchema>;
 export type OperatorUser = z.output<typeof operatorUserSchema>;
 export type InternalOwnerProvisionRequest = z.output<typeof internalOwnerProvisionRequestSchema>;
 export type InternalOwnerProvisionResponse = z.output<typeof internalOwnerProvisionResponseSchema>;
+export type InternalOwnerSummary = z.output<typeof internalOwnerSummarySchema>;
 export type OperatorSession = z.output<typeof operatorSessionSchema>;

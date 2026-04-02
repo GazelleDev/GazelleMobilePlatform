@@ -899,6 +899,39 @@ describe("gateway", () => {
         );
       }
 
+      if (url.endsWith("/v1/catalog/internal/locations") && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            locations: [
+              {
+                brandId: "northside-coffee",
+                brandName: "Northside Coffee",
+                locationId: "northside-01",
+                locationName: "Northside Flagship",
+                marketLabel: "Detroit, MI",
+                storeName: "Northside Coffee",
+                hours: "Daily · 7:00 AM - 6:00 PM",
+                pickupInstructions: "Pickup at the espresso counter.",
+                capabilities: {
+                  menu: {
+                    source: "platform_managed"
+                  },
+                  operations: {
+                    fulfillmentMode: "staff",
+                    liveOrderTrackingEnabled: true,
+                    dashboardEnabled: true
+                  },
+                  loyalty: {
+                    visible: true
+                  }
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       const internalLocationMatch = url.match(/\/v1\/catalog\/internal\/locations\/([^/]+)$/);
       if (internalLocationMatch && method === "GET") {
         const locationId = internalLocationMatch[1];
@@ -925,6 +958,39 @@ describe("gateway", () => {
               loyalty: {
                 visible: true
               }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const internalOwnerSummaryMatch = url.match(/\/v1\/identity\/internal\/locations\/([^/]+)\/owner$/);
+      if (internalOwnerSummaryMatch && method === "GET") {
+        const locationId = internalOwnerSummaryMatch[1];
+
+        return new Response(
+          JSON.stringify({
+            locationId,
+            owner: {
+              operatorUserId: "123e4567-e89b-12d3-a456-426614174995",
+              displayName: "Pilot Owner",
+              email: "owner@northside.com",
+              role: "owner",
+              locationId,
+              active: true,
+              capabilities: [
+                "orders:read",
+                "orders:write",
+                "menu:read",
+                "menu:write",
+                "menu:visibility",
+                "store:read",
+                "store:write",
+                "staff:read",
+                "staff:write"
+              ],
+              createdAt: "2026-03-20T00:00:00.000Z",
+              updatedAt: "2026-03-20T00:00:00.000Z"
             }
           }),
           { status: 200, headers: { "content-type": "application/json" } }
@@ -1775,6 +1841,23 @@ describe("gateway", () => {
       action: "created"
     });
 
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/internal/locations",
+      headers: {
+        "x-internal-admin-token": "internal-admin-token"
+      }
+    });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toMatchObject({
+      locations: [
+        {
+          locationId: "northside-01",
+          brandName: "Northside Coffee"
+        }
+      ]
+    });
+
     const ownerResponse = await app.inject({
       method: "POST",
       url: "/v1/internal/locations/northside-01/owner/provision",
@@ -1794,6 +1877,22 @@ describe("gateway", () => {
         role: "owner"
       },
       action: "created"
+    });
+
+    const ownerSummaryResponse = await app.inject({
+      method: "GET",
+      url: "/v1/internal/locations/northside-01/owner",
+      headers: {
+        "x-internal-admin-token": "internal-admin-token"
+      }
+    });
+    expect(ownerSummaryResponse.statusCode).toBe(200);
+    expect(ownerSummaryResponse.json()).toMatchObject({
+      locationId: "northside-01",
+      owner: {
+        email: "owner@northside.com",
+        role: "owner"
+      }
     });
 
     const summaryResponse = await app.inject({

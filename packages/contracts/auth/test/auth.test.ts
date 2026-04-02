@@ -4,6 +4,7 @@ import {
   googleOAuthStartRequestSchema,
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
+  internalOwnerSummarySchema,
   magicLinkRequestSchema,
   operatorGoogleExchangeRequestSchema,
   operatorPasswordSignInSchema,
@@ -157,5 +158,12 @@ describe("contracts-auth", () => {
 
     expect(request.email).toBe("owner@northside.com");
     expect(response.operator.role).toBe("owner");
+
+    const summary = internalOwnerSummarySchema.parse({
+      locationId: "northside-01",
+      owner: response.operator
+    });
+
+    expect(summary.owner?.email).toBe("owner@northside.com");
   });
 });

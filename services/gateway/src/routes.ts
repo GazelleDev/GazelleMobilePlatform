@@ -10,6 +10,7 @@ import {
   internalOwnerProvisionParamsSchema,
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
+  internalOwnerSummarySchema,
   logoutRequestSchema,
   magicLinkRequestSchema,
   magicLinkVerifySchema,
@@ -40,6 +41,7 @@ import {
   appConfigSchema,
   catalogContract,
   internalLocationBootstrapSchema,
+  internalLocationListResponseSchema,
   internalLocationParamsSchema,
   internalLocationSummarySchema,
   menuResponseSchema,
@@ -1979,6 +1981,34 @@ export async function registerRoutes(app: FastifyInstance) {
   );
 
   app.get(
+    "/v1/internal/locations",
+    {
+      preHandler: async (request, reply) => {
+        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
+          return reply;
+        }
+
+        return undefined;
+      }
+    },
+    async (request, reply) => {
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: "/v1/catalog/internal/locations",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: internalLocationListResponseSchema
+      });
+    }
+  );
+
+  app.get(
     "/v1/internal/locations/:locationId",
     {
       preHandler: async (request, reply) => {
@@ -2004,6 +2034,36 @@ export async function registerRoutes(app: FastifyInstance) {
         },
         forwardUserIdHeader: false,
         responseSchema: internalLocationSummarySchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/internal/locations/:locationId/owner",
+    {
+      preHandler: async (request, reply) => {
+        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
+          return reply;
+        }
+
+        return undefined;
+      }
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "GET",
+        path: `/v1/identity/internal/locations/${locationId}/owner`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: internalOwnerSummarySchema
       });
     }
   );

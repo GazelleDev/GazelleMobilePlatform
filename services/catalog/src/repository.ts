@@ -225,6 +225,7 @@ type MenuItem = z.output<typeof menuItemSchema>;
 type CatalogRepository = {
   backend: "memory" | "postgres";
   getAppConfig(): Promise<AppConfig>;
+  listInternalLocations(): Promise<InternalLocationSummary[]>;
   getInternalLocationSummary(locationId: string): Promise<InternalLocationSummary | undefined>;
   bootstrapInternalLocation(input: InternalLocationBootstrap): Promise<InternalLocationSummary>;
   getAdminMenu(): Promise<AdminMenuResponse>;
@@ -343,6 +344,18 @@ function buildProvisionedMenuPayload(locationId: string) {
   });
 }
 
+function compareInternalLocationSummaries(left: InternalLocationSummary, right: InternalLocationSummary) {
+  return (
+    left.brandName.localeCompare(right.brandName) ||
+    left.locationName.localeCompare(right.locationName) ||
+    left.locationId.localeCompare(right.locationId)
+  );
+}
+
+function isDefaultSeedLocation(input: { brandId: string; locationId: string }) {
+  return input.brandId === DEFAULT_BRAND_ID && input.locationId === DEFAULT_LOCATION_ID;
+}
+
 function applyRuntimeFulfillmentMode(appConfig: AppConfig) {
   return appConfigSchema.parse(appConfig);
 }
@@ -371,6 +384,30 @@ function createInMemoryRepository(): CatalogRepository {
     backend: "memory",
     async getAppConfig() {
       return applyRuntimeFulfillmentMode(appConfigsByLocation.get(DEFAULT_LOCATION_ID) ?? defaultAppConfig);
+    },
+    async listInternalLocations() {
+      return Array.from(adminStoreConfigsByLocation.entries())
+        .flatMap(([locationId, adminStoreConfig]) => {
+          const appConfig = appConfigsByLocation.get(locationId);
+          if (!appConfig || isDefaultSeedLocation({ brandId: appConfig.brand.brandId, locationId })) {
+            return [];
+          }
+
+          return [
+            buildInternalLocationSummary({
+              brandId: appConfig.brand.brandId,
+              brandName: appConfig.brand.brandName,
+              locationId,
+              locationName: appConfig.brand.locationName,
+              marketLabel: appConfig.brand.marketLabel,
+              storeName: adminStoreConfig.storeName,
+              hours: adminStoreConfig.hours,
+              pickupInstructions: adminStoreConfig.pickupInstructions,
+              capabilities: appConfig.storeCapabilities
+            })
+          ];
+        })
+        .sort(compareInternalLocationSummaries);
     },
     async getInternalLocationSummary(locationId) {
       const adminStoreConfig = adminStoreConfigsByLocation.get(locationId);
@@ -723,6 +760,43 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       }
 
       return applyRuntimeFulfillmentMode(appConfigSchema.parse(row.app_config_json));
+    },
+    async listInternalLocations() {
+      const storeRows = await db.selectFrom("catalog_store_configs").selectAll().execute();
+      if (storeRows.length === 0) {
+        return [];
+      }
+
+      const appConfigRows = await db
+        .selectFrom("catalog_app_configs")
+        .select(["location_id", "app_config_json"])
+        .execute();
+      const appConfigByLocation = new Map(
+        appConfigRows.map((row) => [row.location_id, appConfigSchema.parse(row.app_config_json)] as const)
+      );
+
+      return storeRows
+        .flatMap((storeRow) => {
+          const appConfig = appConfigByLocation.get(storeRow.location_id);
+          if (!appConfig || isDefaultSeedLocation({ brandId: appConfig.brand.brandId, locationId: storeRow.location_id })) {
+            return [];
+          }
+
+          return [
+            buildInternalLocationSummary({
+              brandId: appConfig.brand.brandId,
+              brandName: appConfig.brand.brandName,
+              locationId: storeRow.location_id,
+              locationName: appConfig.brand.locationName,
+              marketLabel: appConfig.brand.marketLabel,
+              storeName: storeRow.store_name,
+              hours: storeRow.hours_text,
+              pickupInstructions: storeRow.pickup_instructions,
+              capabilities: appConfig.storeCapabilities
+            })
+          ];
+        })
+        .sort(compareInternalLocationSummaries);
     },
     async getInternalLocationSummary(locationId) {
       const storeRow = await db

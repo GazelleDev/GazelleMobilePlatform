@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MailSender } from "../src/mail.js";
 import { buildApp } from "../src/app.js";
 import { createInMemoryIdentityRepository } from "../src/repository.js";
-import { internalOwnerProvisionResponseSchema } from "@gazelle/contracts-auth";
+import { internalOwnerProvisionResponseSchema, internalOwnerSummarySchema } from "@gazelle/contracts-auth";
 
 function createCapturingMailSender() {
   const sender: MailSender = {
@@ -307,6 +307,23 @@ describe("operator auth", () => {
     expect(parsed.action).toBe("created");
     expect(parsed.operator.locationId).toBe("pilot-01");
     expect(parsed.operator.role).toBe("owner");
+
+    const summaryResponse = await app.inject({
+      method: "GET",
+      url: "/v1/identity/internal/locations/pilot-01/owner",
+      headers: {
+        "x-gateway-token": "identity-gateway-token"
+      }
+    });
+
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(internalOwnerSummarySchema.parse(summaryResponse.json())).toMatchObject({
+      locationId: "pilot-01",
+      owner: {
+        email: "pilot.owner@example.com",
+        role: "owner"
+      }
+    });
 
     await app.close();
   });

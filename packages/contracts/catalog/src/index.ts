@@ -570,6 +570,10 @@ export const internalLocationSummarySchema = z.object({
   action: z.enum(["created", "updated"]).optional()
 });
 
+export const internalLocationListResponseSchema = z.object({
+  locations: z.array(internalLocationSummarySchema)
+});
+
 export type MenuItemCustomizationOption = z.output<typeof menuItemCustomizationOptionSchema>;
 export type MenuItemCustomizationGroup = z.output<typeof menuItemCustomizationGroupSchema>;
 export type MenuItemCustomizationSelection = z.output<typeof menuItemCustomizationSelectionSchema>;
@@ -596,6 +600,7 @@ export type AppConfigStoreCapabilities = z.output<typeof appConfigStoreCapabilit
 export type AppConfig = z.output<typeof appConfigSchema>;
 export type InternalLocationBootstrap = z.output<typeof internalLocationBootstrapSchema>;
 export type InternalLocationSummary = z.output<typeof internalLocationSummarySchema>;
+export type InternalLocationListResponse = z.output<typeof internalLocationListResponseSchema>;
 
 export type CustomizationValidationIssueCode =
   | "unknown_group"

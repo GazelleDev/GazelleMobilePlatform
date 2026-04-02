@@ -14,6 +14,7 @@ import {
   internalOwnerProvisionParamsSchema,
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
+  internalOwnerSummarySchema,
   logoutRequestSchema,
   magicLinkRequestSchema,
   magicLinkVerifySchema,
@@ -1566,6 +1567,23 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
     });
 
     return internalOwnerProvisionResponseSchema.parse(result);
+  });
+
+  app.get("/v1/identity/internal/locations/:locationId/owner", async (request, reply) => {
+    const authorization = authorizeGatewayRequest(request, gatewayApiToken);
+    if (!authorization.ok) {
+      return reply.status(authorization.statusCode).send(authorization.body);
+    }
+
+    const { locationId } = internalOwnerProvisionParamsSchema.parse(request.params);
+    const owner =
+      (await repository.listOperatorUsers(locationId)).find((operator) => operator.role === "owner" && operator.active) ??
+      null;
+
+    return internalOwnerSummarySchema.parse({
+      locationId,
+      owner
+    });
   });
 
   app.post("/v1/auth/internal/ping", async (request) => {

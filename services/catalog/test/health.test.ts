@@ -4,6 +4,7 @@ import {
   adminMenuResponseSchema,
   adminStoreConfigSchema,
   appConfigSchema,
+  internalLocationListResponseSchema,
   internalLocationSummarySchema,
   menuResponseSchema,
   storeConfigResponseSchema
@@ -359,6 +360,24 @@ describe("catalog service", () => {
     const bootstrap = internalLocationSummarySchema.parse(bootstrapResponse.json());
     expect(bootstrap.action).toBe("created");
     expect(bootstrap.locationId).toBe("northside-01");
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/v1/catalog/internal/locations",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      }
+    });
+
+    expect(listResponse.statusCode).toBe(200);
+    expect(internalLocationListResponseSchema.parse(listResponse.json())).toMatchObject({
+      locations: [
+        {
+          locationId: "northside-01",
+          brandName: "Northside Coffee"
+        }
+      ]
+    });
 
     const summaryResponse = await app.inject({
       method: "GET",

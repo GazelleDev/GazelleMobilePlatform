@@ -9,6 +9,7 @@ import {
   catalogContract,
   describeCustomizationSelection,
   internalLocationBootstrapSchema,
+  internalLocationListResponseSchema,
   internalLocationSummarySchema,
   isLoyaltyVisible,
   isOrderTrackingEnabled,
@@ -298,6 +299,12 @@ describe("contracts-catalog", () => {
 
     expect(summary.locationId).toBe("northside-01");
     expect(summary.action).toBe("created");
+
+    const list = internalLocationListResponseSchema.parse({
+      locations: [summary]
+    });
+
+    expect(list.locations).toHaveLength(1);
   });
 
   it("rejects invalid store tax rate", () => {
