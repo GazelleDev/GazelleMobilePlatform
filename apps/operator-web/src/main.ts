@@ -1235,7 +1235,14 @@ function renderMenuSection() {
   const menuIsPlatformManaged = isPlatformManagedMenu(state.appConfig);
   const canWrite = canCreateMenuItems(state.session?.operator ?? null, state.appConfig);
   const canToggleVisibility = canToggleMenuItemVisibility(state.session?.operator ?? null, state.appConfig);
-  const createForm = canWrite
+  const canCreateIntoExistingCategory = canWrite && state.menuCategories.length > 0;
+  const accessNotice =
+    menuIsPlatformManaged && !canWrite && !canToggleVisibility
+      ? `<article class="dash-surface dash-empty-surface"><p class="muted-copy">Your account can review the menu, but menu editing and visibility controls are disabled for this role.</p></article>`
+      : !menuIsPlatformManaged
+        ? `<article class="dash-surface dash-empty-surface"><p class="muted-copy">This store is using an external menu sync, so dashboard edits stay disabled until the menu source is switched back to LatteLink.</p></article>`
+        : "";
+  const createForm = canCreateIntoExistingCategory
     ? `
         <article class="dash-surface">
           <div class="dash-surface-head">
@@ -1275,6 +1282,12 @@ function renderMenuSection() {
           </form>
         </article>
       `
+    : canWrite
+      ? `
+          <article class="dash-surface dash-empty-surface">
+            <p class="muted-copy">Add at least one synced menu category before creating dashboard-managed items for this store.</p>
+          </article>
+        `
     : "";
 
   return `
@@ -1284,11 +1297,7 @@ function renderMenuSection() {
         title: "Menu management",
         description: "Keep the live customer menu clean, available, and accurate."
       })}
-      ${
-        menuIsPlatformManaged
-          ? ""
-          : `<article class="dash-surface dash-empty-surface"><p class="muted-copy">This store is using an external menu sync, so dashboard edits stay disabled until the menu source is switched back to LatteLink.</p></article>`
-      }
+      ${accessNotice}
       ${createForm}
       <article class="dash-surface">
         ${
@@ -1331,6 +1340,11 @@ function renderStoreSection() {
             <h3 class="dash-surface-title">${escapeHtml(state.storeConfig.locationId)}</h3>
           </div>
         </div>
+        ${
+          canWrite
+            ? ""
+            : `<p class="muted-copy">Store settings are read-only for your current role. Contact a store owner to make changes.</p>`
+        }
 
         ${
           canWrite
@@ -1433,13 +1447,23 @@ function renderTeamSection() {
             <h3 class="dash-surface-title">${state.teamUsers.length} active accounts</h3>
           </div>
         </div>
+        ${
+          canWrite
+            ? ""
+            : `<p class="muted-copy">Team access is read-only for your current role. Only store owners can create, deactivate, or update staff accounts.</p>`
+        }
         <div class="dash-data-group__rows">
         ${
           state.teamUsers.length > 0
             ? state.teamUsers
                 .map(
                   (user) => `
-                    <form class="dash-data-row dash-data-row--team" data-form="team-user" data-operator-user-id="${user.operatorUserId}">
+                    <form
+                      class="dash-data-row dash-data-row--team"
+                      data-form="team-user"
+                      data-operator-user-id="${user.operatorUserId}"
+                      data-was-active="${user.active ? "true" : "false"}"
+                    >
                       <div class="dash-data-row__identity dash-data-row__identity--with-avatar">
                         <span class="dash-avatar">${escapeHtml(getOperatorInitials(user.displayName))}</span>
                         <div>
@@ -1857,6 +1881,17 @@ async function handleTeamUserSubmit(form: HTMLFormElement) {
   const formData = new FormData(form);
   const activeField = form.elements.namedItem("active");
   const active = activeField instanceof HTMLInputElement ? activeField.checked : false;
+  const wasActive = form.dataset.wasActive === "true";
+
+  if (wasActive && !active && typeof window !== "undefined") {
+    const confirmed = window.confirm("Deactivate this team member? They will lose dashboard access until you reactivate them.");
+    if (!confirmed) {
+      if (activeField instanceof HTMLInputElement) {
+        activeField.checked = true;
+      }
+      return;
+    }
+  }
 
   try {
     state.busyTeamUserId = operatorUserId;

@@ -75,6 +75,8 @@ The April 1, 2026 QA scrub fixed these pilot-blocking issues:
 
 - verify owners can create a user with name, email, role, and temporary password
 - verify owners can update role, active status, and password reset
+- verify duplicate team emails fail with a clear conflict instead of silently overwriting an existing account
+- verify deactivation requires explicit confirmation
 - verify staff cannot submit team changes
 
 ### 7. Session Failure Recovery

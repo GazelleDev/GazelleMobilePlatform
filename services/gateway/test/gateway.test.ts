@@ -379,6 +379,17 @@ describe("gateway", () => {
           email?: string;
           role?: "owner" | "manager" | "staff";
         };
+        if (body.email === "owner@gazellecoffee.com") {
+          return new Response(
+            JSON.stringify({
+              requestId: "identity-request-duplicate-create",
+              code: "OPERATOR_EMAIL_ALREADY_EXISTS",
+              message: "A team member with that email already exists"
+            }),
+            { status: 409, headers: { "content-type": "application/json" } }
+          );
+        }
+
         const role = body.role ?? "staff";
         const capabilitiesByRole = {
           owner: [
@@ -428,6 +439,17 @@ describe("gateway", () => {
           role?: "owner" | "manager" | "staff";
           active?: boolean;
         };
+        if (body.email === "owner@gazellecoffee.com") {
+          return new Response(
+            JSON.stringify({
+              requestId: "identity-request-duplicate-update",
+              code: "OPERATOR_EMAIL_ALREADY_EXISTS",
+              message: "A team member with that email already exists"
+            }),
+            { status: 409, headers: { "content-type": "application/json" } }
+          );
+        }
+
         const role = body.role ?? "staff";
         const capabilitiesByRole = {
           owner: [
@@ -1509,6 +1531,42 @@ describe("gateway", () => {
       const upstreamHeaders = new Headers((createCall[1]?.headers ?? {}) as HeadersInit);
       expect(upstreamHeaders.get("x-user-id")).toBeNull();
     }
+
+    await app.close();
+  });
+
+  it("surfaces duplicate team-email conflicts from identity", async () => {
+    const app = await buildApp();
+    const operatorUserId = "123e4567-e89b-12d3-a456-426614174997";
+
+    const duplicateCreate = await app.inject({
+      method: "POST",
+      url: "/v1/admin/staff",
+      headers: ownerOperatorHeaders,
+      payload: {
+        displayName: "Duplicate Owner",
+        email: "owner@gazellecoffee.com",
+        role: "manager",
+        password: "DuplicateOwner123!"
+      }
+    });
+    expect(duplicateCreate.statusCode).toBe(409);
+    expect(duplicateCreate.json()).toMatchObject({
+      code: "OPERATOR_EMAIL_ALREADY_EXISTS"
+    });
+
+    const duplicateUpdate = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/staff/${operatorUserId}`,
+      headers: ownerOperatorHeaders,
+      payload: {
+        email: "owner@gazellecoffee.com"
+      }
+    });
+    expect(duplicateUpdate.statusCode).toBe(409);
+    expect(duplicateUpdate.json()).toMatchObject({
+      code: "OPERATOR_EMAIL_ALREADY_EXISTS"
+    });
 
     await app.close();
   });

@@ -207,6 +207,24 @@ describe("operator auth", () => {
       locationId: "flagship-01"
     });
 
+    const duplicateCreate = await app.inject({
+      method: "POST",
+      url: "/v1/operator/users",
+      headers: {
+        authorization: `Bearer ${ownerSession.accessToken}`
+      },
+      payload: {
+        displayName: "Duplicate Owner",
+        email: "owner@gazellecoffee.com",
+        role: "manager",
+        password: "DuplicateOwner123!"
+      }
+    });
+    expect(duplicateCreate.statusCode).toBe(409);
+    expect(duplicateCreate.json()).toMatchObject({
+      code: "OPERATOR_EMAIL_ALREADY_EXISTS"
+    });
+
     const staffCreate = await app.inject({
       method: "POST",
       url: "/v1/operator/users",
@@ -238,6 +256,21 @@ describe("operator auth", () => {
     expect(selfDeactivate.statusCode).toBe(400);
     expect(selfDeactivate.json()).toMatchObject({
       code: "INVALID_OPERATOR_UPDATE"
+    });
+
+    const conflictUpdate = await app.inject({
+      method: "PATCH",
+      url: `/v1/operator/users/${ownerCreate.json().operatorUserId as string}`,
+      headers: {
+        authorization: `Bearer ${ownerSession.accessToken}`
+      },
+      payload: {
+        email: "owner@gazellecoffee.com"
+      }
+    });
+    expect(conflictUpdate.statusCode).toBe(409);
+    expect(conflictUpdate.json()).toMatchObject({
+      code: "OPERATOR_EMAIL_ALREADY_EXISTS"
     });
 
     await app.close();

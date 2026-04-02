@@ -227,6 +227,10 @@ function normalizeGoogleEmailVerified(value: boolean | string | undefined) {
   return typeof value === "string" ? value.toLowerCase() === "true" : false;
 }
 
+function isOperatorEmailConflictError(error: unknown) {
+  return error instanceof Error && error.message === "OPERATOR_EMAIL_ALREADY_EXISTS";
+}
+
 function parseJsonSafely(rawValue: string) {
   if (!rawValue) {
     return undefined;
@@ -1418,6 +1422,13 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
       }
 
       const input = operatorUserCreateSchema.parse(request.body);
+      const existing = await repository.getOperatorUserByEmail(input.email);
+      if (existing) {
+        return reply
+          .status(409)
+          .send(buildApiError(request.id, "OPERATOR_EMAIL_ALREADY_EXISTS", "A team member with that email already exists"));
+      }
+
       const created = await repository.createOperatorUser({
         ...input,
         locationId: operator.locationId || defaultOperatorLocationId
@@ -1458,7 +1469,19 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
         return reply.status(400).send(buildApiError(request.id, "INVALID_OPERATOR_UPDATE", "You cannot deactivate your own account"));
       }
 
-      const updated = await repository.updateOperatorUser(operatorUserId, input);
+      let updated;
+      try {
+        updated = await repository.updateOperatorUser(operatorUserId, input);
+      } catch (error) {
+        if (isOperatorEmailConflictError(error)) {
+          return reply
+            .status(409)
+            .send(buildApiError(request.id, "OPERATOR_EMAIL_ALREADY_EXISTS", "A team member with that email already exists"));
+        }
+
+        throw error;
+      }
+
       if (!updated) {
         return reply.status(404).send(buildApiError(request.id, "OPERATOR_NOT_FOUND", "Operator user was not found"));
       }
