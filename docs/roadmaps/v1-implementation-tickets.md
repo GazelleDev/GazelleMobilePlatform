@@ -572,7 +572,7 @@ Status:
 
 - `owner`: Codex
 - `status`: code-ready, production-config blocked
-- `done`: Google SSO code paths and provider discovery are in place, and local provider status correctly reports `configured: false` when creds are absent
+- `done`: Google SSO code paths, provider discovery, local env placeholders, and the rollout/runbook mapping to free-first deploy secrets are in place, and local provider status correctly reports `configured: false` when creds are absent
 - `blocked`: Google OAuth client credentials, redirect URIs, and a public dashboard domain are still required before end-to-end validation can happen
 
 Goal:

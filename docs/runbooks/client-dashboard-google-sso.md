@@ -19,11 +19,20 @@ Provision the owner account first with:
 
 ## Required Google Console Setup
 
-Create a Google OAuth web application and capture:
+Create a Google OAuth `Web application` and capture:
 
 - client ID
 - client secret
 - authorized redirect URI for the dashboard callback
+
+Recommended settings:
+
+- app type: `Web application`
+- redirect URIs:
+  - `https://<client-dashboard-domain>/?google_auth_callback=1`
+  - `http://127.0.0.1:4173/?google_auth_callback=1` for local QA when needed
+- keep the redirect allowlist tight to the actual dashboard origins you intend to support
+- for V1, production plus localhost is usually enough; do not add broad preview-domain callbacks unless you intentionally want Google sign-in on preview deploys
 
 Recommended redirect URI pattern:
 
@@ -31,12 +40,19 @@ Recommended redirect URI pattern:
 
 ## Required Runtime Environment
 
-Set these on the identity service host:
+Set these on the identity service host or through `deploy-free`:
 
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_STATE_SECRET`
 - `GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS`
+
+For the free-first GitHub Actions deploy path, the mapping is:
+
+- GitHub secret `FREE_GOOGLE_OAUTH_CLIENT_ID` -> runtime `GOOGLE_OAUTH_CLIENT_ID`
+- GitHub secret `FREE_GOOGLE_OAUTH_CLIENT_SECRET` -> runtime `GOOGLE_OAUTH_CLIENT_SECRET`
+- GitHub secret `FREE_GOOGLE_OAUTH_STATE_SECRET` -> runtime `GOOGLE_OAUTH_STATE_SECRET`
+- GitHub variable `FREE_GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS` -> runtime `GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS`
 
 Example:
 
@@ -44,7 +60,13 @@ Example:
 GOOGLE_OAUTH_CLIENT_ID=...
 GOOGLE_OAUTH_CLIENT_SECRET=...
 GOOGLE_OAUTH_STATE_SECRET=replace-with-long-random-secret
-GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS=https://client.example.com/?google_auth_callback=1
+GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS=https://client.example.com/?google_auth_callback=1,http://127.0.0.1:4173/?google_auth_callback=1
+```
+
+Generate `GOOGLE_OAUTH_STATE_SECRET` with a long random value, for example:
+
+```bash
+openssl rand -base64 48
 ```
 
 ## Readiness Check
@@ -67,6 +89,18 @@ Expected shape:
 
 The client dashboard now uses this readiness response to disable the Google button when the backend is not configured yet.
 
+## Rollout Order
+
+1. Ensure the client dashboard domain is live on Vercel.
+2. Provision the owner account first by email.
+3. Create the Google OAuth web app in Google Cloud.
+4. Add the production callback URI and optional localhost callback URI.
+5. Set the four Google OAuth runtime values in GitHub vars/secrets for `deploy-free`.
+6. Redeploy the backend with `deploy-free`.
+7. Confirm `/v1/operator/auth/providers` returns `configured: true`.
+8. Test Google sign-in with the provisioned owner email.
+9. Test a non-provisioned Google account and confirm it is denied cleanly.
+
 ## Request Flow
 
 1. The browser calls `GET /v1/operator/auth/google/start?redirectUri=...`.
@@ -85,6 +119,29 @@ V1 policy:
 - verified Google email may link to an existing active account on first sign-in
 
 This keeps store, role, and permission assignment under platform control.
+
+Practical first-time flow:
+
+1. Provision the owner in the platform first.
+2. The owner signs in with Google using the same email address.
+3. Identity matches the verified Google user to the existing active dashboard user.
+4. The session inherits store, role, and capabilities from the platform database.
+5. If there is no active dashboard user for that verified email, access is denied.
+
+## Validation Matrix
+
+Successful cases:
+
+- provisioned owner email signs in with Google and lands in the dashboard
+- provisioned active staff email signs in with Google and receives only staff capabilities
+- repeat Google sign-in reuses the linked Google subject and keeps the same dashboard identity
+
+Expected-deny cases:
+
+- unknown Google email -> `OPERATOR_ACCESS_NOT_GRANTED`
+- inactive dashboard account -> denied
+- redirect URI not on the allowlist -> `INVALID_REDIRECT_URI`
+- stale or tampered state -> `INVALID_GOOGLE_STATE`
 
 ## V1 Limitations
 
