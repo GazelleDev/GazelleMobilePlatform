@@ -8,7 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { GlassActionPill } from "../src/cart/GlassActionPill";
 import { formatUsd, resolveMenuData, useMenuQuery, type MenuItem } from "../src/menu/catalog";
 import { useCheckoutFlow, type CheckoutConfirmation } from "../src/orders/flow";
-import { formatOrderStatus } from "../src/orders/history";
+import { formatOrderDateTime, formatOrderReference, formatOrderStatus } from "../src/orders/history";
 import { uiPalette, uiTypography } from "../src/ui/system";
 
 const DEV_PREVIEW_CONFIRMATION: CheckoutConfirmation = {
@@ -222,6 +222,8 @@ export default function CheckoutSuccessScreen() {
 
               <View style={styles.summarySection}>
                 <SummaryRow label="Status" value={formatOrderStatus(resolvedConfirmation.status)} />
+                <SummaryRow label="Order ref" value={formatOrderReference(resolvedConfirmation.orderId)} emphasized />
+                <SummaryRow label="Placed" value={formatOrderDateTime(resolvedConfirmation.occurredAt)} />
                 <SummaryRow label="Total" value={formatUsd(resolvedConfirmation.total.amountCents)} emphasized />
                 <SummaryRow label="Points Earned" value={`${earnedPoints} pts`} emphasized />
               </View>

@@ -30,6 +30,7 @@ import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../../src/navigation/tabB
 import {
   findLatestOrderTime,
   formatOrderDateTime,
+  formatOrderReference,
   formatOrderStatus,
   hasRefundActivity
 } from "../../src/orders/history";
@@ -484,7 +485,10 @@ function HistoryRow({
 
       <OrderItemStrip order={order} menuItemsById={menuItemsById} />
 
-      <Text style={styles.historyMeta}>{formatOrderDateTime(findLatestOrderTime(order))}</Text>
+      <View style={styles.historyMetaRow}>
+        <Text style={styles.historyMeta}>{formatOrderDateTime(findLatestOrderTime(order))}</Text>
+        <Text style={styles.historyMeta}>{`Pickup ${order.pickupCode}`}</Text>
+      </View>
       <Text style={styles.historyBody}>{getLatestTimelineNote(order)}</Text>
 
       {canOpenRefund ? (
@@ -664,12 +668,28 @@ export default function OrdersScreen() {
               <Text style={styles.activeTitle}>{getActiveOrderTitle(activeOrderStatus ?? activeOrder.status)}</Text>
               <Text style={styles.activeBody}>{getActiveOrderBody(activeOrderStatus ?? activeOrder.status)}</Text>
 
+              <OrderItemStrip order={activeOrder} menuItemsById={menuItemsById} />
+
               <View style={styles.pickupCodeBlock}>
                 <Text style={styles.metricLabel}>Pickup code</Text>
                 <Text style={styles.pickupCodeValue}>{activeOrder.pickupCode}</Text>
               </View>
 
               <OrderProgress status={activeOrderStatus ?? activeOrder.status} />
+
+              <View style={styles.activeSupportBlock}>
+                <View style={styles.activeSupportRow}>
+                  <Text style={styles.activeSupportLabel}>Updated</Text>
+                  <Text style={styles.activeSupportValue}>{formatOrderDateTime(findLatestOrderTime(activeOrder))}</Text>
+                </View>
+                <View style={styles.activeSupportRow}>
+                  <Text style={styles.activeSupportLabel}>Order ref</Text>
+                  <Text style={[styles.activeSupportValue, styles.activeSupportMono]}>{formatOrderReference(activeOrder.id)}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.activeStatusNote}>{getLatestTimelineNote(activeOrder)}</Text>
+              <Button label="Refresh Status" variant="secondary" onPress={refreshOrders} style={styles.activeRefreshButton} />
 
               {(activeOrderStatus ?? activeOrder.status) === "PENDING_PAYMENT" ? (
                 <Button
@@ -1017,6 +1037,50 @@ const styles = StyleSheet.create({
     marginTop: 22,
     alignSelf: "flex-start"
   },
+  activeSupportBlock: {
+    marginTop: 20,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border,
+    gap: 12
+  },
+  activeSupportRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 16
+  },
+  activeSupportLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    color: uiPalette.textMuted,
+    fontWeight: "700"
+  },
+  activeSupportValue: {
+    flexShrink: 1,
+    textAlign: "right",
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
+  },
+  activeSupportMono: {
+    letterSpacing: 1.2,
+    fontFamily: uiTypography.monoFamily
+  },
+  activeStatusNote: {
+    marginTop: 16,
+    fontSize: 14,
+    lineHeight: 21,
+    color: uiPalette.textSecondary
+  },
+  activeRefreshButton: {
+    marginTop: 18,
+    alignSelf: "flex-start"
+  },
   sectionMessage: {
     marginTop: 18,
     fontSize: 15,
@@ -1102,10 +1166,16 @@ const styles = StyleSheet.create({
     color: uiPalette.textSecondary
   },
   historyMeta: {
-    marginTop: 6,
     fontSize: 13,
     lineHeight: 19,
     color: uiPalette.textSecondary
+  },
+  historyMetaRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
   },
   historyBody: {
     marginTop: 8,

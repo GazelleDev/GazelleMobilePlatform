@@ -19,6 +19,10 @@ export function formatOrderStatus(status: string) {
   return status.replaceAll("_", " ");
 }
 
+export function formatOrderReference(orderId: string) {
+  return orderId.slice(0, 8).toUpperCase();
+}
+
 export function formatOrderTimelineNote(note: string) {
   const normalized = note
     .replace(/^Clover payment accepted;\s*/i, "")
