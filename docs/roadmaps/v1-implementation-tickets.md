@@ -1,6 +1,6 @@
 # V1 Implementation Tickets
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-02`
 
 ## Purpose
 
@@ -857,10 +857,18 @@ Optional-but-likely within V1:
 
 ## After This Document
 
-The next useful execution step is to move the still-blocked items out of repo work and into rollout work:
+The next useful execution step is to move the still-blocked items out of repo work and into rollout work in this order:
 
-- backend host, secrets, GHCR image publish, and live smoke-check
-- Vercel setup for the client dashboard
-- Google OAuth credentials and redirect URIs
-- mobile pilot builds and TestFlight distribution
-- final live browser/device QA on the deployed pilot surfaces
+1. backend host bootstrap, GitHub vars/secrets, first GHCR image publish, `deploy-free`, and the first live smoke check
+2. client dashboard Vercel project/domain setup, production API base URL, and deployed-browser QA
+3. Google OAuth client credentials plus redirect URI validation on the live dashboard domain
+4. mobile Expo/EAS and App Store Connect setup, first internal or TestFlight pilot build, and real-device QA against the deployed backend
+5. live Clover and Apple Pay production credentials, webhook secret rollout, and provider validation against the deployed backend
+6. LatteLink production lead sink configuration and GA4 measurement ID verification in Vercel
+
+Repo-side blockers already cleared for those rollout lanes now include:
+
+- backend image publishing, host bootstrap, restore drills, smoke checks, and live Clover env validation
+- client dashboard Vercel workflow and Google SSO rollout mapping
+- mobile EAS/TestFlight env matrix and release preflight
+- LatteLink Vercel env preflight for lead capture and analytics
