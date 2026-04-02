@@ -8,6 +8,8 @@ There is no dedicated admin console app in the repo yet.
 
 That means the roadmap begins with a platform-control-plane definition, not with UI polish work.
 
+Detailed V1 build target: [admin-console-v1-spec.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/admin-console-v1-spec.md)
+
 This surface is for LatteLink internal admins, not client store staff.
 
 Its job is to manage:
