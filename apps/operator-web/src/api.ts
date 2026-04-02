@@ -47,6 +47,18 @@ export type OperatorDashboardSnapshot = {
 
 type RequestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
+export class ApiRequestError extends Error {
+  statusCode: number;
+  payload: unknown;
+
+  constructor(message: string, statusCode: number, payload: unknown) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.statusCode = statusCode;
+    this.payload = payload;
+  }
+}
+
 function trimToUndefined(value: string | undefined | null) {
   const next = value?.trim();
   return next && next.length > 0 ? next : undefined;
@@ -100,6 +112,10 @@ export function extractApiErrorMessage(payload: unknown, statusCode: number) {
   return `Request failed (${statusCode})`;
 }
 
+export function isApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError;
+}
+
 function toStoredSession(apiBaseUrl: string, payload: z.output<typeof operatorSessionSchema>): OperatorSession {
   return storedOperatorSessionSchema.parse({
     apiBaseUrl: normalizeApiBaseUrl(apiBaseUrl),
@@ -124,7 +140,7 @@ async function requestJson<TSchema extends z.ZodTypeAny>(params: {
 
   const parsedPayload = parseJsonSafely(await response.text());
   if (!response.ok) {
-    throw new Error(extractApiErrorMessage(parsedPayload, response.status));
+    throw new ApiRequestError(extractApiErrorMessage(parsedPayload, response.status), response.status, parsedPayload);
   }
 
   return schema.parse(parsedPayload);

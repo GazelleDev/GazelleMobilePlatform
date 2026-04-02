@@ -13,6 +13,7 @@ import {
   deleteOperatorMenuItem,
   exchangeOperatorGoogleCode,
   fetchOperatorSnapshot,
+  isApiRequestError,
   logoutOperatorSession,
   refreshOperatorSession,
   resolveDefaultApiBaseUrl,
@@ -27,11 +28,16 @@ import {
   type OperatorUser
 } from "./api.js";
 import {
+  canAdvanceOrderStatus,
   canAccessCapability,
-  canManageOrderStatus,
+  canCreateMenuItems,
+  canManageTeamMembers,
+  canToggleMenuItemVisibility,
+  canUpdateStoreSettings,
   filterOrdersByView,
   formatOrderStatus,
   getAvailableSections,
+  getOrderControlUnavailableMessage,
   getOperatorRoleLabel,
   getOrderActions,
   getOrderCustomerLabel,
@@ -237,6 +243,23 @@ function setNotice(message: string | null) {
 
 function setError(message: string | null) {
   state.errorMessage = message;
+}
+
+function isSessionAuthFailure(error: unknown) {
+  if (isApiRequestError(error)) {
+    return error.statusCode === 401;
+  }
+
+  return error instanceof Error && (error.message.toLowerCase().includes("refresh") || error.message.toLowerCase().includes("auth"));
+}
+
+async function handleOperatorActionError(error: unknown, fallbackMessage: string) {
+  if (isSessionAuthFailure(error)) {
+    await signOut("Your client dashboard session expired. Sign in again to continue.");
+    return;
+  }
+
+  setError(error instanceof Error ? error.message : fallbackMessage);
 }
 
 function stopAutoRefresh() {
@@ -591,12 +614,11 @@ async function loadDashboard() {
       clearPendingCancel();
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to load client dashboard data.";
-    if (message.toLowerCase().includes("refresh") || message.toLowerCase().includes("auth")) {
+    if (isSessionAuthFailure(error)) {
       await signOut("Your client dashboard session expired. Sign in again to continue.");
       return;
     }
-    setError(message);
+    setError(error instanceof Error ? error.message : "Unable to load client dashboard data.");
   } finally {
     state.loading = false;
     startAutoRefresh();
@@ -927,7 +949,8 @@ function renderCancelButton(order: OperatorOrder, manualStatusControlsEnabled: b
 }
 
 function renderOrderDetail(order: OperatorOrder, appConfig: AppConfig | null) {
-  const manualStatusControlsEnabled = canManageOrderStatus(appConfig);
+  const manualStatusControlsEnabled = canAdvanceOrderStatus(state.session?.operator ?? null, appConfig);
+  const manualStatusControlsMessage = getOrderControlUnavailableMessage(state.session?.operator ?? null, appConfig);
   const fulfillmentMode = resolveAppConfigFulfillmentMode(appConfig);
   const actions = getOrderActions(order, fulfillmentMode);
   const timeline = order.timeline
@@ -1006,7 +1029,7 @@ function renderOrderDetail(order: OperatorOrder, appConfig: AppConfig | null) {
     ${
       manualStatusControlsEnabled
         ? `<div class="button-row">${actionButtons}${renderCancelButton(order, manualStatusControlsEnabled)}</div>`
-        : `<p class="muted-copy">Time-based fulfillment is active, so manual order controls are disabled.</p>`
+        : `<p class="muted-copy">${escapeHtml(manualStatusControlsMessage ?? "Manual order controls are unavailable for this store.")}</p>`
     }
     <div class="dash-detail-block">
       <div class="dash-detail-block__label">Timeline</div>
@@ -1171,8 +1194,8 @@ function renderMenuCategory(category: OperatorMenuCategory, canWrite: boolean, c
 
 function renderMenuSection() {
   const menuIsPlatformManaged = isPlatformManagedMenu(state.appConfig);
-  const canWrite = menuIsPlatformManaged && canAccessCapability(state.session?.operator, "menu:write");
-  const canToggleVisibility = menuIsPlatformManaged && canAccessCapability(state.session?.operator, "menu:visibility");
+  const canWrite = canCreateMenuItems(state.session?.operator ?? null, state.appConfig);
+  const canToggleVisibility = canToggleMenuItemVisibility(state.session?.operator ?? null, state.appConfig);
   const createForm = canWrite
     ? `
         <article class="dash-surface">
@@ -1253,7 +1276,7 @@ function renderStoreSection() {
     `;
   }
 
-  const canWrite = canAccessCapability(state.session?.operator, "store:write");
+  const canWrite = canUpdateStoreSettings(state.session?.operator ?? null);
 
   return `
     <section class="dash-section">
@@ -1316,7 +1339,7 @@ function renderStoreSection() {
 }
 
 function renderTeamSection() {
-  const canWrite = canAccessCapability(state.session?.operator, "staff:write");
+  const canWrite = canManageTeamMembers(state.session?.operator ?? null);
   return `
     <section class="dash-section">
       ${renderSectionHeading({
@@ -1634,6 +1657,12 @@ async function handleMenuCreateSubmit(form: HTMLFormElement) {
     return;
   }
 
+  if (!canCreateMenuItems(state.session.operator, state.appConfig)) {
+    setError("Menu item creation is unavailable until platform-managed menu editing is enabled for your account.");
+    render();
+    return;
+  }
+
   const formData = new FormData(form);
   const visibleField = form.elements.namedItem("visible");
   const visible = visibleField instanceof HTMLInputElement ? visibleField.checked : true;
@@ -1653,7 +1682,7 @@ async function handleMenuCreateSubmit(form: HTMLFormElement) {
     form.reset();
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to create menu item.");
+    await handleOperatorActionError(error, "Unable to create menu item.");
   } finally {
     state.creatingMenuItem = false;
     render();
@@ -1662,6 +1691,12 @@ async function handleMenuCreateSubmit(form: HTMLFormElement) {
 
 async function handleMenuItemSubmit(form: HTMLFormElement) {
   if (!state.session) {
+    return;
+  }
+
+  if (!canCreateMenuItems(state.session.operator, state.appConfig)) {
+    setError("Menu editing is unavailable until platform-managed menu editing is enabled for your account.");
+    render();
     return;
   }
 
@@ -1686,7 +1721,7 @@ async function handleMenuItemSubmit(form: HTMLFormElement) {
     setNotice(`Saved ${itemId}.`);
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to save menu item.");
+    await handleOperatorActionError(error, "Unable to save menu item.");
   } finally {
     state.busyMenuItemId = null;
     render();
@@ -1695,6 +1730,12 @@ async function handleMenuItemSubmit(form: HTMLFormElement) {
 
 async function handleStoreSubmit(form: HTMLFormElement) {
   if (!state.session) {
+    return;
+  }
+
+  if (!canUpdateStoreSettings(state.session.operator)) {
+    setError("Store settings are read-only for your account.");
+    render();
     return;
   }
 
@@ -1711,7 +1752,7 @@ async function handleStoreSubmit(form: HTMLFormElement) {
     setNotice("Saved store settings.");
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to save store settings.");
+    await handleOperatorActionError(error, "Unable to save store settings.");
   } finally {
     state.savingStore = false;
     render();
@@ -1720,6 +1761,12 @@ async function handleStoreSubmit(form: HTMLFormElement) {
 
 async function handleTeamCreateSubmit(form: HTMLFormElement) {
   if (!state.session) {
+    return;
+  }
+
+  if (!canManageTeamMembers(state.session.operator)) {
+    setError("Team management is only available to accounts with staff access controls.");
+    render();
     return;
   }
 
@@ -1739,7 +1786,7 @@ async function handleTeamCreateSubmit(form: HTMLFormElement) {
     form.reset();
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to create team member account.");
+    await handleOperatorActionError(error, "Unable to create team member account.");
   } finally {
     state.creatingTeamUser = false;
     render();
@@ -1748,6 +1795,12 @@ async function handleTeamCreateSubmit(form: HTMLFormElement) {
 
 async function handleTeamUserSubmit(form: HTMLFormElement) {
   if (!state.session) {
+    return;
+  }
+
+  if (!canManageTeamMembers(state.session.operator)) {
+    setError("Team management is only available to accounts with staff access controls.");
+    render();
     return;
   }
 
@@ -1774,7 +1827,7 @@ async function handleTeamUserSubmit(form: HTMLFormElement) {
     setNotice("Updated team member access.");
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to update team member access.");
+    await handleOperatorActionError(error, "Unable to update team member access.");
   } finally {
     state.busyTeamUserId = null;
     render();
@@ -1786,8 +1839,11 @@ async function handleOrderAdvance(orderId: string, status: "IN_PREP" | "READY" |
     return;
   }
 
-  if (!canManageOrderStatus(state.appConfig)) {
-    setError("Manual order status controls are unavailable until live staff fulfillment is enabled for this store.");
+  if (!canAdvanceOrderStatus(state.session.operator, state.appConfig)) {
+    setError(
+      getOrderControlUnavailableMessage(state.session.operator, state.appConfig) ??
+        "Manual order status controls are unavailable for this store."
+    );
     render();
     return;
   }
@@ -1801,7 +1857,7 @@ async function handleOrderAdvance(orderId: string, status: "IN_PREP" | "READY" |
     await updateOperatorOrderStatus(state.session, orderId, { status, note });
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to update order.");
+    await handleOperatorActionError(error, "Unable to update order.");
   } finally {
     state.busyOrderId = null;
     render();
@@ -1813,6 +1869,12 @@ async function handleMenuVisibilityToggle(itemId: string, visible: boolean) {
     return;
   }
 
+  if (!canToggleMenuItemVisibility(state.session.operator, state.appConfig)) {
+    setError("Menu visibility controls are unavailable until platform-managed menu visibility is enabled for your account.");
+    render();
+    return;
+  }
+
   try {
     state.busyMenuVisibilityItemId = itemId;
     setError(null);
@@ -1821,7 +1883,7 @@ async function handleMenuVisibilityToggle(itemId: string, visible: boolean) {
     setNotice(visible ? "Item is visible in the app." : "Item was hidden from the app.");
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to change item visibility.");
+    await handleOperatorActionError(error, "Unable to change item visibility.");
   } finally {
     state.busyMenuVisibilityItemId = null;
     render();
@@ -1830,6 +1892,12 @@ async function handleMenuVisibilityToggle(itemId: string, visible: boolean) {
 
 async function handleMenuItemDelete(itemId: string) {
   if (!state.session) {
+    return;
+  }
+
+  if (!canCreateMenuItems(state.session.operator, state.appConfig)) {
+    setError("Menu item removal is unavailable until platform-managed menu editing is enabled for your account.");
+    render();
     return;
   }
 
@@ -1845,7 +1913,7 @@ async function handleMenuItemDelete(itemId: string) {
     setNotice("Menu item removed.");
     await loadDashboard();
   } catch (error) {
-    setError(error instanceof Error ? error.message : "Unable to remove the menu item.");
+    await handleOperatorActionError(error, "Unable to remove the menu item.");
   } finally {
     state.busyDeleteMenuItemId = null;
     render();
@@ -1915,6 +1983,12 @@ root.addEventListener("click", (event) => {
   if (action === "set-section") {
     const section = actionElement.dataset.section;
     if (section === "overview" || section === "orders" || section === "menu" || section === "store" || section === "team") {
+      if (!getAvailableDashboardSections().includes(section)) {
+        setError("That dashboard section is unavailable for this store or your current role.");
+        render();
+        return;
+      }
+
       if (section !== "orders") {
         stopAutoRefresh();
         clearPendingCancel();

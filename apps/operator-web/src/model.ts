@@ -191,6 +191,54 @@ export function canManageOrderStatus(
   return isStaffDashboardEnabled(config) && isOrderTrackingEnabled(config) && resolveAppConfigFulfillmentMode(config) === "staff";
 }
 
+export function canAdvanceOrderStatus(
+  operator: Pick<OperatorUser, "capabilities"> | null | undefined,
+  config: Pick<AppConfig, "storeCapabilities" | "featureFlags" | "loyaltyEnabled" | "fulfillment"> | null | undefined
+) {
+  return canAccessCapability(operator, "orders:write") && canManageOrderStatus(config);
+}
+
+export function getOrderControlUnavailableMessage(
+  operator: Pick<OperatorUser, "capabilities"> | null | undefined,
+  config: Pick<AppConfig, "storeCapabilities" | "featureFlags" | "loyaltyEnabled" | "fulfillment"> | null | undefined
+) {
+  if (!isStaffDashboardEnabled(config) || !isOrderTrackingEnabled(config)) {
+    return "Live order tracking is disabled for this store.";
+  }
+
+  if (!canAccessCapability(operator, "orders:write")) {
+    return "You have read-only access to live orders for this store.";
+  }
+
+  if (resolveAppConfigFulfillmentMode(config) !== "staff") {
+    return "Time-based fulfillment is active, so manual order controls are disabled.";
+  }
+
+  return null;
+}
+
+export function canCreateMenuItems(
+  operator: Pick<OperatorUser, "capabilities"> | null | undefined,
+  config: Pick<AppConfig, "storeCapabilities" | "featureFlags" | "loyaltyEnabled" | "fulfillment"> | null | undefined
+) {
+  return isPlatformManagedMenu(config) && canAccessCapability(operator, "menu:write");
+}
+
+export function canToggleMenuItemVisibility(
+  operator: Pick<OperatorUser, "capabilities"> | null | undefined,
+  config: Pick<AppConfig, "storeCapabilities" | "featureFlags" | "loyaltyEnabled" | "fulfillment"> | null | undefined
+) {
+  return isPlatformManagedMenu(config) && canAccessCapability(operator, "menu:visibility");
+}
+
+export function canUpdateStoreSettings(operator: Pick<OperatorUser, "capabilities"> | null | undefined) {
+  return canAccessCapability(operator, "store:write");
+}
+
+export function canManageTeamMembers(operator: Pick<OperatorUser, "capabilities"> | null | undefined) {
+  return canAccessCapability(operator, "staff:write");
+}
+
 export function getOrderActions(
   order: OperatorOrder,
   fulfillmentMode: AppConfig["fulfillment"]["mode"] = "staff"

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  canAdvanceOrderStatus,
   canAccessCapability,
+  canCreateMenuItems,
   canManageOrderStatus,
+  canManageTeamMembers,
+  canToggleMenuItemVisibility,
+  canUpdateStoreSettings,
   countHiddenMenuItems,
   countVisibleMenuItems,
   filterActiveOrders,
@@ -9,6 +14,7 @@ import {
   formatOrderStatus,
   getAppConfigCapabilityLabels,
   getAvailableSections,
+  getOrderControlUnavailableMessage,
   getOperatorRoleLabel,
   getOrderActions,
   getOrderCustomerLabel,
@@ -249,6 +255,47 @@ describe("operator-web model", () => {
     expect(canAccessCapability(sampleOperator, "orders:write")).toBe(true);
     expect(canAccessCapability(sampleOperator, "staff:write")).toBe(false);
     expect(canAccessCapability(null, "orders:read")).toBe(false);
+  });
+
+  it("derives dashboard write access from capabilities and store config", () => {
+    expect(canAdvanceOrderStatus(sampleOperator, sampleAppConfig)).toBe(true);
+    expect(canCreateMenuItems(sampleOperator, sampleAppConfig)).toBe(false);
+    expect(canToggleMenuItemVisibility(sampleOperator, sampleAppConfig)).toBe(true);
+    expect(canUpdateStoreSettings(sampleOperator)).toBe(false);
+    expect(canManageTeamMembers(sampleOperator)).toBe(false);
+
+    expect(
+      getOrderControlUnavailableMessage(
+        { ...sampleOperator, capabilities: ["orders:read"] },
+        sampleAppConfig
+      )
+    ).toBe("You have read-only access to live orders for this store.");
+
+    expect(
+      getOrderControlUnavailableMessage(sampleOperator, {
+        ...sampleAppConfig,
+        storeCapabilities: {
+          ...sampleAppConfig.storeCapabilities,
+          operations: {
+            ...sampleAppConfig.storeCapabilities.operations,
+            fulfillmentMode: "time_based"
+          }
+        }
+      })
+    ).toBe("Time-based fulfillment is active, so manual order controls are disabled.");
+
+    expect(
+      getOrderControlUnavailableMessage(sampleOperator, {
+        ...sampleAppConfig,
+        storeCapabilities: {
+          ...sampleAppConfig.storeCapabilities,
+          operations: {
+            ...sampleAppConfig.storeCapabilities.operations,
+            liveOrderTrackingEnabled: false
+          }
+        }
+      })
+    ).toBe("Live order tracking is disabled for this store.");
   });
 
   it("normalizes menu, store, and team form inputs before submission", () => {
