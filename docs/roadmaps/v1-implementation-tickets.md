@@ -1173,4 +1173,40 @@ Acceptance criteria:
 - the GitHub release workflow only creates valid semantic-version tags from `main`
 - GitHub releases are created from the same semver tags that define official released versions
 - the repo no longer exposes a stale `Changesets` release path in GitHub workflows or package dependencies
+
+### XS-V1-08 Squash-Merge Dev Reset Rule
+
+Status:
+
+- `owner`: Codex
+- `status`: validated locally, pending merge to main
+- `done`: documented that `main` is squash-merge-only, documented that `dev` is disposable after each merged `dev` to `main` PR, added the exact post-merge reset sequence for recreating `dev` from current `main`, and clarified the required force-push behavior for refreshing `origin/dev` after a squash merge
+- `blocked`: no external blocker
+
+Goal:
+Make the branch-reset behavior explicit so the `dev` branch does not drift after squash-only merges to `main`.
+
+Scope:
+
+- document the squash-only merge assumption for `main`
+- document that `dev` is disposable after each merged section PR
+- define the exact local reset sequence from updated `main`
+- define the required remote `origin/dev` refresh after the reset
+- clarify that the old pre-merge `dev` history is not preserved as the next working branch tip
+
+Key deliverables:
+
+- one updated development-flow runbook with squash-only post-merge reset instructions
+- one explicit rule that `dev` is recreated or reset from merged `main` after every squash merge
+
+Dependencies:
+
+- `XS-V1-04`
+
+Acceptance criteria:
+
+- the docs state that `main` uses squash-only merges
+- the docs state that `dev` is disposable after each merged `dev` to `main` PR
+- the docs provide exact commands or equivalent steps for resetting local `dev` from updated `main`
+- the docs require refreshing `origin/dev` after the post-merge reset
 - post-launch hotfix flow is documented as `main` -> `hotfix/*` -> `main` -> `dev`

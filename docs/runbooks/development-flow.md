@@ -19,11 +19,13 @@ The goal is to keep every change:
 - `main`
   - release branch
   - only receives changes through pull requests from `dev`
+  - squash-only merge target
   - no direct implementation commits
 - `dev`
   - only active working branch for V1 delivery
   - all ticket work is committed here first
   - all ticket work is pushed to `origin/dev`
+  - disposable working branch that is recreated or reset from `main` after each merged `dev` to `main` PR
 - no feature branch should be created unless the user explicitly asks for it
 
 ## Ticket Rule
@@ -210,13 +212,31 @@ After a `dev` to `main` PR merges:
 
 1. run the GitHub `release` workflow on `main` if this merged section is cutting an official version
 2. update local `main` from `origin/main`
-3. make sure local `dev` is aligned with the merged `main` state before starting the next section
-4. push the aligned `dev` state back to `origin/dev` before starting the next ticket section
+3. recreate or reset local `dev` from the updated `main`
+4. refresh `origin/dev` so the remote `dev` branch matches the new local `dev`
+5. start the next ticket section from that refreshed `dev`
 
-The exact alignment command can vary depending on whether `main` fast-forwarded cleanly or gained a merge commit, but the rule does not change:
+Because `main` is squash-merge-only, the old `dev` commit history is not the same history that now exists on `main`.
+
+Treat `dev` as disposable after each merged `dev` to `main` PR.
+
+Recommended reset sequence:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git branch -D dev
+git switch -c dev main
+git push --force-with-lease origin dev
+```
+
+If you prefer not to delete the local branch name first, an equivalent reset is acceptable as long as the result is the same: local `dev` and `origin/dev` must both point at the current merged `main` tip before new work begins.
+
+The rule does not change:
 
 - do not start the next section from a stale `dev`
 - `dev` must be based on the current merged `main`
+- `origin/dev` must be refreshed after the squash-merge reset
 
 ## Prohibited Flow
 
