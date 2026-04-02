@@ -36,6 +36,37 @@ Each ticket includes:
 - dependencies
 - acceptance criteria
 
+## Ownership Model
+
+For V1, assume all engineering delivery in this document is owned by `Codex`.
+
+That means:
+
+- implementation
+- refactors
+- verification
+- workflow changes
+- docs updates
+- local commits
+
+User-side work only applies where Codex cannot act directly, such as:
+
+- third-party account creation
+- domain/DNS changes
+- provider credentials
+- store/client business decisions
+- platform secrets that only the account owner can supply
+
+Unless you explicitly reprioritize the work, Codex should execute the tickets in critical-path order.
+
+## Status Convention
+
+Default status for all tickets in this document:
+
+- `owner`: Codex
+- `status`: queued
+- `execution rule`: follow the V1 critical path first, then pull remaining V1 tickets by dependency order
+
 ## Backend Platform Tickets
 
 ### BE-V1-01 Free-First Deployment Alignment
