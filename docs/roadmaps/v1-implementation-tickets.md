@@ -360,6 +360,41 @@ Acceptance criteria:
 - Clover OAuth refresh is rate limited at the gateway
 - Clover webhook ingress is rate limited at the gateway before the request reaches `payments`
 
+### BE-V1-09 Gateway Contract Artifact Drift Fix
+
+Status:
+
+- `owner`: Codex
+- `status`: repo-complete, locally validated
+- `done`: regenerated the committed gateway OpenAPI artifact and mobile SDK generated types after the Clover public-route additions, then reran the contract-compat coverage so the generated outputs match the live gateway surface again
+- `blocked`: none
+
+Goal:
+Bring the committed gateway OpenAPI and generated SDK artifacts back in sync after the Clover public-route changes.
+
+Scope:
+
+- regenerate committed gateway OpenAPI artifacts after the Clover route additions
+- regenerate the mobile SDK generated types from the updated gateway spec
+- verify the contract-drift guard passes locally
+- keep the fix scoped to generated artifacts and the tracking ticket
+
+Key deliverables:
+
+- updated `services/gateway/openapi/openapi.json`
+- updated `packages/sdk-mobile/src/generated/types.ts`
+- local contract-drift verification evidence
+
+Dependencies:
+
+- `BE-V1-07`
+
+Acceptance criteria:
+
+- committed gateway OpenAPI artifacts include the public Clover OAuth and webhook routes
+- committed SDK generated types match the updated gateway OpenAPI spec
+- the contract-drift guard no longer fails for the Clover public-route changes
+
 ## Customer Frontend Mobile Tickets
 
 ### MF-V1-01 Session and Auth Hardening
