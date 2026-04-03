@@ -430,6 +430,46 @@ Acceptance criteria:
 - `GET /v1/payments/clover/oauth/status` no longer returns `UPSTREAM_UNAVAILABLE` on the live free-first host
 - Clover webhook URL verification can reach the public API without `502 Bad Gateway`
 
+### BE-V1-11 Gateway Upstream Config Fail-Fast Hardening
+
+Status:
+
+- `owner`: Codex
+- `status`: repo-complete, locally validated
+- `done`: added production-only gateway startup validation for every required upstream base URL, preserved localhost fallbacks for non-production development, and verified the guard with gateway tests covering each required `*_SERVICE_BASE_URL`
+- `blocked`: none
+
+Goal:
+Make the gateway fail fast in production whenever a required upstream base URL is missing instead of silently routing to localhost fallbacks.
+
+Scope:
+
+- require all gateway upstream base URLs in production:
+  - identity
+  - orders
+  - catalog
+  - payments
+  - loyalty
+  - notifications
+- preserve localhost fallbacks only for non-production local development
+- add regression coverage proving production startup fails when any required upstream is omitted
+
+Key deliverables:
+
+- production-only gateway upstream config validation
+- tests covering each required upstream env var
+- updated rollout safety so missing service wiring is caught at deploy time instead of during later feature QA
+
+Dependencies:
+
+- `BE-V1-10`
+
+Acceptance criteria:
+
+- `gateway` startup throws in production when any required `*_SERVICE_BASE_URL` env var is missing
+- non-production local development can still rely on localhost defaults
+- regression tests cover each required upstream base URL
+
 ## Customer Frontend Mobile Tickets
 
 ### MF-V1-01 Session and Auth Hardening

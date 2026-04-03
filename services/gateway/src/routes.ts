@@ -284,6 +284,25 @@ function trimToUndefined(value: string | undefined) {
   return next && next.length > 0 ? next : undefined;
 }
 
+function resolveServiceBaseUrl(params: {
+  envVar: string;
+  serviceLabel: string;
+  fallbackUrl: string;
+}) {
+  const { envVar, serviceLabel, fallbackUrl } = params;
+  const configured = trimToUndefined(process.env[envVar]);
+
+  if (configured) {
+    return configured;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(`${envVar} must be configured in production for ${serviceLabel} upstream routing`);
+  }
+
+  return fallbackUrl;
+}
+
 // Local JWT verification is intentionally fail-closed. Once JWT mode is enabled, malformed or tampered
 // bearer tokens are treated as unauthorized instead of falling back to identity roundtrips.
 function verifyJwtAccessToken(token: string, secret: string): { userId: string } | undefined {
@@ -905,13 +924,37 @@ async function requireAuthenticatedCustomer(params: {
 }
 
 export async function registerRoutes(app: FastifyInstance) {
-  const identityBaseUrl = process.env.IDENTITY_SERVICE_BASE_URL ?? "http://127.0.0.1:3000";
-  const ordersBaseUrl = process.env.ORDERS_SERVICE_BASE_URL ?? "http://127.0.0.1:3001";
+  const identityBaseUrl = resolveServiceBaseUrl({
+    envVar: "IDENTITY_SERVICE_BASE_URL",
+    serviceLabel: "Identity",
+    fallbackUrl: "http://127.0.0.1:3000"
+  });
+  const ordersBaseUrl = resolveServiceBaseUrl({
+    envVar: "ORDERS_SERVICE_BASE_URL",
+    serviceLabel: "Orders",
+    fallbackUrl: "http://127.0.0.1:3001"
+  });
   const ordersInternalApiToken = trimToUndefined(process.env.ORDERS_INTERNAL_API_TOKEN);
-  const catalogBaseUrl = process.env.CATALOG_SERVICE_BASE_URL ?? "http://127.0.0.1:3002";
-  const paymentsBaseUrl = process.env.PAYMENTS_SERVICE_BASE_URL ?? "http://127.0.0.1:3003";
-  const loyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL ?? "http://127.0.0.1:3004";
-  const notificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL ?? "http://127.0.0.1:3005";
+  const catalogBaseUrl = resolveServiceBaseUrl({
+    envVar: "CATALOG_SERVICE_BASE_URL",
+    serviceLabel: "Catalog",
+    fallbackUrl: "http://127.0.0.1:3002"
+  });
+  const paymentsBaseUrl = resolveServiceBaseUrl({
+    envVar: "PAYMENTS_SERVICE_BASE_URL",
+    serviceLabel: "Payments",
+    fallbackUrl: "http://127.0.0.1:3003"
+  });
+  const loyaltyBaseUrl = resolveServiceBaseUrl({
+    envVar: "LOYALTY_SERVICE_BASE_URL",
+    serviceLabel: "Loyalty",
+    fallbackUrl: "http://127.0.0.1:3004"
+  });
+  const notificationsBaseUrl = resolveServiceBaseUrl({
+    envVar: "NOTIFICATIONS_SERVICE_BASE_URL",
+    serviceLabel: "Notifications",
+    fallbackUrl: "http://127.0.0.1:3005"
+  });
   const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const internalAdminApiToken = trimToUndefined(process.env.INTERNAL_ADMIN_API_TOKEN);
   const jwtSecret = trimToUndefined(process.env.JWT_SECRET);

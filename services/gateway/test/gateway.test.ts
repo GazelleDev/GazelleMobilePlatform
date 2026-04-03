@@ -16,6 +16,7 @@ describe("gateway", () => {
   let previousInternalAdminToken: string | undefined;
   let previousOrdersInternalToken: string | undefined;
   let previousGatewayOrderStreamPollMs: string | undefined;
+  let previousNodeEnv: string | undefined;
   let queuedOrderStatuses: Map<string, Array<"PENDING_PAYMENT" | "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED">>;
 
   function buildOrderPayload(
@@ -82,6 +83,7 @@ describe("gateway", () => {
     previousInternalAdminToken = process.env.INTERNAL_ADMIN_API_TOKEN;
     previousOrdersInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
     previousGatewayOrderStreamPollMs = process.env.GATEWAY_ORDER_STREAM_POLL_MS;
+    previousNodeEnv = process.env.NODE_ENV;
     queuedOrderStatuses = new Map();
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
     process.env.ORDERS_SERVICE_BASE_URL = "http://orders.internal";
@@ -1235,6 +1237,26 @@ describe("gateway", () => {
     } else {
       process.env.GATEWAY_ORDER_STREAM_POLL_MS = previousGatewayOrderStreamPollMs;
     }
+
+    if (previousNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
+  it.each([
+    ["IDENTITY_SERVICE_BASE_URL", "Identity"],
+    ["ORDERS_SERVICE_BASE_URL", "Orders"],
+    ["CATALOG_SERVICE_BASE_URL", "Catalog"],
+    ["PAYMENTS_SERVICE_BASE_URL", "Payments"],
+    ["LOYALTY_SERVICE_BASE_URL", "Loyalty"],
+    ["NOTIFICATIONS_SERVICE_BASE_URL", "Notifications"]
+  ])("fails fast in production when %s is missing", async (envVar, serviceLabel) => {
+    process.env.NODE_ENV = "production";
+    delete process.env[envVar];
+
+    await expect(buildApp()).rejects.toThrow(`${envVar} must be configured in production for ${serviceLabel} upstream routing`);
   });
 
   it("returns health", async () => {
