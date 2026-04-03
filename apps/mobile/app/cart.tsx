@@ -27,6 +27,8 @@ import {
   CheckoutSubmissionError,
   createDemoApplePayToken,
   quoteItemsEqual,
+  resolveInlineCheckoutErrorMessage,
+  shouldShowCheckoutFailureScreen,
   toQuoteItems,
   useApplePayCheckoutMutation
 } from "../src/orders/checkout";
@@ -311,6 +313,7 @@ export default function CartModalScreen() {
   const [nativeApplePayPending, setNativeApplePayPending] = useState(false);
   const [cardCheckoutPending, setCardCheckoutPending] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const [statusTone, setStatusTone] = useState<"info" | "warning">("info");
   const stickyActionDisabled = isAuthenticated
     ? !checkoutReady ||
       nativeApplePayPending ||
@@ -364,6 +367,7 @@ export default function CartModalScreen() {
 
   function refreshCheckoutContext() {
     setStatusMessage("");
+    setStatusTone("info");
     void Promise.allSettled([appConfigQuery.refetch(), storeConfigQuery.refetch(), menuQuery.refetch()]);
   }
 
@@ -374,6 +378,7 @@ export default function CartModalScreen() {
     clearFailure();
     clearRetryOrder();
     setStatusMessage("");
+    setStatusTone("info");
   }
 
   function submitCheckout(
@@ -384,10 +389,12 @@ export default function CartModalScreen() {
   ) {
     if (!storeConfig || !appConfig) {
       setStatusMessage(checkoutUnavailableMessage ?? "Checkout is temporarily unavailable.");
+      setStatusTone("warning");
       return;
     }
 
     setStatusMessage("Submitting your order…");
+    setStatusTone("info");
 
     checkoutMutation.mutate(
       {
@@ -410,6 +417,7 @@ export default function CartModalScreen() {
           });
           clear();
           setStatusMessage("");
+          setStatusTone("info");
           void invalidateAccountQueries();
           router.replace("/checkout-success");
         },
@@ -419,19 +427,30 @@ export default function CartModalScreen() {
           const message = error instanceof Error ? error.message : "Checkout failed.";
 
           if (error instanceof CheckoutSubmissionError) {
+            void invalidateAccountQueries();
+
+            if (!shouldShowCheckoutFailureScreen(error)) {
+              clearFailure();
+              clearRetryOrder();
+              setStatusMessage(resolveInlineCheckoutErrorMessage(error));
+              setStatusTone("warning");
+              return;
+            }
+
             setStatusMessage("");
+            setStatusTone("info");
             setFailure({
               message,
               stage: error.stage,
               occurredAt: new Date().toISOString(),
               order: error.order
             });
-            void invalidateAccountQueries();
             router.replace("/checkout-failure");
             return;
           }
 
           setStatusMessage(message);
+          setStatusTone("warning");
         }
       }
     );
@@ -441,6 +460,7 @@ export default function CartModalScreen() {
     const token = applePayToken.trim();
     if (!token) {
       setStatusMessage("Enter a test token before checkout.");
+      setStatusTone("warning");
       return;
     }
     setApplePayToken("");
@@ -450,11 +470,13 @@ export default function CartModalScreen() {
   async function handleCardCheckout() {
     if (!storeConfig || !appConfig) {
       setStatusMessage(checkoutUnavailableMessage ?? "Checkout is temporarily unavailable.");
+      setStatusTone("warning");
       return;
     }
 
     setCardCheckoutPending(true);
     setStatusMessage("Securing card details with Clover…");
+    setStatusTone("info");
 
     try {
       const tokenizedCard = await tokenizeCloverCard({
@@ -471,12 +493,14 @@ export default function CartModalScreen() {
     } catch (error) {
       setCardCheckoutPending(false);
       setStatusMessage(error instanceof Error ? error.message : "Card tokenization failed.");
+      setStatusTone("warning");
     }
   }
 
   async function handleNativeApplePayCheckout() {
     if (!storeConfig || !appConfig) {
       setStatusMessage(checkoutUnavailableMessage ?? "Checkout is temporarily unavailable.");
+      setStatusTone("warning");
       return;
     }
 
@@ -486,11 +510,13 @@ export default function CartModalScreen() {
           ? "Apple Pay is unavailable in this build. Use the development test flow below."
           : "Apple Pay is unavailable in this build right now."
       );
+      setStatusTone("warning");
       return;
     }
 
     setNativeApplePayPending(true);
     setStatusMessage("Opening Apple Pay…");
+    setStatusTone("info");
 
     try {
       const walletPayload = await requestNativeApplePayWallet({
@@ -504,6 +530,7 @@ export default function CartModalScreen() {
       setNativeApplePayPending(false);
       const message = error instanceof Error ? error.message : "Apple Pay sheet failed.";
       setStatusMessage(message);
+      setStatusTone("warning");
     }
   }
 
@@ -619,7 +646,9 @@ export default function CartModalScreen() {
               </View>
 
               {checkoutUnavailableMessage ? <StatusBanner message={checkoutUnavailableMessage} tone="warning" /> : null}
-              {statusMessage ? <StatusBanner message={statusMessage} tone={retryableOrder ? "warning" : "info"} /> : null}
+              {statusMessage ? (
+                <StatusBanner message={statusMessage} tone={retryableOrder || statusTone === "warning" ? "warning" : "info"} />
+              ) : null}
 
               <View style={styles.checkoutDeck}>
                 {storeConfig ? (

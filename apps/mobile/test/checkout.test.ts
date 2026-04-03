@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { normalizeCustomizationGroups } from "@gazelle/contracts-catalog";
 import { createCartItem, DEFAULT_CUSTOMIZATION } from "../src/cart/model";
-import { createCheckoutIdempotencyKey, createDemoApplePayToken, toQuoteItems } from "../src/orders/checkout";
+import {
+  CheckoutSubmissionError,
+  createCheckoutIdempotencyKey,
+  createDemoApplePayToken,
+  resolveInlineCheckoutErrorMessage,
+  shouldShowCheckoutFailureScreen,
+  toQuoteItems,
+  type CheckoutOrderSnapshot
+} from "../src/orders/checkout";
 
 const espressoGroups = normalizeCustomizationGroups([
   {
@@ -115,5 +123,31 @@ describe("checkout helpers", () => {
   it("creates prefixed demo Apple Pay tokens", () => {
     const token = createDemoApplePayToken();
     expect(token.startsWith("apple-pay-token-")).toBe(true);
+  });
+
+  it("keeps definitive pay failures on the cart", () => {
+    const error = new CheckoutSubmissionError("Clover declined the charge", "pay");
+
+    expect(shouldShowCheckoutFailureScreen(error)).toBe(false);
+    expect(resolveInlineCheckoutErrorMessage(error)).toBe(
+      "Payment didn’t go through. Your bag is still ready, so you can try again."
+    );
+  });
+
+  it("keeps retryable pay failures on the failure screen", () => {
+    const retryOrder: CheckoutOrderSnapshot = {
+      id: "123e4567-e89b-12d3-a456-426614174000",
+      pickupCode: "ABC123",
+      status: "PENDING_PAYMENT",
+      total: {
+        currency: "USD",
+        amountCents: 575
+      },
+      quoteItems: []
+    };
+    const error = new CheckoutSubmissionError("Payment timed out", "pay", retryOrder);
+
+    expect(shouldShowCheckoutFailureScreen(error)).toBe(true);
+    expect(resolveInlineCheckoutErrorMessage(error)).toBe("Payment timed out");
   });
 });

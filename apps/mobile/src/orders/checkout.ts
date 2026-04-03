@@ -47,6 +47,18 @@ export class CheckoutSubmissionError extends Error {
   }
 }
 
+export function shouldShowCheckoutFailureScreen(error: CheckoutSubmissionError) {
+  return error.stage !== "pay" || Boolean(error.order);
+}
+
+export function resolveInlineCheckoutErrorMessage(error: CheckoutSubmissionError) {
+  if (error.stage === "pay" && !error.order) {
+    return "Payment didn’t go through. Your bag is still ready, so you can try again.";
+  }
+
+  return error.message;
+}
+
 export function toQuoteItems(items: CartItem[]): QuoteItem[] {
   return items.map((item) => ({
     itemId: item.menuItemId,
