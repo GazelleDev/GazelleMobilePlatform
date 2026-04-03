@@ -45,7 +45,7 @@ Keep these identical between free-first and AWS:
 ## Cutover + Rollback Rules
 
 - Cutover only if staging parity checks are green.
-- Rollback to prior image tag via `rollback` workflow on first critical regression.
+- Roll back by manually running `deploy-free` with the last known-good git SHA on first critical regression.
 - Do not mutate schema during initial cutover unless rollback script supports downgrade safety.
 
 ## Verification Matrix
@@ -61,4 +61,3 @@ Keep these identical between free-first and AWS:
 - Production traffic served from ECS/Fargate.
 - SLO/alert baseline stable for 24h.
 - Restore drill for RDS backup completed and documented.
-

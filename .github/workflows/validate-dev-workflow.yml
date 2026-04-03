@@ -1,0 +1,116 @@
+name: validate-dev-workflow
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate-pr:
+    name: validate-pr
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR metadata and branch flow
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body ?? "";
+            const base = pr.base.ref;
+            const head = pr.head.ref;
+            const errors = [];
+
+            function sectionExists(title) {
+              const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              return new RegExp(`^##\\s+${escaped}\\s*$`, "mi").test(body);
+            }
+
+            function sectionHasContent(title) {
+              const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const match = body.match(new RegExp(`^##\\s+${escaped}\\s*$([\\s\\S]*?)(?=^##\\s+|\\Z)`, "mi"));
+              return Boolean(match && match[1].trim().length > 0 && !/REPLACE_ME/i.test(match[1]));
+            }
+
+            if (base === "dev") {
+              if (!/^(feat|fix|chore|docs|refactor|security)\/[0-9]+-[a-z0-9-]+$/.test(head)) {
+                errors.push("Feature PRs into dev must come from a short-lived branch named <type>/<issue-number>-<short-description>.");
+              }
+
+              for (const title of ["Summary", "Issue", "Changes", "Testing", "Notes"]) {
+                if (!sectionExists(title) || !sectionHasContent(title)) {
+                  errors.push(`Feature PRs must include a populated ## ${title} section.`);
+                }
+              }
+
+              if (!/Closes\s+#\d+/i.test(body)) {
+                errors.push("Feature PRs must include `Closes #<issue-number>` in the Issue section.");
+              }
+            } else if (base === "main") {
+              if (head !== "dev") {
+                errors.push("Release PRs into main must come from dev.");
+              }
+
+              for (const title of ["Release summary", "Issues closed", "Changes included", "Pre-merge checklist"]) {
+                if (!sectionExists(title) || !sectionHasContent(title)) {
+                  errors.push(`Release PRs must include a populated ## ${title} section.`);
+                }
+              }
+
+              if (!/Closes\s+#\d+/i.test(body)) {
+                errors.push("Release PRs must list one or more closing issue references.");
+              }
+            } else {
+              errors.push("Pull requests may only target dev or main.");
+            }
+
+            if (errors.length > 0) {
+              core.setFailed(errors.join("\n"));
+            }
+
+  validate-commits:
+    name: validate-commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          invalid=0
+          pattern='^(feat|fix|chore|docs|refactor|security|wip)\([a-z0-9-]+\): [a-z0-9][^#]* #[0-9]+$'
+
+          while IFS= read -r commit; do
+            [ -z "${commit}" ] && continue
+            subject="$(git log -1 --format=%s "${commit}")"
+
+            if ! printf '%s\n' "${subject}" | grep -Eq "${pattern}"; then
+              echo "invalid commit subject: ${subject}"
+              invalid=1
+              continue
+            fi
+
+            if printf '%s\n' "${subject}" | grep -Eq '\.$'; then
+              echo "commit subject must not end with a period: ${subject}"
+              invalid=1
+            fi
+          done < <(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}")
+
+          if [ "${invalid}" -ne 0 ]; then
+            exit 1
+          fi

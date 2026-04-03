@@ -56,12 +56,14 @@ su - deploy -c 'docker version'
 
 ## Publish Images
 
-Before the first deploy, publish the backend service images:
+The normal production path is:
 
-1. Trigger `publish-free-images` from GitHub Actions
-2. Note the published SHA tag from the workflow summary, for example `sha-abc123def456`
-3. On `main`, a successful publish now triggers `deploy-free` automatically and deploys that exact immutable SHA tag
+1. Merge the approved release from `dev` to `main`
+2. Let `publish-free-images` run automatically on that `main` push
+3. Let `deploy-free` run automatically after the publish succeeds
 4. Use manual `deploy-free` `image_tag` input overrides only when you want to redeploy or roll back to a specific immutable build
+
+Use `publish-free-images` `workflow_dispatch` only when you intentionally need to rebuild and publish a known `main` SHA outside the normal merge flow.
 
 The publish workflow creates:
 
@@ -85,8 +87,6 @@ Recommended:
 
 Optional:
 
-- `FREE_DATABASE_URL` if you want the free-first stack to use an external Postgres database such as Supabase instead of the bundled Droplet Postgres
-- `FREE_IMAGE_TAG` as a manual fallback when you want `workflow_dispatch` redeploys to default to a specific immutable tag instead of `latest`
 - `FREE_CORS_ALLOWED_ORIGINS`
 - `FREE_CLIENT_DASHBOARD_DOMAIN` if you want the workflow to derive the dashboard CORS origin automatically
 - `FREE_GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS`
@@ -113,6 +113,7 @@ Optional:
 
 - `GHCR_USERNAME`
 - `GHCR_TOKEN`
+- `FREE_DATABASE_URL` if you want the free-first stack to use an external Postgres database such as Supabase instead of the bundled Droplet Postgres
 - `FREE_GOOGLE_OAUTH_CLIENT_ID`
 - `FREE_GOOGLE_OAUTH_CLIENT_SECRET`
 - `FREE_GOOGLE_OAUTH_STATE_SECRET`
@@ -181,13 +182,13 @@ Normal release path:
 
 1. Merge the intended backend change to `main`.
 2. Let `publish-free-images` finish successfully.
-3. `deploy-free` triggers automatically from that workflow and deploys the matching immutable `sha-<12>` tag.
+3. `deploy-free` triggers automatically from that workflow and deploys the matching immutable full git SHA tag.
 
 Manual deploy path:
 
 1. Trigger `deploy-free` from GitHub Actions.
-2. Leave `image_tag` blank to use the optional `FREE_IMAGE_TAG` fallback or `latest`.
-3. Set `image_tag` explicitly when you want to redeploy or roll back to a known immutable tag.
+2. Leave `image_tag` blank to deploy the latest `main` commit SHA.
+3. Set `image_tag` explicitly when you want to redeploy or roll back to a known immutable git SHA.
 
 In both paths the workflow copies `infra/free` to the host, writes runtime `.env`, and runs:
 

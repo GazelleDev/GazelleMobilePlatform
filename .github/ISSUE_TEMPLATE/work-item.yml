@@ -1,0 +1,65 @@
+name: Work item
+description: Create a tracked unit of work using the LatteLink workflow template
+title: "[work] "
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: A single clear sentence describing what this issue is about.
+      placeholder: Describe the issue in one sentence.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Why this needs to be fixed or built. What breaks or degrades without it.
+      placeholder: Explain why this matters.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Add specific, testable conditions that must be true before this issue is closed.
+      placeholder: |
+        - [ ] First condition
+        - [ ] Second condition
+        - [ ] Third condition
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Relevant context, links, errors, screenshots, or technical details.
+      placeholder: Add any relevant context.
+    validations:
+      required: false
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      description: Choose exactly one workflow type.
+      options:
+        - feat
+        - fix
+        - chore
+        - docs
+        - refactor
+        - security
+        - investigate
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Choose exactly one workflow priority.
+      options:
+        - p0
+        - p1
+        - p2
+    validations:
+      required: true

@@ -1,0 +1,80 @@
+name: sync-issue-workflow-labels
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  sync-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync type and priority labels from issue body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body ?? "";
+            const issueNumber = context.payload.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const typeLabels = ["feat", "fix", "chore", "docs", "refactor", "security", "investigate"];
+            const priorityLabels = ["p0", "p1", "p2"];
+
+            function extractHeadingValue(title) {
+              const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const match = body.match(new RegExp(`^###\\s+${escaped}\\s*\\n+([^\\n]+)`, "mi"));
+              return match ? match[1].trim() : null;
+            }
+
+            function extractLineValue(prefix) {
+              const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const match = body.match(new RegExp(`^${escaped}\\s*:?\\s*(.+)$`, "mi"));
+              return match ? match[1].trim() : null;
+            }
+
+            const type = (extractHeadingValue("Type") ?? extractLineValue("Type"))?.toLowerCase();
+            const priority = (extractHeadingValue("Priority") ?? extractLineValue("Priority"))?.toLowerCase();
+
+            const errors = [];
+
+            if (!typeLabels.includes(type)) {
+              errors.push(`Issue must declare a valid type. Expected one of: ${typeLabels.join(", ")}.`);
+            }
+
+            if (!priorityLabels.includes(priority)) {
+              errors.push(`Issue must declare a valid priority. Expected one of: ${priorityLabels.join(", ")}.`);
+            }
+
+            if (errors.length > 0) {
+              core.setFailed(errors.join(" "));
+              return;
+            }
+
+            const currentLabels = context.payload.issue.labels.map((label) => label.name);
+            const labelsToRemove = currentLabels.filter((label) => [...typeLabels, ...priorityLabels].includes(label) && label !== type && label !== priority);
+
+            for (const label of labelsToRemove) {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                name: label
+              }).catch(() => {});
+            }
+
+            const labelsToAdd = [type, priority].filter((label) => !currentLabels.includes(label));
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                labels: labelsToAdd
+              });
+            }

@@ -1,63 +1,54 @@
-# Launch Readiness Checklist (M6.4)
+# Launch Readiness Checklist
 
-Last reviewed: `2026-03-11`
+Last reviewed: `2026-04-03`
 
-## Objective
-
-Define a repeatable go/no-go process before first production launch.
+Use [development-flow.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/development-flow.md) for the release and rollback rules. This checklist only covers launch go/no-go validation.
 
 ## Required Inputs
 
-- Green required checks on `main` (`lint`, `typecheck`, `unit-tests`, `contract-tests`, `build`, `terraform-validate`, `codeql`, `dependency-review`, `secret-scan`)
-- Successful `promote-staging` run for target image tag
-- Staging smoke checks passing (`/health`, `/ready`, `/metrics`, `/v1/meta/contracts`)
+- Green required checks on `main`
+- Successful automatic deploy from the merged `main` commit
+- Smoke checks passing against the live environment
 - Product sign-off on critical flows:
   - auth sign-in + refresh + sign-out
   - menu -> cart -> checkout
   - order tracking/history
-  - loyalty balance/ledger
-- Incident contacts acknowledged (engineering + on-call)
+  - loyalty balance/ledger if enabled
+- Incident contacts acknowledged
 
-## Go/No-Go Meeting
+## Go / No-Go Record
 
-Record in release notes:
+Record in launch notes:
 
-- Release image tag
-- Approver names (engineering + product)
-- Expected deployment window
-- Rollback tag
-- Known risks and mitigations
+- release commit SHA
+- deployed image SHA
+- approver names
+- deployment timestamp
+- rollback SHA
+- known risks and mitigations
 
 ## Launch Steps
 
-1. Trigger `promote-prod` with approved image tag.
-2. Wait for workflow success.
-3. Execute post-deploy smoke checks:
-   - `GET /health`
-   - `GET /ready`
-   - `GET /metrics`
-   - `GET /v1/meta/contracts`
-   - for free-first releases, run [`free-first-smoke-check.md`](./free-first-smoke-check.md)
-4. Run production API sanity:
-   - auth me endpoint via gateway
-   - quote -> create -> pay idempotency path
-   - loyalty read path
+1. Merge the approved release PR from `dev` to `main`.
+2. Wait for image publish and automatic deploy to complete.
+3. Execute post-deploy smoke checks.
+4. Run production API sanity checks.
 5. Confirm alerts are healthy and no sustained 5xx spikes.
 
 ## Rollback Trigger Criteria
 
-- Smoke check failure after promotion
-- Critical checkout/auth regression
-- Sustained elevated 5xx or timeout rate over 10 minutes
+- smoke check failure after deploy
+- critical checkout or auth regression
+- sustained elevated 5xx or timeout rate
 
-If triggered, execute:
+If triggered:
 
-1. Run `rollback` workflow with previous known-good `image_tag`.
+1. Run `deploy-free` manually with the previous known-good git SHA.
 2. Re-run smoke checks.
-3. Document incident timeline and follow-up actions.
+3. Document the incident timeline and follow-up actions.
 
 ## Exit Criteria
 
-- Launch marked successful by engineering + product approvers
-- Rollback tag for this launch archived in release notes
-- Post-launch review ticket created for next hardening cycle
+- launch marked successful by engineering and product
+- rollback SHA recorded
+- follow-up issues created for any gaps that remain

@@ -1455,6 +1455,9 @@ Acceptance criteria:
 - `dev` exists locally and on `origin` from current `main`
 - ticket sections are the default PR grouping boundary
 
+Historical note:
+The workflow and versioning tickets below capture decisions and superseded proposals made during rollout. They are not the active workflow policy. Use [development-flow.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/development-flow.md) as the only authoritative workflow document.
+
 ### XS-V1-05 Versioning and Release Identification
 
 Status:

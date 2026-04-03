@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Optional immutable image tag override for manual redeploy or rollback
+        description: Git SHA to deploy (leave empty for latest main)
         required: false
         type: string
   workflow_run:
@@ -28,7 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || 'main' }}
+          fetch-depth: 0
 
       - name: Resolve deploy image tag
         id: image-tag
@@ -36,7 +37,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
-          DEFAULT_IMAGE_TAG: ${{ vars.FREE_IMAGE_TAG }}
         run: |
           resolved_tag=""
           source=""
@@ -45,14 +45,12 @@ jobs:
             resolved_tag="${INPUT_IMAGE_TAG}"
             source="workflow_dispatch input"
           elif [ "${EVENT_NAME}" = "workflow_run" ] && [ -n "${WORKFLOW_RUN_HEAD_SHA:-}" ]; then
-            resolved_tag="sha-${WORKFLOW_RUN_HEAD_SHA::12}"
+            resolved_tag="${WORKFLOW_RUN_HEAD_SHA}"
             source="publish-free-images head SHA"
-          elif [ -n "${DEFAULT_IMAGE_TAG:-}" ]; then
-            resolved_tag="${DEFAULT_IMAGE_TAG}"
-            source="FREE_IMAGE_TAG variable"
           else
-            resolved_tag="latest"
-            source="latest fallback"
+            git fetch origin main --depth=1
+            resolved_tag="$(git rev-parse origin/main)"
+            source="latest main commit SHA"
           fi
 
           echo "tag=${resolved_tag}" >> "$GITHUB_OUTPUT"
@@ -249,7 +247,7 @@ jobs:
           API_DOMAIN=${FREE_API_DOMAIN}
           LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
           IMAGE_REGISTRY_PREFIX=${FREE_IMAGE_REGISTRY_PREFIX}
-          IMAGE_TAG=${FREE_IMAGE_TAG:-latest}
+          IMAGE_TAG=${FREE_IMAGE_TAG}
           POSTGRES_PASSWORD=${POSTGRES_PASSWORD_VALUE}
           DATABASE_URL=${DATABASE_URL_VALUE}
           GATEWAY_INTERNAL_API_TOKEN=${FREE_GATEWAY_INTERNAL_API_TOKEN}

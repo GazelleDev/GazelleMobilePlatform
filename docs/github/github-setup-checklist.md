@@ -2,79 +2,94 @@
 
 Last reviewed: `2026-04-03`
 
+The authoritative workflow policy for this repo lives in [development-flow.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/development-flow.md). Use this checklist only to configure GitHub so it matches that policy.
+
 ## Repository
 
-- [x] org: `GazelleDev`
-- [x] repo: `GazelleMobilePlatform`
-- [x] visibility: `public`
 - [x] default branch: `main`
-- [x] merge method: squash only
+- [x] allow merge commits
+- [x] allow squash merges
+- [x] disable rebase merges
+- [x] delete head branches on merge
 
-## Teams
+GitHub applies merge-method availability repo-wide, not per target branch. To match the workflow policy, enable both merge commits and squash merges, then follow the policy operationally:
 
-Create:
+- feature PRs into `dev` use squash merge
+- release PRs from `dev` into `main` use a regular merge commit
 
-- [x] `@GazelleDev/mobile`
-- [x] `@GazelleDev/platform`
-- [x] `@GazelleDev/infra`
-- [x] `@GazelleDev/security`
+## Labels
 
-## Branch Protection (`main`)
+Required type labels:
 
-Enable:
+- [x] `feat`
+- [x] `fix`
+- [x] `chore`
+- [x] `docs`
+- [x] `refactor`
+- [x] `security`
+- [x] `investigate`
 
-- [x] pull request required
-- [ ] minimum 1 approval (currently `0`)
-- [ ] CODEOWNERS review required (currently disabled)
-- [x] dismiss stale approvals
-- [x] require conversation resolution
-- [x] require linear history
-- [ ] require signed commits (currently disabled)
+Required priority labels:
+
+- [x] `p0`
+- [x] `p1`
+- [x] `p2`
+
+## Branch Protection
+
+### `main`
+
+- [x] require pull requests
+- [x] block direct pushes
 - [x] block force pushes
-- [x] block deletion
+- [x] block branch deletion
+- [x] require conversation resolution
+- [x] do not require linear history
+- [x] require these checks:
+  - `validate-pr`
+  - `validate-commits`
+  - `lint`
+  - `typecheck`
+  - `unit-tests`
+  - `contract-tests`
+  - `build`
+  - `terraform-validate`
+  - `codeql`
+  - `dependency-review`
+  - `secret-scan`
+- [x] only allow `dev -> main` release PRs
+      GitHub branch protection cannot express this directly, so this is enforced by `validate-dev-workflow`.
 
-Required checks:
+### `dev`
 
-- [x] `lint`
-- [x] `typecheck`
-- [x] `unit-tests`
-- [x] `contract-tests`
-- [x] `build`
-- [x] `terraform-validate`
-- [x] `codeql`
-- [x] `dependency-review`
-- [x] `secret-scan`
+- [x] require pull requests
+- [x] block direct pushes
+- [x] block force pushes
+- [x] block branch deletion
+- [x] require conversation resolution
+- [x] require these checks:
+  - `validate-pr`
+  - `validate-commits`
+  - `lint`
+  - `typecheck`
+  - `unit-tests`
+  - `contract-tests`
+  - `build`
+  - `terraform-validate`
+  - `codeql`
+  - `dependency-review`
+  - `secret-scan`
 
-## Environments
+## Actions Workflows
 
-Create environments:
+- [x] `publish-free-images` runs on every `main` push and tags images with the full git SHA
+- [x] `deploy-free` runs after successful image publish on `main`
+- [x] `deploy-free` supports manual `workflow_dispatch` redeploys using a full git SHA
+- [x] there is no workflow that deploys `dev`
+- [x] there is no workflow that promotes `staging` or `prod` outside the `main` deploy flow
 
-- [x] `dev`
-- [x] `staging`
-- [x] `prod`
+## Variables
 
-Rules:
-
-- [x] `dev`: auto deploy from `main`
-- [x] `staging`: manual approval
-- [x] `prod`: manual approval with reviewers `@GazelleDev/platform`, `@GazelleDev/infra`
-
-## Project Board
-
-Create project board columns:
-
-- [x] Backlog
-- [x] Ready
-- [x] In Progress
-- [x] Review
-- [x] Done
-
-## Repository Variables
-
-- [x] `AWS_REGION=us-east-1`
-- [x] `API_BASE_URL_DEV`
-- [x] `API_BASE_URL_STAGING`
-- [x] `API_BASE_URL_PROD`
 - [ ] `FREE_API_DOMAIN`
 - [ ] `FREE_DEPLOY_PATH`
 - [ ] `FREE_IMAGE_REGISTRY_PREFIX`
@@ -87,34 +102,13 @@ Create project board columns:
 - [ ] `FREE_CLOVER_CHARGE_ENDPOINT`
 - [ ] `FREE_CLOVER_REFUND_ENDPOINT`
 - [ ] `FREE_CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT`
-- [ ] `FREE_IMAGE_TAG` (optional manual override for rollback or explicit redeploys)
 
-## Environment Secrets
+## Secrets
 
-- [ ] `AWS_ROLE_ARN`
-- [ ] `DATABASE_URL`
-- [ ] `REDIS_URL`
-- [ ] `APPLE_TEAM_ID`
-- [ ] `APPLE_KEY_ID`
-- [ ] `APPLE_PRIVATE_KEY`
-- [ ] `APPLE_SERVICE_ID`
-- [ ] `APPLE_MERCHANT_ID`
-- [ ] `CLOVER_APP_ID`
-- [ ] `CLOVER_APP_SECRET`
-- [ ] `CLOVER_OAUTH_REDIRECT_URI`
-- [ ] `CLOVER_OAUTH_STATE_SECRET`
-- [ ] `CLOVER_BEARER_TOKEN`
-- [ ] `CLOVER_API_ACCESS_KEY`
-- [ ] `CLOVER_MERCHANT_ID`
-- [ ] `SES_FROM_EMAIL`
-- [ ] `EXPO_TOKEN`
-- [ ] `JWT_PRIVATE_KEY`
-- [ ] `JWT_PUBLIC_KEY`
 - [ ] `FREE_DEPLOY_HOST`
 - [ ] `FREE_DEPLOY_USER`
 - [ ] `FREE_DEPLOY_SSH_KEY`
-- [ ] `FREE_DATABASE_URL` (if using Supabase/external Postgres)
-- [ ] `FREE_POSTGRES_PASSWORD`
+- [ ] `FREE_DATABASE_URL` or `FREE_POSTGRES_PASSWORD`
 - [ ] `FREE_GATEWAY_INTERNAL_API_TOKEN`
 - [ ] `FREE_ORDERS_INTERNAL_API_TOKEN`
 - [ ] `FREE_LOYALTY_INTERNAL_API_TOKEN`
@@ -137,10 +131,5 @@ Create project board columns:
 - [ ] `CLIENT_DASHBOARD_VERCEL_ORG_ID`
 - [ ] `CLIENT_DASHBOARD_VERCEL_PROJECT_ID`
 - [ ] `CLIENT_DASHBOARD_VERCEL_ENV`
-- [ ] `GHCR_USERNAME` (if GHCR images are private)
-- [ ] `GHCR_TOKEN` (if GHCR images are private)
-
-Notes:
-
-- `gh secret list --repo AnxiousDaoud/LatteLink-Platform` and per-environment secret list commands returned no configured secrets on `2026-03-09`.
-- For the free-first backend, configure either `FREE_DATABASE_URL` or `FREE_POSTGRES_PASSWORD`. Keep `FREE_POSTGRES_PASSWORD` only when the bundled Droplet Postgres is the active database.
+- [ ] `GHCR_USERNAME` if GHCR images are private
+- [ ] `GHCR_TOKEN` if GHCR images are private
