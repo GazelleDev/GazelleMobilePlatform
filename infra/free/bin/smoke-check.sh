@@ -136,6 +136,7 @@ check_get "health" "${API_ROOT}/health"
 check_get "ready" "${API_ROOT}/ready"
 check_get "metrics" "${API_ROOT}/metrics"
 check_get "contracts" "${API_BASE}/meta/contracts"
+check_get "payments-clover-status" "${API_BASE}/payments/clover/oauth/status"
 
 if [[ -n "${CLIENT_DASHBOARD_ORIGIN:-}" ]]; then
   check_cors "$CLIENT_DASHBOARD_ORIGIN"

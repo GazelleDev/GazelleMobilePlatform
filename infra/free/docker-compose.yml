@@ -24,6 +24,7 @@ services:
       - IDENTITY_SERVICE_BASE_URL=http://identity:3000
       - ORDERS_SERVICE_BASE_URL=http://orders:3001
       - CATALOG_SERVICE_BASE_URL=http://catalog:3002
+      - PAYMENTS_SERVICE_BASE_URL=http://payments:3003
       - LOYALTY_SERVICE_BASE_URL=http://loyalty:3004
       - NOTIFICATIONS_SERVICE_BASE_URL=http://notifications:3005
       - GATEWAY_INTERNAL_API_TOKEN=${GATEWAY_INTERNAL_API_TOKEN:-}
@@ -37,6 +38,7 @@ services:
       - identity
       - orders
       - catalog
+      - payments
       - loyalty
       - notifications
 
