@@ -755,9 +755,9 @@ Acceptance criteria:
 Status:
 
 - `owner`: Codex
-- `status`: repo-in-progress
-- `done`: the checkout contracts and payments stack now accept a generalized Clover source token path in parallel with Apple Pay inputs, and the live backend can already expose authenticated Clover card-entry configuration
-- `blocked`: final mobile UX polish plus end-to-end validation still depends on confirming Clover test-card behavior in the connected target environment
+- `status`: complete
+- `done`: the checkout contracts and payments stack now accept a generalized Clover source token path in parallel with Apple Pay inputs; the mobile app exposes Clover card checkout for card-enabled stores; live Clover card tokenization, successful charge, declined retry behavior, and refund/cancel validation all passed against the connected production test merchant
+- `blocked`: none
 
 Goal:
 Add a real Clover card-token checkout path that does not depend on Apple Pay.
@@ -772,7 +772,7 @@ Scope:
 Key deliverables:
 
 - customer checkout can submit a Clover `paymentSourceToken`
-- the mobile app only exposes card entry when Clover card tokenization is configured
+- the mobile app surfaces card checkout for stores that advertise card capability and shows inline Clover configuration or tokenization failures instead of hiding the path
 - pilot QA has a non-Apple payment path for end-to-end validation
 
 Dependencies:
@@ -783,7 +783,8 @@ Dependencies:
 Acceptance criteria:
 
 - the mobile app can tokenize a card directly with Clover and pay an order with the resulting source token
-- card entry is hidden when Clover card tokenization is not configured for the current environment
+- declined payment attempts keep the cart retryable and do not leave an active unpaid order behind
+- card checkout remains visible whenever the store enables card payments, with Clover configuration failures surfaced inline
 
 ## Client Dashboard Tickets
 
@@ -1224,7 +1225,7 @@ The next useful execution step is to move the still-blocked items out of repo wo
 2. client dashboard Vercel project/domain setup, production API base URL, and deployed-browser QA
 3. Google OAuth client credentials plus redirect URI validation on the live dashboard domain
 4. mobile Expo/EAS and App Store Connect setup, first internal or TestFlight pilot build, and real-device QA against the deployed backend
-5. live Clover and Apple Pay production credentials, webhook secret rollout, and provider validation against the deployed backend
+5. live Clover production credentials, webhook secret rollout, and provider validation for the launch payment path against the deployed backend
 6. LatteLink production lead sink configuration and GA4 measurement ID verification in Vercel
 
 Repo-side blockers already cleared for those rollout lanes now include:
@@ -1369,7 +1370,7 @@ Acceptance criteria:
 - the client dashboard is reachable on its real public URL
 - the marketing site lead path and analytics are verified in production
 - a provisioned dashboard user can authenticate on the live domain
-- the live rollout can operate with payments intentionally left in simulated mode until `XS-V1-07` is completed
+- the live rollout can operate with the validated Clover payment path for the chosen launch lane while Apple Pay enablement remains separate if it is not part of the release
 - a signed mobile build can complete the pilot flow against the deployed backend
 
 ### XS-V1-07 Clover Production-Mode Provider Validation
@@ -1377,9 +1378,9 @@ Acceptance criteria:
 Status:
 
 - `owner`: User + Codex
-- `status`: blocked on Apple Pay credentials and an Apple Pay-enabled mobile build for live transaction validation
-- `done`: Clover production app setup, production test merchant install/connect flow, public webhook verification, live-mode deploy, and hosted OAuth connection are complete; repo-side Clover gateway/webhook fixes are tracked separately in `BE-V1-07`
-- `blocked`: charge, refund, and reconciliation validation still require a real Apple Pay handoff because the current production flow does not expose a non-Apple payment fallback
+- `status`: complete
+- `done`: Clover production app setup, production test merchant install/connect flow, public webhook verification, live-mode deploy, hosted OAuth connection, live Clover card tokenization, successful charge validation, declined-payment retry validation, refund/cancel validation, and deployed mobile checkout verification are complete; repo-side Clover gateway/webhook fixes are tracked separately in `BE-V1-07`
+- `blocked`: Apple Pay enablement remains a separate launch track if the release specifically needs Apple Pay; it no longer blocks Clover provider validation
 
 Goal:
 Validate Clover in production mode against a Clover production test merchant without connecting the pilot client's real merchant account.
@@ -1405,7 +1406,6 @@ Dependencies:
 
 - `XS-V1-03`
 - `BE-V1-07`
-- Apple Pay credentials and an Apple Pay-enabled mobile build
 
 Acceptance criteria:
 
@@ -1413,7 +1413,8 @@ Acceptance criteria:
 - `/v1/payments/clover/oauth/status` reports `connected: true` and `credentialSource: "oauth"`
 - Clover webhook verification succeeds against the public API
 - the production test merchant can complete the intended live Clover validation flow without using the pilot client's real merchant
-- at least one live charge and one refund are validated through the Apple Pay-backed mobile checkout path
+- at least one live charge and one refund are validated through the deployed Clover-backed mobile checkout path
+- a declined payment attempt leaves the cart retryable without surfacing an active unpaid order
 
 ### XS-V1-04 Development Flow and Change Control
 

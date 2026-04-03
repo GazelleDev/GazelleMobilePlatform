@@ -1,6 +1,6 @@
 # Mobile Pilot Purchase Flow QA
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-03`
 
 ## Purpose
 
@@ -26,7 +26,7 @@ The flow passes when all of the following are true:
 
 - menu loads from the real environment
 - cart totals and checkout inputs are coherent
-- Apple Pay handoff succeeds or fails with a clear recovery path
+- the launched payment path (`Clover card` or `Apple Pay`) succeeds or fails with a clear recovery path
 - a paid order appears correctly in confirmation and Orders
 - active-order and history rendering match backend truth
 - obvious outage states do not masquerade as healthy UI
@@ -54,12 +54,13 @@ The flow passes when all of the following are true:
 - verify pricing updates stay coherent
 - verify checkout disables cleanly if store/config data is unavailable
 
-### 4. Apple Pay Handoff
+### 4. Payment Handoff
 
-- start Apple Pay from the cart
-- verify Apple Pay opens with the expected total
+- start checkout from the cart
+- if testing Apple Pay, verify Apple Pay opens with the expected total
+- if testing Clover card checkout, verify the card section is visible for the signed-in user and Clover tokenization succeeds or fails with a clear inline message
 - verify success clears the cart and lands on confirmation
-- if safe to test, verify a failed payment routes to checkout failure with a usable recovery path
+- if safe to test, verify a failed payment leaves the user with a usable recovery path and does not surface an active unpaid order
 
 ### 5. Orders and Active Tracking
 

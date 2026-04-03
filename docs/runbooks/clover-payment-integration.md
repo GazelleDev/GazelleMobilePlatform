@@ -1,6 +1,6 @@
 # Clover Payment Integration Path
 
-Last reviewed: `2026-03-21`
+Last reviewed: `2026-04-03`
 
 ## Scope
 
@@ -24,7 +24,7 @@ Live mode env:
 
 - `CLOVER_PROVIDER_MODE=live`
 - `CLOVER_BEARER_TOKEN` or `CLOVER_API_KEY` legacy fallback
-- `CLOVER_API_ACCESS_KEY` (required when charging with `applePayWallet` unless Clover OAuth is connected)
+- `CLOVER_API_ACCESS_KEY` (required for Clover card tokenization and when charging with `applePayWallet` unless Clover OAuth is connected)
 - `CLOVER_MERCHANT_ID`
 - `CLOVER_OAUTH_ENVIRONMENT=sandbox|production`
 - `CLOVER_APP_ID`
@@ -37,7 +37,7 @@ Live mode env:
 - `CLOVER_OAUTH_PAKMS_ENDPOINT` (optional override; sandbox default is `https://scl-sandbox.dev.clover.com/pakms/apikey`)
 - `CLOVER_CHARGE_ENDPOINT` (supports `{merchantId}` template)
 - `CLOVER_REFUND_ENDPOINT` (supports `{merchantId}` and `{paymentId}` templates)
-- `CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` (required when charging with `applePayWallet`)
+- `CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` (required for Clover card tokenization and when charging with `applePayWallet`)
 - `CLOVER_WEBHOOK_SHARED_SECRET` (required for verified webhook deliveries; set this to the Clover webhook auth code / `X-Clover-Auth` value after Clover validates the callback URL)
 - `ORDERS_SERVICE_BASE_URL` (defaults to `http://127.0.0.1:3001`)
 - `ORDERS_INTERNAL_API_TOKEN` (required in both `payments` and `orders`; payments charge/refund writes and orders reconciliation both reject requests until it is set)
@@ -55,7 +55,7 @@ Token roles:
 - `CLOVER_BEARER_TOKEN` in service runtime is the Clover Bearer credential used for `/v1/charges` and `/v1/refunds`.
   - for single-merchant ecommerce setups, this can be the Clover private ecommerce token
   - for app-based OAuth setups, the service stores and refreshes the Clover OAuth access token and uses that instead
-- `CLOVER_API_ACCESS_KEY` is the Clover public `apiAccessKey` used as the `apikey` header on `/v1/tokens`.
+- `CLOVER_API_ACCESS_KEY` is the Clover public `apiAccessKey` used as the `apikey` header on `/v1/tokens` for Clover card tokenization and Apple Pay wallet tokenization.
   - for app-based OAuth setups, the service fetches and stores this from Clover PAKMS after OAuth callback/refresh
 - `CLOVER_API_KEY` remains supported as a legacy alias for `CLOVER_BEARER_TOKEN` while existing environments migrate.
 - `CLOVER_MERCHANT_ID` should be Clover `merchantId` (for sandbox this is commonly a 13-character alphanumeric value), not an external MID label.
@@ -80,8 +80,9 @@ Recommended sandbox flow:
 Production note:
 
 - completing OAuth and webhook verification proves the Clover app connection is live, but it does not by itself validate charge/refund execution
-- the current production checkout path reaches live Clover through Apple Pay, so end-to-end transaction validation remains blocked until Apple credentials and an Apple Pay-enabled mobile build are available
-- there is no production-safe non-Apple fallback checkout path exposed today
+- the current production checkout path can now reach live Clover through either Apple Pay or the Clover card-token path
+- the deployed production test-merchant validation has already covered Clover card tokenization, successful charge, declined-payment retry behavior, and refund/cancel flow through the card path
+- Apple Pay enablement remains a separate launch concern only if the chosen release explicitly needs Apple Pay
 
 Direct Clover app-launch note:
 
@@ -199,7 +200,7 @@ GitHub variables:
 - `FREE_CLOVER_OAUTH_ENVIRONMENT` -> `CLOVER_OAUTH_ENVIRONMENT`
 - `FREE_CLOVER_CHARGE_ENDPOINT` -> `CLOVER_CHARGE_ENDPOINT`
 - `FREE_CLOVER_REFUND_ENDPOINT` -> `CLOVER_REFUND_ENDPOINT`
-- `FREE_CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` -> `CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT`
+- `FREE_CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` -> `CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` for Clover card tokenization and Apple Pay wallet tokenization
 
 GitHub secrets:
 

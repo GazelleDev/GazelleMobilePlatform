@@ -1,6 +1,6 @@
 # V1 Launch Packet
 
-Last reviewed: `2026-04-02`
+Last reviewed: `2026-04-03`
 
 ## Purpose
 
@@ -32,7 +32,7 @@ V1 is live-ready only when all of the following are true:
 - the restore drill has been rehearsed successfully on the deployed host
 - the client dashboard is live on `Vercel` and passes browser QA
 - LatteLink web is live on `Vercel` and lead intake works in production
-- required provider configuration is in place for Google OAuth, Clover, and Apple Pay
+- required provider configuration is in place for Google OAuth, Clover, and any launch payment path that depends on Apple Pay
 - the mobile beta/TestFlight lane is configured and a real-device QA pass succeeds against the deployed backend
 - the evidence checklist at the end of this packet is complete
 
@@ -80,7 +80,7 @@ These still require accounts, credentials, domains, or hosted configuration:
 - Vercel project/domain/env for LatteLink web
 - lead sink configuration and GA4 measurement ID
 - Apple Developer, App Store Connect, TestFlight, and EAS account setup
-- Clover and Apple Pay live credentials and merchant configuration
+- Clover live credentials and merchant configuration, plus Apple Pay credentials if Apple Pay is part of the launch
 
 ### Live Validation Work
 
@@ -92,7 +92,7 @@ These happen only after deployable environments exist:
 - Google SSO success and deny-path validation
 - LatteLink production lead-intake and analytics verification
 - real-device mobile QA against the deployed backend
-- provider validation for Apple Pay and Clover
+- provider validation for the Clover payment path being launched, plus Apple Pay if it is part of the launch
 
 ## Cross-Surface Launch Checklist
 
@@ -126,13 +126,13 @@ Execute these steps in order to move from repo-ready to live-ready. This is the 
    Configure the project, domain, lead-delivery env, and optional GA4 measurement ID from [lattelink-vercel-deployment.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/lattelink-vercel-deployment.md), then verify the live lead path.
 
 10. Complete provider setup for live payments.
-    Satisfy the Apple/Clover prerequisites in [production-prerequisites.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/production-prerequisites.md) and map the live Clover inputs through [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md).
+    Satisfy the Clover prerequisites in [production-prerequisites.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/production-prerequisites.md), add any Apple Pay prerequisites that are part of the chosen launch path, and map the live Clover inputs through [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md).
 
 11. Prepare the mobile release lane.
     Set the `beta` build env from [mobile-eas-builds.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-eas-builds.md), confirm the App Store Connect/TestFlight alignment from [mobile-testflight-pilot-release.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-testflight-pilot-release.md), and create the first TestFlight candidate.
 
 12. Run real-device mobile QA against the deployed backend.
-    Use [mobile-pilot-purchase-flow-qa.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-pilot-purchase-flow-qa.md) for the device run and [apple-pay-checkout.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/apple-pay-checkout.md) for Apple Pay path expectations.
+    Use [mobile-pilot-purchase-flow-qa.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-pilot-purchase-flow-qa.md) for the device run. If Apple Pay is part of the launch, use [apple-pay-checkout.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/apple-pay-checkout.md) for Apple Pay expectations; otherwise validate the Clover card checkout path documented in [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md).
 
 13. Review the evidence checklist and make the launch decision.
     Do not call V1 live-ready until every required evidence item below exists and any skipped item has a written reason.
@@ -193,10 +193,10 @@ Each external credential or hosted input should be entered once, at the destinat
 | `FREE_CLOVER_OAUTH_ENVIRONMENT`           | GitHub variable                          | Clover runtime environment selection                                     | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
 | `FREE_CLOVER_CHARGE_ENDPOINT`             | GitHub variable                          | backend live Clover charge endpoint                                      | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
 | `FREE_CLOVER_REFUND_ENDPOINT`             | GitHub variable                          | backend live Clover refund endpoint                                      | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
-| `FREE_CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` | GitHub variable                          | backend live Clover Apple Pay tokenize endpoint                          | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
+| `FREE_CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT` | GitHub variable                          | backend live Clover tokenization endpoint for card entry and Apple Pay   | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
 | `FREE_CLOVER_BEARER_TOKEN`                | GitHub secret                            | backend live Clover bearer credential                                    | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
 | `FREE_CLOVER_API_KEY`                     | GitHub secret                            | backend Clover legacy fallback credential                                | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
-| `FREE_CLOVER_API_ACCESS_KEY`              | GitHub secret                            | backend Clover Apple Pay/public API access                               | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
+| `FREE_CLOVER_API_ACCESS_KEY`              | GitHub secret                            | backend Clover tokenization/public API access                            | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
 | `FREE_CLOVER_MERCHANT_ID`                 | GitHub secret                            | backend merchant binding for Clover                                      | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
 | `FREE_CLOVER_APP_ID`                      | GitHub secret                            | Clover OAuth app configuration                                           | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
 | `FREE_CLOVER_APP_SECRET`                  | GitHub secret                            | Clover OAuth app configuration                                           | [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md)                 |
@@ -220,7 +220,7 @@ The launch is not complete until the following evidence exists in release notes 
 | LatteLink web production check         | live URL, lead-intake success proof, delivery sink confirmation, robots/sitemap check, GA4 confirmation if enabled        | [lattelink-vercel-deployment.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/lattelink-vercel-deployment.md)                                                                                                                                                                                                                                                                               |
 | Mobile build record                    | build profile, bundle identifier, backend URL, build number, TestFlight link or build reference                           | [mobile-testflight-pilot-release.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-testflight-pilot-release.md)                                                                                                                                                                                                                                                                       |
 | Real-device mobile QA log              | timestamp, environment, device, account, order ID, result, notes                                                          | [mobile-pilot-purchase-flow-qa.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-pilot-purchase-flow-qa.md)                                                                                                                                                                                                                                                                           |
-| Payment/provider validation transcript | Apple Pay merchant used, Clover mode, one successful payment path, any refund or webhook check performed, pass/fail notes | [production-prerequisites.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/production-prerequisites.md), [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md), [mobile-pilot-purchase-flow-qa.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-pilot-purchase-flow-qa.md) |
+| Payment/provider validation transcript | payment path used (`Clover card` or `Apple Pay`), Clover mode, one successful payment path, any refund or webhook check performed, pass/fail notes | [production-prerequisites.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/production-prerequisites.md), [clover-payment-integration.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/clover-payment-integration.md), [mobile-pilot-purchase-flow-qa.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/mobile-pilot-purchase-flow-qa.md) |
 
 ## Minimum Go / No-Go Rule
 
