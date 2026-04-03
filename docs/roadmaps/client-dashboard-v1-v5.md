@@ -1,6 +1,6 @@
 # Client Dashboard Roadmap (V1-V5)
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-02`
 
 ## Current State
 
@@ -40,7 +40,7 @@ Ship a single-store client dashboard that a pilot store can actually use.
 - one store per client
 - `owner` and `staff` roles
 - email/password sign-in
-- optional Google SSO for pre-provisioned accounts
+- optional Google SSO for existing owner and staff accounts
 - live orders, menu controls, store settings, and staff management
 
 ### Deliverables
@@ -68,7 +68,7 @@ Ship a single-store client dashboard that a pilot store can actually use.
 
 ### Exit Criteria
 
-- one pilot client/store owner can operate the dashboard without engineering hand-holding
+- one client/store owner can operate the dashboard without engineering hand-holding
 - staff can use it for daily order operations
 
 ## V2

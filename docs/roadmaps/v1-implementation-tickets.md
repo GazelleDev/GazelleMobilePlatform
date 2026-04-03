@@ -884,8 +884,8 @@ They cover the remaining work that is still honest to call `V1`, but which is no
 Status:
 
 - `owner`: Codex
-- `status`: not started
-- `done`: the audit found stale planning assumptions in the roadmap set, including docs that still describe the admin console as absent from the repo and older wording that no longer matches the current product naming or deployment lanes
+- `status`: validated locally, pending merge to main
+- `done`: corrected the roadmap README and admin-console roadmap to reflect that the admin console app already exists in the repo, aligned the roadmap set with the current V1 deployment lanes, and cleaned stale pilot/provisioned/operator wording in the affected roadmap and spec docs so the planning set matches the current product names and onboarding model
 - `blocked`: no external blocker
 
 Goal:

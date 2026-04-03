@@ -1,12 +1,14 @@
 # Admin Console Roadmap (V1-V5)
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-02`
 
 ## Current State
 
-There is no dedicated admin console app in the repo yet.
+A dedicated admin console app now exists in the repo at `apps/admin-console`.
 
-That means the roadmap begins with a platform-control-plane definition, not with UI polish work.
+The current V1 starting point is a scaffolded `Next.js` shell with the product and architecture direction defined and the initial app shell already validated locally.
+
+That means the roadmap begins with turning the scaffold into a usable internal control plane, not with deciding whether the app should exist.
 
 Detailed V1 build target: [admin-console-v1-spec.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/admin-console-v1-spec.md)
 
@@ -24,25 +26,25 @@ Its job is to manage:
 
 ### Goal
 
-Define and start the internal control plane required to onboard real pilot clients cleanly.
+Turn the internal control plane into a usable path for onboarding real clients cleanly.
 
 ### Scope
 
-- product spec
-- app scaffold
+- product spec baseline
+- app shell hardening
 - internal auth model
 - first onboarding and provisioning flows
 
 ### Deliverables
 
 - admin console product spec
-- chosen app architecture and deployment path
+- scaffolded app shell and chosen deployment path
 - secure internal admin authentication
 - CRUD for:
   - organizations
   - locations
   - first owner account provisioning
-- feature/config editing for pilot clients
+- feature/config editing for clients
 - internal-only deployment target
 
 ### Engineering Changes
@@ -87,7 +89,7 @@ Make client onboarding and support operationally usable.
 
 ### Exit Criteria
 
-- onboarding a new pilot or early client is mostly console-driven
+- onboarding a new launch or early client is mostly console-driven
 - support can inspect client status without relying on engineering shell access
 
 ## V3
