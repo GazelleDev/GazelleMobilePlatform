@@ -113,6 +113,7 @@ Create project board columns:
 - [ ] `FREE_DEPLOY_HOST`
 - [ ] `FREE_DEPLOY_USER`
 - [ ] `FREE_DEPLOY_SSH_KEY`
+- [ ] `FREE_DATABASE_URL` (if using Supabase/external Postgres)
 - [ ] `FREE_POSTGRES_PASSWORD`
 - [ ] `FREE_GATEWAY_INTERNAL_API_TOKEN`
 - [ ] `FREE_ORDERS_INTERNAL_API_TOKEN`
@@ -142,3 +143,4 @@ Create project board columns:
 Notes:
 
 - `gh secret list --repo AnxiousDaoud/LatteLink-Platform` and per-environment secret list commands returned no configured secrets on `2026-03-09`.
+- For the free-first backend, configure either `FREE_DATABASE_URL` or `FREE_POSTGRES_PASSWORD`. Keep `FREE_POSTGRES_PASSWORD` only when the bundled Droplet Postgres is the active database.

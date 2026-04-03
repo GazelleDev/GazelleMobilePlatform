@@ -541,6 +541,42 @@ Acceptance criteria:
 - after Clover sends a verification payload, the endpoint returns the latest `verificationCode`
 - the retrieval path is documented for Clover onboarding
 
+### BE-V1-14 Free-First External Database Source Support
+
+Status:
+
+- `owner`: Codex
+- `status`: repo-complete, locally validated
+- `done`: updated `deploy-free` to accept a `FREE_DATABASE_URL` secret for external Postgres providers such as Supabase, made the bundled Droplet Postgres password optional when that external URL is present, and aligned the free-first deployment docs, launch packet, and GitHub setup checklist with the new external-database path
+- `blocked`: GitHub still needs the real `FREE_DATABASE_URL` secret added and the free-first stack must be redeployed to switch production off the bundled Droplet Postgres
+
+Goal:
+Let the free-first deployment consume a real external Postgres database such as Supabase instead of always hardwiring the bundled Droplet Postgres.
+
+Scope:
+
+- allow `deploy-free` to accept `FREE_DATABASE_URL`
+- keep the current bundled Droplet Postgres path as a fallback when no external URL is supplied
+- document that the bundled host backup scripts only apply when the local Postgres container is the active database
+- update rollout documentation so operators know which secret to set for Supabase-backed production
+
+Key deliverables:
+
+- `deploy-free` support for an external `DATABASE_URL`
+- updated free-first deployment docs and operator checklist
+- explicit runtime behavior showing external `DATABASE_URL` wins over the bundled Postgres fallback
+
+Dependencies:
+
+- `BE-V1-01`
+- `XS-V1-03`
+
+Acceptance criteria:
+
+- when `FREE_DATABASE_URL` is present, `deploy-free` writes that exact value into the server `.env`
+- when `FREE_DATABASE_URL` is absent, `deploy-free` still derives the bundled Droplet Postgres URL from `FREE_POSTGRES_PASSWORD`
+- the free-first operator docs explain when to use `FREE_DATABASE_URL` versus `FREE_POSTGRES_PASSWORD`
+
 ## Customer Frontend Mobile Tickets
 
 ### MF-V1-01 Session and Auth Hardening

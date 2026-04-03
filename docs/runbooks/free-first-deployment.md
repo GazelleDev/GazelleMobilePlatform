@@ -11,7 +11,7 @@ Run the full service stack on one low-cost host before AWS cutover.
 - One DigitalOcean Droplet (recommended start: 2 vCPU / 4 GB)
 - Docker Compose stack
 - Services: gateway, identity, catalog, orders, payments, loyalty, notifications
-- Dependencies: PostgreSQL, Valkey
+- Dependencies: PostgreSQL (bundled container by default, or an external `DATABASE_URL` such as Supabase), Valkey
 - Edge: Caddy with TLS for `api.<your-domain>`
 - Client dashboard deployed separately on Vercel
 
@@ -85,6 +85,7 @@ Recommended:
 
 Optional:
 
+- `FREE_DATABASE_URL` if you want the free-first stack to use an external Postgres database such as Supabase instead of the bundled Droplet Postgres
 - `FREE_IMAGE_TAG` as a manual fallback when you want `workflow_dispatch` redeploys to default to a specific immutable tag instead of `latest`
 - `FREE_CORS_ALLOWED_ORIGINS`
 - `FREE_CLIENT_DASHBOARD_DOMAIN` if you want the workflow to derive the dashboard CORS origin automatically
@@ -101,7 +102,7 @@ Optional:
 - `FREE_DEPLOY_USER`
 - `FREE_DEPLOY_SSH_KEY`
 - `LETSENCRYPT_EMAIL`
-- `FREE_POSTGRES_PASSWORD`
+- either `FREE_DATABASE_URL` or `FREE_POSTGRES_PASSWORD`
 - `FREE_GATEWAY_INTERNAL_API_TOKEN`
 - `FREE_ORDERS_INTERNAL_API_TOKEN`
 - `FREE_LOYALTY_INTERNAL_API_TOKEN`
@@ -136,7 +137,7 @@ The workflow writes the server-side `.env` file from GitHub vars and secrets. Th
   - `IMAGE_REGISTRY_PREFIX`
   - `IMAGE_TAG`
 - data and auth
-  - `POSTGRES_PASSWORD`
+  - `POSTGRES_PASSWORD` for the bundled local Postgres fallback
   - `DATABASE_URL`
   - `JWT_SECRET`
 - internal service auth
@@ -172,6 +173,7 @@ The workflow writes the server-side `.env` file from GitHub vars and secrets. Th
 
 If `FREE_CORS_ALLOWED_ORIGINS` is not set, the workflow defaults CORS to `FREE_CLIENT_DASHBOARD_DOMAIN` when available.
 If `FREE_PAYMENTS_PROVIDER_MODE=live`, the workflow validates the generated server `.env` with `./bin/check-live-payments-env.sh` before running `docker compose up`.
+If `FREE_DATABASE_URL` is set, the workflow writes that exact value into `DATABASE_URL`; otherwise it synthesizes the bundled Droplet Postgres URL from `FREE_POSTGRES_PASSWORD`.
 
 ## Deploy
 
@@ -193,6 +195,8 @@ In both paths the workflow copies `infra/free` to the host, writes runtime `.env
 docker compose pull
 docker compose up -d --remove-orphans
 ```
+
+When `FREE_DATABASE_URL` targets an external provider such as Supabase, the bundled `postgres` container remains available on the host but is no longer the active application database. The host-side backup and restore scripts in `infra/free/bin` only cover the bundled local Postgres volume; use your external provider's backup tooling for the real production database.
 
 ## Validate
 
