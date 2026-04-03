@@ -1006,9 +1006,9 @@ Acceptance criteria:
 Status:
 
 - `owner`: User + Codex
-- `status`: blocked on external accounts, credentials, and hosted setup
-- `done`: repo-side deployment workflows, env examples, validation scripts, and core V1 product flows are in place; the repo now also passes `pnpm verify` when run outside the sandbox
-- `blocked`: live deployment targets, provider accounts, credentials, domains, and first-production validation all require external access
+- `status`: in progress, partially validated live
+- `done`: backend deployment, dashboard deployment, Google SSO rollout, LatteLink web rollout, and live lead-delivery validation are complete; the repo-side deployment workflows, env examples, and validation scripts are in place; payments remain intentionally in simulated mode for this ticket
+- `blocked`: non-Apple mobile release setup, signed build completion, and real-device QA still require external accounts and hosted tooling; live Clover provider validation is now tracked separately in `XS-V1-07`
 
 Goal:
 Complete the final non-repo steps required to take V1 live.
@@ -1022,7 +1022,6 @@ Scope:
 - client dashboard `Vercel` project, domain, env vars, and deployed-browser QA
 - LatteLink web production env verification for lead capture and analytics
 - Google OAuth client credentials and redirect URI setup
-- live Clover credentials, webhook secret, and Apple Pay validation
 - `Expo / EAS`, App Store Connect, signed build setup, and first internal/TestFlight build
 - real-device mobile QA against the deployed backend
 
@@ -1031,7 +1030,6 @@ Key deliverables:
 - live backend deployment
 - live client dashboard deployment
 - live LatteLink web verification
-- working provider configuration
 - first signed mobile build
 - final V1 launch evidence set
 
@@ -1045,8 +1043,48 @@ Acceptance criteria:
 - the client dashboard is reachable on its real public URL
 - the marketing site lead path and analytics are verified in production
 - a provisioned dashboard user can authenticate on the live domain
-- live payments work with the intended production provider configuration
+- the live rollout can operate with payments intentionally left in simulated mode until `XS-V1-07` is completed
 - a signed mobile build can complete the pilot flow against the deployed backend
+
+### XS-V1-07 Clover Production-Mode Provider Validation
+
+Status:
+
+- `owner`: User + Codex
+- `status`: blocked on Clover production developer/test-merchant setup and hosted webhook validation
+- `done`: the repo supports live Clover env wiring, OAuth connection endpoints, webhook reconciliation plumbing, and free-first deploy validation for production-mode Clover rollout
+- `blocked`: Clover production app setup, production test merchant install/connect flow, webhook verification, live-mode deploy, and provider QA transcripts still require external provider access
+
+Goal:
+Validate Clover in production mode against a Clover production test merchant without connecting the pilot client's real merchant account.
+
+Scope:
+
+- create and configure the Clover production app
+- enable Clover ecommerce permissions and REST configuration for the deployed backend callback URLs
+- connect a Clover production test merchant through the repo's OAuth flow
+- configure webhook verification and shared-secret rollout against the public API
+- switch the deployed backend from simulated payments to live Clover mode
+- capture charge, refund, and reconciliation validation evidence against the production test merchant
+
+Key deliverables:
+
+- Clover production app configuration
+- Clover production test merchant connection
+- GitHub secrets and vars for live Clover mode
+- successful Clover OAuth status and webhook verification transcript
+- production test merchant payment validation evidence
+
+Dependencies:
+
+- `XS-V1-03`
+
+Acceptance criteria:
+
+- `deploy-free` passes with `FREE_PAYMENTS_PROVIDER_MODE=live`
+- `/v1/payments/clover/oauth/status` reports `connected: true` and `credentialSource: "oauth"`
+- Clover webhook verification succeeds against the public API
+- the production test merchant can complete the intended live Clover validation flow without using the pilot client's real merchant
 
 ### XS-V1-04 Development Flow and Change Control
 
