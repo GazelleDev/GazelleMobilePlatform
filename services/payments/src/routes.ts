@@ -1124,6 +1124,7 @@ type CloverOAuthEnvironment = "sandbox" | "production";
 
 type CloverOAuthConfig = {
   configured: boolean;
+  environment: CloverOAuthEnvironment;
   appId?: string;
   appSecret?: string;
   redirectUri?: string;
@@ -1189,6 +1190,7 @@ function resolveCloverOAuthConfig(env: NodeJS.ProcessEnv = process.env): CloverO
 
   return {
     configured: missing.length === 0,
+    environment,
     appId,
     appSecret,
     redirectUri,
