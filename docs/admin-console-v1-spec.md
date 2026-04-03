@@ -1,10 +1,10 @@
 # Admin Console V1 Spec
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-02`
 
 ## Purpose
 
-Define the first real internal control plane for LatteLink so new pilot clients can be onboarded without raw database edits, ad hoc shell work, or undocumented engineering steps.
+Define the first real internal control plane for LatteLink so new clients can be onboarded without raw database edits, ad hoc shell work, or undocumented engineering steps.
 
 This app is for LatteLink internal staff only.
 
@@ -18,7 +18,7 @@ It is not:
 
 At the end of `V1`, a LatteLink team member should be able to:
 
-1. create a new pilot client record
+1. create a new client record
 2. create the first store/location for that client
 3. configure the store capabilities required for launch
 4. provision the first owner account
@@ -34,7 +34,7 @@ That flow should happen through supported product surfaces and backend APIs, not
 - client creation
 - first location creation
 - first-owner provisioning
-- pilot capability configuration
+- launch capability configuration
 - onboarding status visibility
 - internal deployment target and route map
 
@@ -54,7 +54,7 @@ V1 should support these internal roles:
 - `platform_owner`
   - full control over client creation, location creation, owner provisioning, and capability configuration
 - `platform_operator`
-  - can create and edit pilot clients and locations, but cannot manage internal admin accounts
+  - can create and edit clients and locations, but cannot manage internal admin accounts
 - `support_readonly`
   - can inspect onboarding state and configuration, but cannot mutate client records
 
@@ -130,7 +130,7 @@ But the actual V1 build target should not depend on having Google Workspace or C
 
 For the internal console, `V1` still operates on the current platform reality:
 
-- one pilot client maps to one primary store/location
+- one client maps to one primary store/location
 - the backend source of truth is still largely `locationId`
 
 The admin console should treat the primary managed entity as a `client` record that wraps:
@@ -178,7 +178,7 @@ The left-side nav should be minimal:
 - Launch Readiness
 - Settings
 
-The app does not need a wide, multi-domain internal IA yet. V1 should stay focused on pilot onboarding and configuration.
+The app does not need a wide, multi-domain internal IA yet. V1 should stay focused on client onboarding and configuration.
 
 ## V1 Screens
 
@@ -199,7 +199,7 @@ Requirements:
 
 Purpose:
 
-- show all pilot clients and where they are in onboarding
+- show all clients and where they are in onboarding
 
 Columns:
 
@@ -219,7 +219,7 @@ Primary actions:
 
 Purpose:
 
-- create a new pilot client without engineering improvisation
+- create a new client without engineering improvisation
 
 Wizard steps:
 
@@ -233,7 +233,7 @@ Wizard steps:
 
 Purpose:
 
-- view the state of one pilot client in one place
+- view the state of one client in one place
 
 Sections:
 

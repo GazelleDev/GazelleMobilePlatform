@@ -1,6 +1,6 @@
 # Client Dashboard Product Spec
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-02`
 
 ## Purpose
 
@@ -34,7 +34,7 @@ Included in V1:
 - single-store dashboard experience
 - `owner` and `staff` roles
 - email/password sign-in
-- Google SSO for already-provisioned store accounts
+- Google SSO for existing owner and staff accounts
 - live order board and order status transitions
 - store configuration editing for owners
 - menu create/edit/remove/visibility controls when the backend menu is authoritative
@@ -107,21 +107,21 @@ Recommended baseline roles:
 
 ### Permission Matrix
 
-| Capability | Owner | Manager | Staff |
-| --- | --- | --- | --- |
-| View live order board | Yes | Yes | Yes, when enabled |
-| Advance manual order statuses | Yes | Yes | Yes, when enabled |
-| Cancel orders | Yes | Yes | Optional, policy-driven |
-| View historical orders | Yes | Yes | Yes |
-| Edit store config | Yes | Limited/optional | No |
-| Manage hours and pickup settings | Yes | Limited/optional | No |
-| Create menu items | Yes, backend menu only | Optional | No |
-| Edit menu items | Yes, backend menu only | Optional | No |
-| Remove/archive menu items | Yes, backend menu only | Optional | No |
-| Toggle item visibility | Yes, backend menu only | Yes, backend menu only | Yes, backend menu only |
-| Manage staff accounts and roles | Yes | No | No |
-| Change store-level feature settings | Yes | No | No |
-| See audit history | Yes | Yes | Limited |
+| Capability                          | Owner                  | Manager                | Staff                   |
+| ----------------------------------- | ---------------------- | ---------------------- | ----------------------- |
+| View live order board               | Yes                    | Yes                    | Yes, when enabled       |
+| Advance manual order statuses       | Yes                    | Yes                    | Yes, when enabled       |
+| Cancel orders                       | Yes                    | Yes                    | Optional, policy-driven |
+| View historical orders              | Yes                    | Yes                    | Yes                     |
+| Edit store config                   | Yes                    | Limited/optional       | No                      |
+| Manage hours and pickup settings    | Yes                    | Limited/optional       | No                      |
+| Create menu items                   | Yes, backend menu only | Optional               | No                      |
+| Edit menu items                     | Yes, backend menu only | Optional               | No                      |
+| Remove/archive menu items           | Yes, backend menu only | Optional               | No                      |
+| Toggle item visibility              | Yes, backend menu only | Yes, backend menu only | Yes, backend menu only  |
+| Manage staff accounts and roles     | Yes                    | No                     | No                      |
+| Change store-level feature settings | Yes                    | No                     | No                      |
+| See audit history                   | Yes                    | Yes                    | Limited                 |
 
 ### MVP Role Interpretation
 
@@ -250,7 +250,7 @@ Required staff actions:
 
 Required behavior:
 
-- operator dashboard remains usable for menu visibility and source awareness only if supported by integration design
+- the client dashboard remains usable for menu visibility and source awareness only if supported by integration design
 - the UI must clearly indicate that the authoritative menu is external
 - owner editing actions must be disabled unless an explicit override layer exists
 
@@ -318,7 +318,7 @@ Recommended future additions:
 
 ## UX and Design Requirements
 
-The operator dashboard must match LatteLink visually and interactively.
+The client dashboard must match LatteLink visually and interactively.
 
 ### Design Direction
 
@@ -592,7 +592,7 @@ This can begin as a backend event log before a fully designed UI is added.
 
 ## Session and Capability Model
 
-The operator dashboard needs a dedicated operator session model that is separate from the customer mobile auth model.
+The client dashboard needs a dedicated operator session model that is separate from the customer mobile auth model.
 
 Recommended session payload shape:
 
@@ -774,7 +774,7 @@ Reason:
 
 ## Definition of "On the Right Track"
 
-We should consider the operator dashboard direction healthy if:
+We should consider the client dashboard direction healthy if:
 
 - new backend work moves away from shared staff tokens toward operator identity
 - permissions are designed as capabilities instead of one-off UI conditions

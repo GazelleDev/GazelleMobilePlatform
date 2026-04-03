@@ -1,6 +1,6 @@
 # Backend Platform Roadmap (V1-V5)
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-02`
 
 ## Current State
 
@@ -85,7 +85,7 @@ Be safe enough to power the first pilot store in production.
 
 ### Exit Criteria
 
-- one pilot client/store can operate for real customers
+- one client/store can operate for real customers
 - deploy, rollback, and restore are rehearsed
 - mobile ordering and client dashboard both use the same stable APIs
 
@@ -127,7 +127,7 @@ Stabilize the pilot and remove manual operational pain.
 ### Exit Criteria
 
 - pilot support no longer depends on digging through raw logs only
-- first-time dashboard access can be provisioned intentionally
+- first-time dashboard access can be created intentionally through supported flows
 - Google SSO can be enabled client by client
 
 ## V3
@@ -156,7 +156,7 @@ Introduce true multi-client foundations.
 ### Engineering Changes
 
 - add `organizationId` above `locationId`
-- replace default seeded store assumptions with explicit tenant resolution
+- replace default hardcoded store assumptions with explicit tenant resolution
 - add a config module or service for client capabilities
 - ensure mobile and client dashboard read the same resolved feature model
 - formalize tenant-aware keys for notifications, orders, and menu data

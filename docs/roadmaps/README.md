@@ -1,6 +1,6 @@
 # Product Roadmaps (V1-V5)
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-02`
 
 ## Purpose
 
@@ -29,7 +29,14 @@ These roadmaps are meant to align:
 - `V5` is the target state `5 months` from now.
 - `frontend` is interpreted as the customer-facing mobile ordering app in `apps/mobile`.
 - the client dashboard is the store-facing dashboard in `apps/operator-web`
-- the admin console does not exist in code yet and therefore has a roadmap that begins with platform-control-plane foundations
+- the admin console already exists in code at `apps/admin-console`, and its roadmap starts from a scaffolded internal control plane rather than an absent app
+
+## V1 Deployment Lanes
+
+- backend services deploy from `GHCR` to the `DigitalOcean` free-first host
+- the client dashboard deploys on `Vercel`
+- LatteLink web deploys on `Vercel`
+- the customer mobile app uses `Expo / EAS` for build and release handoff
 
 ## Release Cadence
 
