@@ -395,6 +395,41 @@ Acceptance criteria:
 - committed SDK generated types match the updated gateway OpenAPI spec
 - the contract-drift guard no longer fails for the Clover public-route changes
 
+### BE-V1-10 Free-First Gateway Payments Upstream Wiring Fix
+
+Status:
+
+- `owner`: Codex
+- `status`: in progress
+- `done`: diagnosed the live Clover `502 Bad Gateway` failure to a free-first compose wiring gap where `gateway` was missing `PAYMENTS_SERVICE_BASE_URL`, causing the deployed public payments routes to fall back to `127.0.0.1:3003`
+- `blocked`: the compose fix still needs to merge and redeploy to the live free-first host
+
+Goal:
+Restore the public payments proxy path on the free-first deployment so Clover webhook and OAuth ingress can reach the live `payments` service.
+
+Scope:
+
+- add the missing `PAYMENTS_SERVICE_BASE_URL` env wiring to the free-first `gateway` service
+- add the missing `payments` dependency in the free-first compose graph
+- extend the free-first smoke check to hit the public Clover status route so future deploys catch payments upstream regressions
+
+Key deliverables:
+
+- corrected `infra/free/docker-compose.yml` wiring for `gateway -> payments`
+- smoke-check coverage for `/v1/payments/clover/oauth/status`
+- redeployed free-first stack with successful public payments upstream connectivity
+
+Dependencies:
+
+- `BE-V1-07`
+- `XS-V1-03`
+
+Acceptance criteria:
+
+- the deployed `gateway` container receives `PAYMENTS_SERVICE_BASE_URL=http://payments:3003`
+- `GET /v1/payments/clover/oauth/status` no longer returns `UPSTREAM_UNAVAILABLE` on the live free-first host
+- Clover webhook URL verification can reach the public API without `502 Bad Gateway`
+
 ## Customer Frontend Mobile Tickets
 
 ### MF-V1-01 Session and Auth Hardening
