@@ -1,15 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useQueryClient } from "@tanstack/react-query";
 import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
-import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getCheckoutRecoveryActionLabel } from "../src/auth/recovery";
 import { useAuthSession } from "../src/auth/session";
 import { ClearCartSheet } from "../src/cart/ClearCartSheet";
-import { CheckoutSheet } from "../src/cart/CheckoutSheet";
 import { buildPricingSummary, describeCustomization } from "../src/cart/model";
 import { RemoveItemSheet } from "../src/cart/RemoveItemSheet";
 import { useCart } from "../src/cart/store";
@@ -22,16 +20,7 @@ import {
   useMenuQuery,
   useStoreConfigQuery
 } from "../src/menu/catalog";
-import { canAttemptNativeApplePay, requestNativeApplePayWallet, type ApplePayWalletPayload } from "../src/orders/applePay";
-import { tokenizeCloverCard, useCloverCardEntryConfigQuery } from "../src/orders/card";
-import {
-  CheckoutSubmissionError,
-  quoteItemsEqual,
-  resolveInlineCheckoutErrorMessage,
-  shouldShowCheckoutFailureScreen,
-  toQuoteItems,
-  useApplePayCheckoutMutation
-} from "../src/orders/checkout";
+import { quoteItemsEqual, toQuoteItems } from "../src/orders/checkout";
 import { useCheckoutFlow } from "../src/orders/flow";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../src/navigation/tabBarMetrics";
 import { uiPalette, uiTypography } from "../src/ui/system";
@@ -265,13 +254,12 @@ function CartItemArtwork({
 
 export default function CartModalScreen() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const stickyFooterBottom = getTabBarBottomOffset(insets.bottom > 0);
   const stickyFooterClearance = stickyFooterBottom + TAB_BAR_HEIGHT + 16;
   const { isAuthenticated, authRecoveryState } = useAuthSession();
   const { items, itemCount, subtotalCents, setQuantity, removeItem, clear } = useCart();
-  const { retryOrder, clearRetryOrder, clearFailure, setConfirmation, setFailure } = useCheckoutFlow();
+  const { confirmation, failure, retryOrder, clearRetryOrder, clearFailure } = useCheckoutFlow();
   const appConfigQuery = useAppConfigQuery();
   const menuQuery = useMenuQuery();
   const storeConfigQuery = useStoreConfigQuery();
@@ -279,19 +267,12 @@ export default function CartModalScreen() {
   const appConfig = appConfigQuery.data ? resolveAppConfigData(appConfigQuery.data) : null;
   const storeConfig = storeConfigQuery.data ? resolveStoreConfigData(storeConfigQuery.data) : null;
   const pricingSummary = buildPricingSummary(subtotalCents, storeConfig?.taxRateBasisPoints ?? 0);
-  const checkoutMutation = useApplePayCheckoutMutation();
   const checkoutUnavailableMessage = !storeConfig
     ? "Store details are temporarily unavailable. Retry loading checkout before paying."
     : !appConfig
       ? "Checkout configuration is temporarily unavailable. Retry loading checkout before paying."
       : null;
   const checkoutReady = checkoutUnavailableMessage === null;
-  const cardCapabilityEnabled = Boolean(appConfig?.paymentCapabilities.card);
-  const cardEntryConfigQuery = useCloverCardEntryConfigQuery(isAuthenticated && checkoutReady && cardCapabilityEnabled);
-  const nativeApplePayAvailable = Boolean(checkoutReady && canAttemptNativeApplePay() && appConfig?.paymentCapabilities.applePay);
-  const cardEntryAvailable = Boolean(checkoutReady && cardCapabilityEnabled && cardEntryConfigQuery.data?.enabled);
-  const cardEntryConfigPending = Boolean(isAuthenticated && checkoutReady && cardCapabilityEnabled && cardEntryConfigQuery.isLoading);
-  const showDevFallback = __DEV__ && checkoutReady;
   const quoteItems = useMemo(() => toQuoteItems(items), [items]);
   const retryableOrder = retryOrder && quoteItemsEqual(quoteItems, retryOrder.quoteItems) ? retryOrder : undefined;
   const menuItemsById = useMemo(
@@ -304,48 +285,20 @@ export default function CartModalScreen() {
     [items, pendingRemovalLineId]
   );
   const [clearSheetOpen, setClearSheetOpen] = useState(false);
-  const [isCheckoutSheetOpen, setIsCheckoutSheetOpen] = useState(false);
-  const [applePayToken, setApplePayToken] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpMonth, setCardExpMonth] = useState("");
-  const [cardExpYear, setCardExpYear] = useState("");
-  const [cardCvv, setCardCvv] = useState("");
-  const [nativeApplePayPending, setNativeApplePayPending] = useState(false);
-  const [cardCheckoutPending, setCardCheckoutPending] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("");
-  const [statusTone, setStatusTone] = useState<"info" | "warning">("info");
-  const stickyActionDisabled = isAuthenticated
-    ? !checkoutReady ||
-      nativeApplePayPending ||
-      cardCheckoutPending ||
-      checkoutMutation.isPending ||
-      (!nativeApplePayAvailable && !cardEntryAvailable)
-    : false;
+  const stickyActionDisabled = isAuthenticated ? !checkoutReady : false;
   const stickyActionLabel = isAuthenticated
     ? !checkoutReady
       ? "Checkout unavailable"
-      : nativeApplePayPending
-        ? "Opening Apple Pay…"
-        : cardCheckoutPending
-          ? "Preparing card…"
-          : cardEntryConfigPending
-            ? "Loading payment…"
-            : checkoutMutation.isPending
-              ? "Processing…"
-              : retryableOrder
-                ? "Retry payment"
-                : nativeApplePayAvailable
-                  ? "Pay with Apple Pay"
-                  : cardEntryAvailable
-                    ? "Use card below"
-                    : "Payment unavailable"
+      : retryableOrder
+        ? "Retry payment"
+        : "Continue to checkout"
     : getCheckoutRecoveryActionLabel(authRecoveryState);
   const stickyActionIcon: keyof typeof Ionicons.glyphMap = isAuthenticated
-    ? nativeApplePayAvailable
-      ? "logo-apple"
-      : cardEntryAvailable
-        ? "card-outline"
-        : "alert-circle-outline"
+    ? checkoutReady
+      ? retryableOrder
+        ? "refresh-outline"
+        : "card-outline"
+      : "alert-circle-outline"
     : "log-in-outline";
   const stickyActionValue = formatUsd(checkoutReady ? pricingSummary.totalCents : subtotalCents);
 
@@ -355,193 +308,36 @@ export default function CartModalScreen() {
     }
   }, [clearRetryOrder, quoteItems, retryOrder]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (confirmation) {
+        router.replace("/checkout-success");
+        return;
+      }
+
+      if (failure) {
+        router.replace("/checkout-failure");
+      }
+    }, [confirmation, failure, router])
+  );
+
   useEffect(() => {
     if (pendingRemovalLineId && !pendingRemovalItem) {
       setPendingRemovalLineId(null);
     }
   }, [pendingRemovalItem, pendingRemovalLineId]);
 
-  async function invalidateAccountQueries() {
-    await queryClient.invalidateQueries({ queryKey: ["account"] });
-  }
-
   function refreshCheckoutContext() {
-    setStatusMessage("");
-    setStatusTone("info");
     void Promise.allSettled([appConfigQuery.refetch(), storeConfigQuery.refetch(), menuQuery.refetch()]);
   }
 
   function resetCartState() {
     setClearSheetOpen(false);
-    setIsCheckoutSheetOpen(false);
     setPendingRemovalLineId(null);
     clear();
     clearFailure();
     clearRetryOrder();
-    setStatusMessage("");
-    setStatusTone("info");
   }
-
-  function submitCheckout(
-    paymentInput:
-      | { paymentSourceToken: string }
-      | { applePayToken: string }
-      | { applePayWallet: ApplePayWalletPayload }
-  ) {
-    if (!storeConfig || !appConfig) {
-      setStatusMessage(checkoutUnavailableMessage ?? "Checkout is temporarily unavailable.");
-      setStatusTone("warning");
-      return;
-    }
-
-    setStatusMessage("Submitting your order…");
-    setStatusTone("info");
-
-    checkoutMutation.mutate(
-      {
-        locationId: storeConfig.locationId,
-        items,
-        existingOrder: retryableOrder,
-        ...paymentInput
-      },
-      {
-        onSuccess: (paidOrder) => {
-          setNativeApplePayPending(false);
-          setCardCheckoutPending(false);
-          setConfirmation({
-            orderId: paidOrder.id,
-            pickupCode: paidOrder.pickupCode,
-            status: paidOrder.status,
-            total: paidOrder.total,
-            items: paidOrder.items,
-            occurredAt: paidOrder.timeline[paidOrder.timeline.length - 1]?.occurredAt ?? new Date().toISOString()
-          });
-          clear();
-          setStatusMessage("");
-          setStatusTone("info");
-          void invalidateAccountQueries();
-          router.replace("/checkout-success");
-        },
-        onError: (error) => {
-          setNativeApplePayPending(false);
-          setCardCheckoutPending(false);
-          const message = error instanceof Error ? error.message : "Checkout failed.";
-
-          if (error instanceof CheckoutSubmissionError) {
-            void invalidateAccountQueries();
-
-            if (!shouldShowCheckoutFailureScreen(error)) {
-              clearFailure();
-              clearRetryOrder();
-              setStatusMessage(resolveInlineCheckoutErrorMessage(error));
-              setStatusTone("warning");
-              return;
-            }
-
-            setStatusMessage("");
-            setStatusTone("info");
-            setFailure({
-              message,
-              stage: error.stage,
-              occurredAt: new Date().toISOString(),
-              order: error.order
-            });
-            router.replace("/checkout-failure");
-            return;
-          }
-
-          setStatusMessage(message);
-          setStatusTone("warning");
-        }
-      }
-    );
-  }
-
-  function handleApplePayTokenCheckout() {
-    const token = applePayToken.trim();
-    if (!token) {
-      setStatusMessage("Enter a test token before checkout.");
-      setStatusTone("warning");
-      return;
-    }
-    setApplePayToken("");
-    submitCheckout({ applePayToken: token });
-  }
-
-  async function handleCardCheckout() {
-    if (!storeConfig || !appConfig) {
-      setStatusMessage(checkoutUnavailableMessage ?? "Checkout is temporarily unavailable.");
-      setStatusTone("warning");
-      return;
-    }
-
-    setCardCheckoutPending(true);
-    setStatusMessage("Securing card details with Clover…");
-    setStatusTone("info");
-
-    try {
-      const tokenizedCard = await tokenizeCloverCard(
-        {
-          number: cardNumber,
-          expMonth: cardExpMonth,
-          expYear: cardExpYear,
-          cvv: cardCvv
-        },
-        cardEntryConfigQuery.data
-      );
-      setCardNumber("");
-      setCardExpMonth("");
-      setCardExpYear("");
-      setCardCvv("");
-      submitCheckout({ paymentSourceToken: tokenizedCard.token });
-    } catch (error) {
-      setCardCheckoutPending(false);
-      setStatusMessage(error instanceof Error ? error.message : "Card tokenization failed.");
-      setStatusTone("warning");
-    }
-  }
-
-  async function handleNativeApplePayCheckout() {
-    if (!storeConfig || !appConfig) {
-      setStatusMessage(checkoutUnavailableMessage ?? "Checkout is temporarily unavailable.");
-      setStatusTone("warning");
-      return;
-    }
-
-    if (!nativeApplePayAvailable) {
-      setStatusMessage(
-        showDevFallback
-          ? "Apple Pay is unavailable in this build. Use the development test flow below."
-          : "Apple Pay is unavailable in this build right now."
-      );
-      setStatusTone("warning");
-      return;
-    }
-
-    setNativeApplePayPending(true);
-    setStatusMessage("Opening Apple Pay…");
-    setStatusTone("info");
-
-    try {
-      const walletPayload = await requestNativeApplePayWallet({
-        amountCents: pricingSummary.totalCents,
-        currencyCode: "USD",
-        countryCode: "US",
-        label: appConfig.brand.brandName
-      });
-      submitCheckout({ applePayWallet: walletPayload });
-    } catch (error) {
-      setNativeApplePayPending(false);
-      const message = error instanceof Error ? error.message : "Apple Pay sheet failed.";
-      setStatusMessage(message);
-      setStatusTone("warning");
-    }
-  }
-
-  // Keep these parent-level handlers near the old inline checkout merge region until main is promoted.
-  void handleApplePayTokenCheckout;
-  void handleCardCheckout;
-  void handleNativeApplePayCheckout;
 
   return (
     <View style={styles.backdrop}>
@@ -655,9 +451,6 @@ export default function CartModalScreen() {
               </View>
 
               {checkoutUnavailableMessage ? <StatusBanner message={checkoutUnavailableMessage} tone="warning" /> : null}
-              {statusMessage ? (
-                <StatusBanner message={statusMessage} tone={retryableOrder || statusTone === "warning" ? "warning" : "info"} />
-              ) : null}
 
               <View style={styles.checkoutDeck}>
                 {storeConfig ? (
@@ -705,7 +498,7 @@ export default function CartModalScreen() {
               disabled={stickyActionDisabled}
               onPress={() => {
                 if (isAuthenticated) {
-                  setIsCheckoutSheetOpen(true);
+                  router.push("/checkout");
                   return;
                 }
 
@@ -714,21 +507,6 @@ export default function CartModalScreen() {
             />
           </View>
         ) : null}
-
-        <CheckoutSheet
-          isOpen={isCheckoutSheetOpen}
-          onClose={() => setIsCheckoutSheetOpen(false)}
-          totalAmountCents={pricingSummary.totalCents}
-          currency="USD"
-          onSuccess={() => {
-            setIsCheckoutSheetOpen(false);
-            router.replace("/checkout-success");
-          }}
-          onFailure={() => {
-            setIsCheckoutSheetOpen(false);
-            router.replace("/checkout-failure");
-          }}
-        />
 
         <ClearCartSheet
           open={clearSheetOpen}
