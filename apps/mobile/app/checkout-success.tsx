@@ -2,13 +2,13 @@ import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
-import { Image, Platform, StyleSheet, Text, View } from "react-native";
+import { Image, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { GlassActionPill } from "../src/cart/GlassActionPill";
 import { formatUsd, resolveMenuData, useMenuQuery, type MenuItem } from "../src/menu/catalog";
 import { useCheckoutFlow, type CheckoutConfirmation } from "../src/orders/flow";
-import { formatOrderDateTime, formatOrderReference, formatOrderStatus } from "../src/orders/history";
+import { formatOrderDateTime } from "../src/orders/history";
 import { uiPalette, uiTypography } from "../src/ui/system";
 
 const DEV_PREVIEW_CONFIRMATION: CheckoutConfirmation = {
@@ -174,7 +174,12 @@ export default function CheckoutSuccessScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.content}>
-        <View style={styles.mainContent}>
+        <ScrollView
+          bounces
+          showsVerticalScrollIndicator={false}
+          contentInsetAdjustmentBehavior="never"
+          contentContainerStyle={styles.scrollContent}
+        >
           {resolvedConfirmation ? (
             <>
               <View style={styles.heroBlock}>
@@ -221,8 +226,6 @@ export default function CheckoutSuccessScreen() {
               </View>
 
               <View style={styles.summarySection}>
-                <SummaryRow label="Status" value={formatOrderStatus(resolvedConfirmation.status)} />
-                <SummaryRow label="Order ref" value={formatOrderReference(resolvedConfirmation.orderId)} emphasized />
                 <SummaryRow label="Placed" value={formatOrderDateTime(resolvedConfirmation.occurredAt)} />
                 <SummaryRow label="Total" value={formatUsd(resolvedConfirmation.total.amountCents)} emphasized />
                 <SummaryRow label="Points Earned" value={`${earnedPoints} pts`} emphasized />
@@ -236,7 +239,7 @@ export default function CheckoutSuccessScreen() {
               </Text>
             </View>
           )}
-        </View>
+        </ScrollView>
 
         <View style={[styles.footerContent, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           {resolvedConfirmation ? (
@@ -267,7 +270,7 @@ const styles = StyleSheet.create({
     paddingTop: 40,
     justifyContent: "space-between"
   },
-  mainContent: {
+  scrollContent: {
     flex: 1
   },
   heroBlock: {
@@ -311,7 +314,6 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   pickupCodeStage: {
-    flex: 1,
     justifyContent: "center"
   },
   pickupCodeStageWithItems: {
