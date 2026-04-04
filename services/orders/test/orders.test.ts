@@ -186,6 +186,16 @@ describe("orders service", () => {
         });
       }
 
+      if (url.endsWith("/v1/payments/orders/submit") && method === "POST") {
+        const expectedInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-internal-token")).toBe(expectedInternalToken);
+        return paymentsResponse({
+          accepted: true,
+          merchantId: "merchant-123"
+        });
+      }
+
       if (url.endsWith("/v1/loyalty/internal/ledger/apply") && method === "POST") {
         const expectedInternalToken = process.env.LOYALTY_INTERNAL_API_TOKEN;
         const headers = new Headers(init?.headers);
@@ -1490,6 +1500,12 @@ describe("orders service", () => {
       applied: false,
       orderStatus: "PAID"
     });
+    const submitOrderCalls = fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        (typeof input === "string" ? input : input.toString()).endsWith("/v1/payments/orders/submit") &&
+        (init?.method ?? "GET") === "POST"
+    );
+    expect(submitOrderCalls).toHaveLength(1);
 
     const refundReconcile = await app.inject({
       method: "POST",

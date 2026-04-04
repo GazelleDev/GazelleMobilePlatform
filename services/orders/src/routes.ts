@@ -19,6 +19,7 @@ import {
   processPayment,
   reconcilePaymentWebhook,
   type CancelOrderSource,
+  type PosAdapter,
   type OrderServiceDeps,
   type RequestUserContext,
   type ServiceError
@@ -46,6 +47,11 @@ const serviceErrorSchema = z.object({
   message: z.string(),
   requestId: z.string(),
   details: z.record(z.unknown()).optional()
+});
+
+const submitOrderDispatchResponseSchema = z.object({
+  accepted: z.literal(true),
+  merchantId: z.string().min(1).optional()
 });
 
 // x-user-id is a gateway-to-service context header. Customer clients should not be talking to orders
@@ -82,6 +88,77 @@ function toPositiveInteger(value: string | undefined, fallback: number) {
   }
 
   return parsed;
+}
+
+function parseJsonSafely(raw: string): unknown {
+  if (!raw || raw.length === 0) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
+class SubmitOrderDispatchError extends Error {
+  readonly merchantId?: string;
+
+  constructor(message: string, merchantId?: string) {
+    super(message);
+    this.name = "SubmitOrderDispatchError";
+    this.merchantId = merchantId;
+  }
+}
+
+function createPosAdapter(params: {
+  paymentsBaseUrl: string;
+  paymentsInternalToken?: string;
+  requestId: string;
+}): PosAdapter {
+  return {
+    async submitOrder(order) {
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "x-request-id": params.requestId
+      };
+      if (params.paymentsInternalToken) {
+        headers["x-internal-token"] = params.paymentsInternalToken;
+      }
+
+      let response: Response;
+      try {
+        response = await fetch(`${params.paymentsBaseUrl}/v1/payments/orders/submit`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(order)
+        });
+      } catch (error) {
+        throw new SubmitOrderDispatchError(
+          `Payments order submission request failed: ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      }
+
+      const body = parseJsonSafely(await response.text());
+      if (!response.ok) {
+        const parsed = serviceErrorSchema.safeParse(body);
+        const message = parsed.success
+          ? parsed.data.message
+          : `Payments order submission failed with status ${response.status}`;
+        const merchantId =
+          parsed.success && typeof parsed.data.details?.merchantId === "string"
+            ? parsed.data.details.merchantId
+            : undefined;
+        throw new SubmitOrderDispatchError(message, merchantId);
+      }
+
+      const parsed = submitOrderDispatchResponseSchema.safeParse(body);
+      if (!parsed.success || !parsed.data.accepted) {
+        throw new SubmitOrderDispatchError("Payments order submission returned an invalid response");
+      }
+    }
+  };
 }
 
 function sendError(
@@ -236,6 +313,11 @@ export async function registerRoutes(app: FastifyInstance) {
 
   const getServiceDeps = (request: FastifyRequest): OrderServiceDeps => ({
     ...sharedDeps,
+    posAdapter: createPosAdapter({
+      paymentsBaseUrl,
+      paymentsInternalToken: internalApiToken,
+      requestId: request.id
+    }),
     logger: request.log
   });
 

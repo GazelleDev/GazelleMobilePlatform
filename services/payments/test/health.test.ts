@@ -658,6 +658,90 @@ describe("payments service", () => {
     await app.close();
   });
 
+  it("accepts live order submission when Clover print_event fails after order creation", async () => {
+    vi.stubEnv("CLOVER_PROVIDER_MODE", "live");
+    vi.stubEnv("CLOVER_BEARER_TOKEN", "test-bearer-token");
+    vi.stubEnv("CLOVER_MERCHANT_ID", "merchant-sbx");
+    vi.stubEnv("CLOVER_CHARGE_ENDPOINT", "https://sandbox.clover.test/v1/merchants/{merchantId}/charges");
+    vi.stubEnv(
+      "CLOVER_REFUND_ENDPOINT",
+      "https://sandbox.clover.test/v1/merchants/{merchantId}/payments/{paymentId}/refunds"
+    );
+
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/orders") {
+        return new Response(JSON.stringify({ id: "clover-order-1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/orders/clover-order-1/line_items") {
+        return new Response(JSON.stringify({ id: "line-item-1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/print_event") {
+        return new Response(JSON.stringify({ message: "The default printing device is missing" }), {
+          status: 400,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      throw new Error(`unexpected live Clover URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/orders/submit",
+      headers: internalHeaders(),
+      payload: {
+        id: "123e4567-e89b-12d3-a456-426614174199",
+        locationId: "flagship-01",
+        status: "PAID",
+        items: [
+          {
+            itemId: "latte",
+            itemName: "Honey Oat Latte",
+            quantity: 1,
+            unitPriceCents: 675
+          }
+        ],
+        total: {
+          currency: "USD",
+          amountCents: 675
+        },
+        pickupCode: "ABC123",
+        timeline: [
+          {
+            status: "PENDING_PAYMENT",
+            occurredAt: "2026-04-03T00:00:00.000Z",
+            source: "customer"
+          },
+          {
+            status: "PAID",
+            occurredAt: "2026-04-03T00:00:05.000Z",
+            source: "customer"
+          }
+        ]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      accepted: true,
+      merchantId: "merchant-sbx"
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await app.close();
+  });
+
   it("uses apiAccessKey tokenization auth for live Apple Pay wallet charges", async () => {
     vi.stubEnv("CLOVER_PROVIDER_MODE", "live");
     vi.stubEnv("CLOVER_BEARER_TOKEN", "test-bearer-token");

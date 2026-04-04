@@ -9,6 +9,8 @@ import {
   createOrder,
   createQuote,
   processPayment,
+  reconcilePaymentWebhook,
+  type PosAdapter,
   type OrderServiceDeps
 } from "../src/service.js";
 
@@ -69,6 +71,7 @@ async function createTestDeps(
   const logger = createLoggerMock();
   const repository = await createOrdersRepository(logger);
   repositories.push(repository);
+  const submitOrder = vi.fn<PosAdapter["submitOrder"]>().mockResolvedValue(undefined);
 
   const deps: OrderServiceDeps = {
     repository,
@@ -78,6 +81,9 @@ async function createTestDeps(
     loyaltyInternalToken,
     notificationsBaseUrl: "http://notifications.test",
     notificationsInternalToken,
+    posAdapter: {
+      submitOrder
+    },
     fulfillmentConfig: {
       ...DEFAULT_APP_CONFIG_FULFILLMENT,
       mode: options.fulfillmentMode ?? DEFAULT_APP_CONFIG_FULFILLMENT.mode
@@ -85,7 +91,7 @@ async function createTestDeps(
     logger
   };
 
-  return { deps, logger };
+  return { deps, logger, submitOrder };
 }
 
 async function createQuotedOrder(
@@ -363,7 +369,7 @@ describe("orders service layer", () => {
 
   it("processPayment succeeds and advances the order to PAID", async () => {
     const userId = "123e4567-e89b-12d3-a456-426614174501";
-    const { deps } = await createTestDeps(repositories);
+    const { deps, submitOrder } = await createTestDeps(repositories);
     const { order } = await createQuotedOrder(deps, { userId });
 
     const result = await processPayment({
@@ -392,11 +398,13 @@ describe("orders service layer", () => {
       (typeof input === "string" ? input : input.toString()).endsWith("/v1/payments/charges")
     );
     expect(chargeCalls).toHaveLength(1);
+    expect(submitOrder).toHaveBeenCalledTimes(1);
+    expect(submitOrder).toHaveBeenCalledWith(expect.objectContaining({ id: order.id, status: "PAID" }));
   });
 
   it("processPayment cancels the order after a declined payment response", async () => {
     const userId = "123e4567-e89b-12d3-a456-426614174502";
-    const { deps } = await createTestDeps(repositories);
+    const { deps, submitOrder } = await createTestDeps(repositories);
     const { order } = await createQuotedOrder(deps, { userId });
 
     const result = await processPayment({
@@ -430,11 +438,12 @@ describe("orders service layer", () => {
       status: "CANCELED",
       source: "system"
     });
+    expect(submitOrder).not.toHaveBeenCalled();
   });
 
   it("processPayment blocks new payment attempts after a timeout until reconciliation lands", async () => {
     const userId = "123e4567-e89b-12d3-a456-426614174512";
-    const { deps } = await createTestDeps(repositories);
+    const { deps, submitOrder } = await createTestDeps(repositories);
     const { order } = await createQuotedOrder(deps, { userId });
 
     const timedOutResult = await processPayment({
@@ -491,6 +500,43 @@ describe("orders service layer", () => {
       (typeof input === "string" ? input : input.toString()).endsWith("/v1/payments/charges")
     );
     expect(chargeCalls).toHaveLength(1);
+    expect(submitOrder).not.toHaveBeenCalled();
+  });
+
+  it("reconcilePaymentWebhook submits order exactly once on paid transition", async () => {
+    const userId = "123e4567-e89b-12d3-a456-426614174515";
+    const { deps, submitOrder } = await createTestDeps(repositories);
+    const { order } = await createQuotedOrder(deps, { userId });
+    const paymentId = "123e4567-e89b-12d3-a456-426614174199";
+
+    const result = await reconcilePaymentWebhook({
+      input: {
+        eventId: "evt_submit_order_once",
+        provider: "CLOVER",
+        kind: "CHARGE",
+        orderId: order.id,
+        paymentId,
+        status: "SUCCEEDED",
+        amountCents: order.total.amountCents,
+        currency: "USD",
+        occurredAt: "2026-03-11T00:00:00.000Z",
+        message: "charge settled"
+      },
+      requestId: "service-reconcile-submit-order",
+      deps
+    });
+
+    expect("error" in result).toBe(false);
+    if ("error" in result) {
+      throw new Error(result.error.code);
+    }
+    expect(result.result).toMatchObject({
+      accepted: true,
+      applied: true,
+      orderStatus: "PAID"
+    });
+    expect(submitOrder).toHaveBeenCalledTimes(1);
+    expect(submitOrder).toHaveBeenCalledWith(expect.objectContaining({ id: order.id, status: "PAID" }));
   });
 
   it("processPayment cancels the order after a definitive upstream payment error", async () => {

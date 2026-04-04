@@ -181,6 +181,10 @@ export type RequestUserContext = {
   error?: ServiceError;
 };
 
+export type PosAdapter = {
+  submitOrder(order: Order): Promise<void>;
+};
+
 export type OrderServiceDeps = {
   repository: OrdersRepository;
   paymentsBaseUrl: string;
@@ -189,6 +193,7 @@ export type OrderServiceDeps = {
   loyaltyInternalToken?: string;
   notificationsBaseUrl: string;
   notificationsInternalToken?: string;
+  posAdapter?: PosAdapter;
   fulfillmentConfig: AppConfigFulfillment;
   logger: FastifyBaseLogger;
 };
@@ -212,6 +217,12 @@ type ChargeRequestResult =
 type RefundRequestResult =
   | { response: PaymentsRefundResponse }
   | { error: ServiceError; snapshot?: PaymentsRefundResponse };
+
+const noopPosAdapter: PosAdapter = {
+  async submitOrder() {
+    // Intentionally no-op; production paths provide a real adapter.
+  }
+};
 
 export function isServiceError(value: unknown): value is ServiceError {
   return (
@@ -474,6 +485,32 @@ async function sendOrderStateNotifications(params: {
       order: params.order,
       timelineEntry
     });
+  }
+}
+
+function resolveMerchantIdFromSubmitOrderError(error: unknown) {
+  const candidate = (error as { merchantId?: unknown } | null | undefined)?.merchantId;
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
+}
+
+async function submitOrderBestEffort(params: {
+  order: Order;
+  requestId: string;
+  deps: OrderServiceDeps;
+}) {
+  const { order, requestId, deps } = params;
+  try {
+    await (deps.posAdapter ?? noopPosAdapter).submitOrder(order);
+  } catch (error) {
+    deps.logger.error(
+      {
+        error,
+        orderId: order.id,
+        requestId,
+        merchantId: resolveMerchantIdFromSubmitOrderError(error)
+      },
+      "post-payment Clover order submission failed"
+    );
   }
 }
 
@@ -1222,6 +1259,11 @@ export async function processPayment(params: {
     source: "customer"
   });
   await deps.repository.updateOrder(orderId, paidTransition.order);
+  await submitOrderBestEffort({
+    order: paidTransition.order,
+    requestId,
+    deps
+  });
   await deps.repository.setPaymentId(orderId, successfulCharge.paymentId);
   await deps.repository.savePaymentIdempotency(orderId, input.idempotencyKey);
   await sendOrderStateNotification({
@@ -1604,6 +1646,11 @@ export async function reconcilePaymentWebhook(params: {
       source: "webhook"
     });
     await deps.repository.updateOrder(input.orderId, paidTransition.order);
+    await submitOrderBestEffort({
+      order: paidTransition.order,
+      requestId,
+      deps
+    });
     await sendOrderStateNotifications({
       requestId,
       deps,
