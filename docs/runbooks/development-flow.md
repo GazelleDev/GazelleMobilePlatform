@@ -178,6 +178,8 @@ There are two types of PRs:
 ### Feature PR template
 
 ```markdown
+<!-- Before requesting review, add the same type and priority labels from the linked issue to this PR. -->
+
 ## Summary
 
 What this PR does in one or two sentences.
@@ -228,6 +230,7 @@ What is included in this release.
 
 - Feature branches merge into `dev` using squash merge to keep history clean.
 - `dev` merges into `main` using a regular merge commit so the release is clearly marked in history.
+- Feature PRs into `dev` must include a `Closes #<issue-number>` reference and carry exactly one type label plus exactly one priority label.
 - Never force push to `dev` or `main`.
 - Never merge a PR with failing CI checks.
 
@@ -429,6 +432,7 @@ This section is written specifically for AI agents operating on this repository.
 ### Pull requests
 
 - Always open a PR using the appropriate template in section 5.
+- For feature PRs into `dev`, always link the issue with `Closes #<issue-number>` and add the same type and priority labels to the PR before requesting review.
 - Never merge your own PR without explicit instruction.
 - Never merge to `main` directly. Only merge feature branches to `dev`.
 

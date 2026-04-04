@@ -29,7 +29,10 @@ jobs:
             const body = pr.body ?? "";
             const base = pr.base.ref;
             const head = pr.head.ref;
+            const labels = pr.labels.map((label) => label.name.toLowerCase());
             const errors = [];
+            const typeLabels = ["feat", "fix", "chore", "docs", "refactor", "security", "investigate"];
+            const priorityLabels = ["p0", "p1", "p2"];
 
             function sectionExists(title) {
               const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -57,6 +60,17 @@ jobs:
 
               if (!/Closes\s+#\d+/i.test(body)) {
                 errors.push("Feature PRs must include `Closes #<issue-number>` in the Issue section.");
+              }
+
+              const prTypeLabels = labels.filter((label) => typeLabels.includes(label));
+              const prPriorityLabels = labels.filter((label) => priorityLabels.includes(label));
+
+              if (prTypeLabels.length !== 1) {
+                errors.push(`Feature PRs must have exactly one type label. Expected one of: ${typeLabels.join(", ")}.`);
+              }
+
+              if (prPriorityLabels.length !== 1) {
+                errors.push(`Feature PRs must have exactly one priority label. Expected one of: ${priorityLabels.join(", ")}.`);
               }
             } else if (base === "main") {
               if (head !== "dev") {

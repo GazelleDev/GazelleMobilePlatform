@@ -1,3 +1,5 @@
+<!-- Required before review: add the same type label and priority label from the linked issue to this PR. -->
+
 ## Summary
 
 What this PR does in one or two sentences.
