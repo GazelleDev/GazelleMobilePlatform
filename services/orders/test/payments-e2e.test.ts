@@ -486,6 +486,19 @@ describe.sequential("orders + payments e2e", () => {
     expect(secondPaidOrder.id).toBe(firstPaidOrder.id);
     expect(secondPaidOrder.timeline).toHaveLength(firstPaidOrder.timeline.length);
     expect(firstPaidOrder.timeline).toHaveLength(2);
+
+    const directSubmitOrder = await paymentsApp.inject({
+      method: "POST",
+      url: "/v1/payments/orders/submit",
+      headers: {
+        "x-internal-token": internalPaymentsToken
+      },
+      payload: firstPaidOrder
+    });
+    expect(directSubmitOrder.statusCode).toBe(200);
+    expect(directSubmitOrder.json()).toMatchObject({
+      accepted: true
+    });
   });
 
   it("exposes a paid order through list and detail reads after checkout", async () => {

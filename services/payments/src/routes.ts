@@ -10,6 +10,7 @@ import {
 } from "@gazelle/persistence";
 import {
   applePayWalletSchema,
+  orderSchema,
   ordersPaymentReconciliationResultSchema,
   ordersPaymentReconciliationSchema
 } from "@gazelle/contracts-orders";
@@ -17,6 +18,7 @@ import {
   paymentWebhookDispatchResultSchema,
   type PaymentWebhookDispatchResult
 } from "./types.js";
+import { getAdapter } from "./adapters/index.js";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
@@ -95,6 +97,11 @@ const refundResponseSchema = z.object({
   message: z.string().optional()
 });
 
+const submitOrderResponseSchema = z.object({
+  accepted: z.literal(true),
+  merchantId: z.string().min(1).optional()
+});
+
 const serviceErrorSchema = z.object({
   code: z.string(),
   message: z.string(),
@@ -161,10 +168,10 @@ const cloverOauthTokenResponseSchema = z.object({
   merchant_id: z.string().min(1).optional()
 });
 
-type ChargeResponse = z.output<typeof chargeResponseSchema>;
-type RefundResponse = z.output<typeof refundResponseSchema>;
-type ChargeRequest = z.output<typeof chargeRequestSchema>;
-type RefundRequest = z.output<typeof refundRequestSchema>;
+export type ChargeResponse = z.output<typeof chargeResponseSchema>;
+export type RefundResponse = z.output<typeof refundResponseSchema>;
+export type ChargeRequest = z.output<typeof chargeRequestSchema>;
+export type RefundRequest = z.output<typeof refundRequestSchema>;
 type OrderPaymentReconciliation = z.output<typeof ordersPaymentReconciliationSchema>;
 
 type PersistedChargeRow = {
@@ -216,7 +223,7 @@ type PersistedCloverConnectionRow = {
   scope: string | null;
 };
 
-type CloverConnection = {
+export type CloverConnection = {
   merchantId: string;
   accessToken: string;
   refreshToken?: string;
@@ -229,7 +236,7 @@ type CloverConnection = {
 
 type RecentCloverWebhookVerificationCode = z.output<typeof cloverWebhookVerificationCodeResponseSchema>;
 
-type PaymentsRepository = {
+export type PaymentsRepository = {
   backend: "memory" | "postgres";
   findChargeByIdempotency(orderId: string, idempotencyKey: string): Promise<ChargeResponse | undefined>;
   saveCharge(input: {
@@ -779,7 +786,7 @@ async function createPaymentsRepository(logger: FastifyBaseLogger): Promise<Paym
 const providerModeSchema = z.enum(["simulated", "live"]);
 type ProviderMode = z.output<typeof providerModeSchema>;
 
-type CloverProviderConfig = {
+export type CloverProviderConfig = {
   mode: ProviderMode;
   configured: boolean;
   bearerToken?: string;
@@ -1111,18 +1118,9 @@ export function summarizeCloverResponseForLogs(value: unknown): Record<string, s
   return Object.fromEntries(entries);
 }
 
-function toTemplatedUrl(template: string, variables: Record<string, string>) {
-  let resolved = template;
-  for (const [key, value] of Object.entries(variables)) {
-    resolved = resolved.replaceAll(`{${key}}`, encodeURIComponent(value));
-  }
-
-  return resolved;
-}
-
 type CloverOAuthEnvironment = "sandbox" | "production";
 
-type CloverOAuthConfig = {
+export type CloverOAuthConfig = {
   configured: boolean;
   environment: CloverOAuthEnvironment;
   appId?: string;
@@ -1136,7 +1134,7 @@ type CloverOAuthConfig = {
   misconfigurationReason?: string;
 };
 
-type CloverRuntimeCredentials = {
+export type CloverRuntimeCredentials = {
   merchantId: string;
   bearerToken: string;
   apiAccessKey?: string;
@@ -1498,7 +1496,7 @@ async function fetchCloverApiAccessKey(params: {
   return apiAccessKey;
 }
 
-async function resolveRuntimeCloverCredentials(params: {
+export async function resolveRuntimeCloverCredentials(params: {
   logger: FastifyBaseLogger;
   repository: PaymentsRepository;
   providerConfig: CloverProviderConfig;
@@ -1553,60 +1551,6 @@ async function resolveRuntimeCloverCredentials(params: {
   }
 
   return undefined;
-}
-
-async function ensureFreshCloverToken(params: {
-  logger: FastifyBaseLogger;
-  repository: PaymentsRepository;
-  oauthConfig: CloverOAuthConfig;
-  connection: CloverConnection;
-}): Promise<string> {
-  const { logger, repository, oauthConfig, connection } = params;
-
-  // Check if token expires within 5 minutes
-  const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
-  const expiresAt = connection.accessTokenExpiresAt ? new Date(connection.accessTokenExpiresAt) : null;
-
-  if (expiresAt && expiresAt < fiveMinutesFromNow) {
-    // Token is expiring soon, attempt refresh
-    if (!oauthConfig.configured || !connection.refreshToken) {
-      throw new Error("Cannot refresh Clover token: OAuth not configured or refresh token missing");
-    }
-
-    try {
-      const refreshedConnection = await refreshCloverConnection({
-        oauthConfig,
-        connection
-      });
-
-      if (!refreshedConnection.apiAccessKey && connection.apiAccessKey) {
-        refreshedConnection.apiAccessKey = connection.apiAccessKey;
-      } else if (!refreshedConnection.apiAccessKey) {
-        refreshedConnection.apiAccessKey = await fetchCloverApiAccessKey({
-          oauthConfig,
-          accessToken: refreshedConnection.accessToken
-        });
-      }
-
-      const savedConnection = await repository.saveCloverConnection(refreshedConnection);
-      logger.info(
-        { merchantId: savedConnection.merchantId },
-        "Clover OAuth access token refreshed before charge/refund"
-      );
-      return savedConnection.accessToken;
-    } catch (error) {
-      logger.error(
-        { error, merchantId: connection.merchantId },
-        "Failed to refresh Clover OAuth access token"
-      );
-      throw new Error(
-        `Failed to refresh Clover token before operation: ${error instanceof Error ? error.message : "Unknown error"}`
-      );
-    }
-  }
-
-  // Token is fresh enough, return as-is
-  return connection.accessToken;
 }
 
 function resolveChargeStatus(params: {
@@ -1999,364 +1943,39 @@ function createSimulatedRefundResponse(input: RefundRequest): RefundResponse {
 
 async function executeLiveCharge(params: {
   config: CloverProviderConfig;
-  credentials: CloverRuntimeCredentials;
   request: ChargeRequest;
   requestId: string;
   logger: FastifyBaseLogger;
-  repository?: PaymentsRepository;
-  oauthConfig?: CloverOAuthConfig;
+  repository: PaymentsRepository;
+  oauthConfig: CloverOAuthConfig;
 }): Promise<{ response: ChargeResponse; providerPaymentId?: string }> {
-  const { config, credentials, request, requestId, logger, repository, oauthConfig } = params;
-  if (!config.chargeEndpoint) {
-    throw new Error(config.misconfigurationReason ?? "Clover provider is not configured");
-  }
-
-  const internalPaymentId = randomUUID();
-  let sourceToken = request.paymentSourceToken ?? request.applePayToken;
-  if (!sourceToken && request.applePayWallet) {
-    if (!config.applePayTokenizeEndpoint) {
-      throw new Error("CLOVER_APPLE_PAY_TOKENIZE_ENDPOINT is required for applePayWallet requests");
-    }
-    if (!credentials.apiAccessKey) {
-      throw new Error("CLOVER_API_ACCESS_KEY is required for applePayWallet requests");
-    }
-
-    const tokenizeController = new AbortController()
-    const tokenizeTimeout = setTimeout(() => tokenizeController.abort(), 10_000)
-    let tokenizeResponse: Response
-    try {
-      tokenizeResponse = await fetch(
-        toTemplatedUrl(config.applePayTokenizeEndpoint, { merchantId: credentials.merchantId }),
-        {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/json",
-            apikey: credentials.apiAccessKey,
-            "x-request-id": requestId
-          },
-          body: JSON.stringify({
-            encryptedWallet: {
-              applePayPaymentData: request.applePayWallet
-            }
-          }),
-          signal: tokenizeController.signal,
-        }
-      )
-    } finally {
-      clearTimeout(tokenizeTimeout)
-    }
-
-    const tokenizeBody = parseJsonSafely(await tokenizeResponse.text());
-    const tokenizeSummary = summarizeCloverResponseForLogs(tokenizeBody);
-    if (!tokenizeResponse.ok) {
-      logger.error(
-        {
-          orderId: request.orderId,
-          internalPaymentId,
-          tokenizeStatus: tokenizeResponse.status,
-          tokenizeSummary
-        },
-        "Clover Apple Pay wallet tokenization failed"
-      );
-      throw new Error(`Clover wallet tokenization failed with status ${tokenizeResponse.status}`);
-    }
-
-    sourceToken = firstStringAtPaths(tokenizeBody, [
-      ["id"],
-      ["token"],
-      ["source"],
-      ["sourceToken"],
-      ["result", "id"],
-      ["result", "token"],
-      ["data", "id"],
-      ["data", "token"]
-    ]);
-
-    if (!sourceToken) {
-      logger.error(
-        {
-          orderId: request.orderId,
-          internalPaymentId,
-          tokenizeStatus: tokenizeResponse.status,
-          tokenizeSummary
-        },
-        "Clover Apple Pay wallet tokenization failed"
-      );
-      throw new Error("Clover wallet tokenization did not return a source token");
-    }
-
-    logger.info(
-      {
-        orderId: request.orderId,
-        internalPaymentId,
-        tokenizeStatus: tokenizeResponse.status,
-        tokenizeSummary
-      },
-      "Clover Apple Pay wallet tokenization succeeded"
-    );
-  }
-
-  if (!sourceToken) {
-    throw new Error("Unable to resolve Clover payment source token");
-  }
-
-  // Ensure token is fresh before charge operation (5-minute buffer)
-  let bearerToken = credentials.bearerToken;
-  if (credentials.source === "oauth" && repository && oauthConfig) {
-    try {
-      const connection = await repository.findCloverConnection(credentials.merchantId);
-      if (connection) {
-        bearerToken = await ensureFreshCloverToken({
-          logger,
-          repository,
-          oauthConfig,
-          connection
-        });
-      }
-    } catch (error) {
-      logger.warn(
-        {
-          error,
-          orderId: request.orderId,
-          internalPaymentId,
-          merchantId: credentials.merchantId
-        },
-        "Token refresh attempted but failed; proceeding with existing token"
-      );
-      // Continue with the current token if refresh fails
-    }
-  }
-
-  const chargeUrl = toTemplatedUrl(config.chargeEndpoint, { merchantId: credentials.merchantId });
-  let chargeResponse: Response;
-  const chargeController = new AbortController()
-  const chargeTimeout = setTimeout(() => chargeController.abort(), 10_000)
-  try {
-    chargeResponse = await fetch(chargeUrl, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        authorization: `Bearer ${bearerToken}`,
-        "x-request-id": requestId,
-        "idempotency-key": request.idempotencyKey
-      },
-      body: JSON.stringify({
-        merchantId: credentials.merchantId,
-        amount: request.amountCents,
-        amountCents: request.amountCents,
-        currency: request.currency,
-        currencyCode: request.currency,
-        source: sourceToken,
-        sourceToken,
-        externalReference: request.orderId,
-        metadata: {
-          orderId: request.orderId,
-          internalPaymentId,
-          idempotencyKey: request.idempotencyKey,
-          origin: "gazelle-payments-service"
-        }
-      }),
-      signal: chargeController.signal,
-    })
-  } catch (error) {
-    logger.warn(
-      {
-        error,
-        requestId,
-        orderId: request.orderId,
-        internalPaymentId
-      },
-      "Clover charge request failed before response"
-    );
-    return {
-      response: chargeResponseSchema.parse({
-        paymentId: randomUUID(),
-        provider: "CLOVER",
-        orderId: request.orderId,
-        status: "TIMEOUT",
-        approved: false,
-        amountCents: request.amountCents,
-        currency: request.currency,
-        occurredAt: new Date().toISOString(),
-        message: "Clover network request failed"
-      })
-    };
-  } finally {
-    clearTimeout(chargeTimeout)
-  }
-
-  const body = parseJsonSafely(await chargeResponse.text());
-  const providerStatus = firstStringAtPaths(body, [
-    ["status"],
-    ["charge", "status"],
-    ["payment", "status"],
-    ["result", "status"],
-    ["data", "status"]
-  ]);
-  const providerMessage =
-    firstStringAtPaths(body, [
-      ["message"],
-      ["description"],
-      ["reason"],
-      ["error"],
-      ["result", "message"],
-      ["data", "message"]
-    ]) ?? `Clover responded with status ${chargeResponse.status}`;
-  const approved = firstBooleanAtPaths(body, [
-    ["approved"],
-    ["charge", "approved"],
-    ["payment", "approved"],
-    ["result", "approved"],
-    ["data", "approved"]
-  ]);
-  const status = resolveChargeStatus({
-    providerStatus,
-    approved,
-    httpStatus: chargeResponse.status
+  const adapter = await getAdapter({
+    logger: params.logger,
+    repository: params.repository,
+    providerConfig: params.config,
+    oauthConfig: params.oauthConfig,
+    requestId: params.requestId
   });
-  const providerPaymentId = firstStringAtPaths(body, [
-    ["id"],
-    ["paymentId"],
-    ["payment_id"],
-    ["chargeId"],
-    ["charge_id"],
-    ["result", "id"],
-    ["data", "id"],
-    ["payment", "id"],
-    ["charge", "id"]
-  ]);
-
-  return {
-    response: chargeResponseSchema.parse({
-      paymentId: internalPaymentId,
-      provider: "CLOVER",
-      orderId: request.orderId,
-      status,
-      approved: status === "SUCCEEDED",
-      amountCents: request.amountCents,
-      currency: request.currency,
-      occurredAt: new Date().toISOString(),
-      declineCode:
-        status === "DECLINED"
-          ? firstStringAtPaths(body, [
-              ["declineCode"],
-              ["decline_code"],
-              ["reasonCode"],
-              ["reason_code"],
-              ["errorCode"],
-              ["error_code"],
-              ["code"]
-            ])
-          : undefined,
-      message: providerMessage
-    }),
-    providerPaymentId: providerPaymentId ?? internalPaymentId
-  };
+  return adapter.processCharge(params.request);
 }
 
 async function executeLiveRefund(params: {
   config: CloverProviderConfig;
-  credentials: CloverRuntimeCredentials;
   request: RefundRequest;
   requestId: string;
   logger: FastifyBaseLogger;
   providerPaymentId?: string;
-  repository?: PaymentsRepository;
-  oauthConfig?: CloverOAuthConfig;
+  repository: PaymentsRepository;
+  oauthConfig: CloverOAuthConfig;
 }): Promise<RefundResponse> {
-  const { config, credentials, request, requestId, logger, providerPaymentId, repository, oauthConfig } = params;
-  if (!config.refundEndpoint) {
-    throw new Error(config.misconfigurationReason ?? "Clover provider is not configured");
-  }
-
-  const providerChargeId = providerPaymentId ?? request.paymentId;
-
-  // Ensure token is fresh before refund operation (5-minute buffer)
-  let bearerToken = credentials.bearerToken;
-  if (credentials.source === "oauth" && repository && oauthConfig) {
-    try {
-      const connection = await repository.findCloverConnection(credentials.merchantId);
-      if (connection) {
-        bearerToken = await ensureFreshCloverToken({
-          logger,
-          repository,
-          oauthConfig,
-          connection
-        });
-      }
-    } catch (error) {
-      logger.warn(
-        {
-          error,
-          orderId: request.orderId,
-          merchantId: credentials.merchantId
-        },
-        "Token refresh attempted but failed; proceeding with existing token"
-      );
-      // Continue with the current token if refresh fails
-    }
-  }
-
-  const refundUrl = toTemplatedUrl(config.refundEndpoint, {
-    merchantId: credentials.merchantId,
-    paymentId: providerChargeId
+  const adapter = await getAdapter({
+    logger: params.logger,
+    repository: params.repository,
+    providerConfig: params.config,
+    oauthConfig: params.oauthConfig,
+    requestId: params.requestId
   });
-  const refundController = new AbortController()
-  const refundTimeout = setTimeout(() => refundController.abort(), 10_000)
-  let upstream: Response
-  try {
-    upstream = await fetch(refundUrl, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        authorization: `Bearer ${bearerToken}`,
-        "x-request-id": requestId,
-        "idempotency-key": request.idempotencyKey
-      },
-      body: JSON.stringify({
-        // Clover ecommerce API accepts charge-scoped refunds.
-        charge: providerChargeId
-      }),
-      signal: refundController.signal,
-    })
-  } finally {
-    clearTimeout(refundTimeout)
-  }
-
-  const body = parseJsonSafely(await upstream.text());
-  const providerStatus = firstStringAtPaths(body, [
-    ["status"],
-    ["refund", "status"],
-    ["result", "status"],
-    ["data", "status"]
-  ]);
-  const status = resolveRefundStatus({
-    providerStatus,
-    httpStatus: upstream.status
-  });
-
-  return refundResponseSchema.parse({
-    refundId: randomUUID(),
-    provider: "CLOVER",
-    orderId: request.orderId,
-    paymentId: request.paymentId,
-    status,
-    amountCents: request.amountCents,
-    currency: request.currency,
-    occurredAt: new Date().toISOString(),
-    message:
-      firstStringAtPaths(body, [
-        ["message"],
-        ["description"],
-        ["reason"],
-        ["error"],
-        ["result", "message"],
-        ["data", "message"]
-      ]) ?? `Clover responded with status ${upstream.status}`
-  });
+  return adapter.processRefund(params.request, params.providerPaymentId);
 }
 
 export async function registerRoutes(app: FastifyInstance) {
@@ -2688,6 +2307,69 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   });
 
+  app.post("/v1/payments/orders/submit", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
+    if (!authorizeInternalRequest(request, reply, ordersInternalToken)) {
+      return;
+    }
+
+    const order = orderSchema.parse(request.body);
+    if (cloverProvider.mode === "simulated") {
+      return submitOrderResponseSchema.parse({ accepted: true });
+    }
+
+    try {
+      const adapter = await getAdapter({
+        logger: request.log,
+        repository,
+        providerConfig: cloverProvider,
+        oauthConfig: cloverOAuthConfig,
+        requestId: request.id
+      });
+      await adapter.submitOrder(order);
+
+      return submitOrderResponseSchema.parse({
+        accepted: true,
+        merchantId: cloverProvider.merchantId
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Live Clover order submission failed";
+      const misconfigurationMessage =
+        cloverOAuthConfig.misconfigurationReason ??
+        cloverProvider.misconfigurationReason ??
+        "Clover provider is misconfigured";
+      const merchantId =
+        typeof (error as { merchantId?: unknown } | null | undefined)?.merchantId === "string"
+          ? (error as { merchantId?: string }).merchantId
+          : cloverProvider.merchantId;
+
+      if (message === misconfigurationMessage || message === "Clover provider is misconfigured") {
+        return reply.status(503).send(
+          serviceErrorSchema.parse({
+            code: "PROVIDER_MISCONFIGURED",
+            message: misconfigurationMessage,
+            requestId: request.id
+          })
+        );
+      }
+
+      request.log.error(
+        { error, requestId: request.id, orderId: order.id, merchantId },
+        "live Clover order submission failed"
+      );
+      return reply.status(502).send(
+        serviceErrorSchema.parse({
+          code: "CLOVER_ORDER_SUBMIT_ERROR",
+          message,
+          requestId: request.id,
+          details: {
+            orderId: order.id,
+            merchantId
+          }
+        })
+      );
+    }
+  });
+
   app.post("/v1/payments/charges", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
     if (!authorizeInternalRequest(request, reply, ordersInternalToken)) {
       return;
@@ -2743,28 +2425,8 @@ export async function registerRoutes(app: FastifyInstance) {
     }
 
     try {
-      const runtimeCredentials = await resolveRuntimeCloverCredentials({
-        logger: request.log,
-        repository,
-        providerConfig: cloverProvider,
-        oauthConfig: cloverOAuthConfig
-      });
-      if (!runtimeCredentials) {
-        return reply.status(503).send(
-          serviceErrorSchema.parse({
-            code: "PROVIDER_MISCONFIGURED",
-            message:
-              cloverOAuthConfig.misconfigurationReason ??
-              cloverProvider.misconfigurationReason ??
-              "Clover provider is misconfigured",
-            requestId: request.id
-          })
-        );
-      }
-
       const result = await executeLiveCharge({
         config: cloverProvider,
-        credentials: runtimeCredentials,
         request: input,
         requestId: request.id,
         logger: request.log,
@@ -2786,11 +2448,26 @@ export async function registerRoutes(app: FastifyInstance) {
       });
       return savedCharge;
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Live Clover charge failed";
+      const misconfigurationMessage =
+        cloverOAuthConfig.misconfigurationReason ??
+        cloverProvider.misconfigurationReason ??
+        "Clover provider is misconfigured";
+      if (message === misconfigurationMessage || message === "Clover provider is misconfigured") {
+        return reply.status(503).send(
+          serviceErrorSchema.parse({
+            code: "PROVIDER_MISCONFIGURED",
+            message: misconfigurationMessage,
+            requestId: request.id
+          })
+        );
+      }
+
       request.log.error({ error, requestId: request.id, orderId: input.orderId }, "live Clover charge failed");
       return reply.status(502).send(
         serviceErrorSchema.parse({
           code: "CLOVER_CHARGE_ERROR",
-          message: error instanceof Error ? error.message : "Live Clover charge failed",
+          message,
           requestId: request.id
         })
       );
@@ -2876,28 +2553,8 @@ export async function registerRoutes(app: FastifyInstance) {
     }
 
     try {
-      const runtimeCredentials = await resolveRuntimeCloverCredentials({
-        logger: request.log,
-        repository,
-        providerConfig: cloverProvider,
-        oauthConfig: cloverOAuthConfig
-      });
-      if (!runtimeCredentials) {
-        return reply.status(503).send(
-          serviceErrorSchema.parse({
-            code: "PROVIDER_MISCONFIGURED",
-            message:
-              cloverOAuthConfig.misconfigurationReason ??
-              cloverProvider.misconfigurationReason ??
-              "Clover provider is misconfigured",
-            requestId: request.id
-          })
-        );
-      }
-
       const refundResponse = await executeLiveRefund({
         config: cloverProvider,
-        credentials: runtimeCredentials,
         request: input,
         requestId: request.id,
         logger: request.log,
@@ -2916,6 +2573,21 @@ export async function registerRoutes(app: FastifyInstance) {
       });
       return savedRefund;
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Live Clover refund failed";
+      const misconfigurationMessage =
+        cloverOAuthConfig.misconfigurationReason ??
+        cloverProvider.misconfigurationReason ??
+        "Clover provider is misconfigured";
+      if (message === misconfigurationMessage || message === "Clover provider is misconfigured") {
+        return reply.status(503).send(
+          serviceErrorSchema.parse({
+            code: "PROVIDER_MISCONFIGURED",
+            message: misconfigurationMessage,
+            requestId: request.id
+          })
+        );
+      }
+
       request.log.error(
         { error, requestId: request.id, orderId: input.orderId, paymentId: input.paymentId },
         "live Clover refund failed"
@@ -2923,7 +2595,7 @@ export async function registerRoutes(app: FastifyInstance) {
       return reply.status(502).send(
         serviceErrorSchema.parse({
           code: "CLOVER_REFUND_ERROR",
-          message: error instanceof Error ? error.message : "Live Clover refund failed",
+          message,
           requestId: request.id
         })
       );
