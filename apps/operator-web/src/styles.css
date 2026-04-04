@@ -1018,6 +1018,72 @@ strong {
   gap: 8px;
 }
 
+.dash-customization-panel {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(168, 196, 255, 0.1);
+  border-radius: 12px;
+  background: rgba(7, 9, 16, 0.32);
+}
+
+.dash-customization-panel summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+  padding: 12px 14px;
+  color: var(--color-gray-200);
+  font-weight: 700;
+}
+
+.dash-customization-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.dash-customization-panel__body {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.dash-customization-group-card {
+  border: 1px solid rgba(168, 196, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.dash-customization-group-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dash-customization-options-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.dash-customization-option-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(168, 196, 255, 0.08);
+  background: rgba(7, 9, 16, 0.28);
+  align-items: end;
+}
+
+.dash-customization-group-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .dash-field-inline span {
   font-size: 0.72rem;
   letter-spacing: 0.06em;
@@ -2019,6 +2085,8 @@ strong {
   .dash-inline-form--team,
   .dash-store-form,
   .dash-data-row__fields,
+  .dash-customization-group-grid,
+  .dash-customization-option-row,
   .dash-data-row--team .dash-data-row__fields {
     grid-template-columns: 1fr;
   }

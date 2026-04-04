@@ -101,6 +101,9 @@ describe("catalog service", () => {
     expect(adminMenuResponse.statusCode).toBe(200);
     const adminMenu = adminMenuResponseSchema.parse(adminMenuResponse.json());
     expect(adminMenu.categories.length).toBeGreaterThan(0);
+    expect(
+      Array.isArray((adminMenuResponse.json() as { categories: Array<{ items: Array<{ customizationGroups?: unknown }> }> }).categories[0]?.items[0]?.customizationGroups)
+    ).toBe(true);
 
     const updateResponse = await app.inject({
       method: "PUT",
@@ -111,13 +114,40 @@ describe("catalog service", () => {
       payload: {
         name: "Operator Latte",
         priceCents: 715,
-        visible: false
+        visible: false,
+        customizationGroups: [
+          {
+            id: "milk",
+            label: "Milk",
+            selectionType: "single",
+            required: true,
+            sortOrder: 0,
+            options: [
+              {
+                id: "whole",
+                label: "Whole milk",
+                priceDeltaCents: 0,
+                default: true,
+                available: true,
+                sortOrder: 0
+              }
+            ]
+          }
+        ]
       }
     });
     expect(updateResponse.statusCode).toBe(200);
     const updatedItem = adminMenuItemSchema.parse(updateResponse.json());
     expect(updatedItem.name).toBe("Operator Latte");
     expect(updatedItem.visible).toBe(false);
+    expect(updateResponse.json()).toMatchObject({
+      customizationGroups: [
+        {
+          id: "milk",
+          label: "Milk"
+        }
+      ]
+    });
 
     const adminStoreConfigResponse = await app.inject({
       method: "GET",
@@ -204,6 +234,41 @@ describe("catalog service", () => {
         menuEditing: false
       },
       loyaltyEnabled: false
+    });
+
+    await app.close();
+  });
+
+  it("rejects invalid admin customization payloads with a 4xx response", async () => {
+    process.env.GATEWAY_INTERNAL_API_TOKEN = "catalog-gateway-token";
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/catalog/admin/menu/latte",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      },
+      payload: {
+        name: "Operator Latte",
+        priceCents: 715,
+        visible: true,
+        customizationGroups: [
+          {
+            id: "milk",
+            label: "Milk",
+            selectionType: "single",
+            required: true,
+            sortOrder: 0,
+            options: []
+          }
+        ]
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "INVALID_CUSTOMIZATION_GROUPS_PAYLOAD"
     });
 
     await app.close();

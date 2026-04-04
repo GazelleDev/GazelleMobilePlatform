@@ -798,7 +798,8 @@ describe("gateway", () => {
                     description: "Espresso with steamed oat milk and honey.",
                     priceCents: 675,
                     visible: true,
-                    sortOrder: 0
+                    sortOrder: 0,
+                    customizationGroups: []
                   }
                 ]
               }
@@ -815,6 +816,7 @@ describe("gateway", () => {
           name?: string;
           priceCents?: number;
           visible?: boolean;
+          customizationGroups?: unknown[];
         };
         return new Response(
           JSON.stringify({
@@ -825,7 +827,8 @@ describe("gateway", () => {
             description: "Updated through operator web app.",
             priceCents: body.priceCents ?? 675,
             visible: body.visible ?? true,
-            sortOrder: 0
+            sortOrder: 0,
+            customizationGroups: body.customizationGroups ?? []
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -1749,6 +1752,115 @@ describe("gateway", () => {
       const upstreamHeaders = new Headers((adminOrdersCall[1]?.headers ?? {}) as HeadersInit);
       expect(upstreamHeaders.get("x-user-id")).toBeNull();
     }
+
+    await app.close();
+  });
+
+  it("forwards admin menu customization updates through the gateway", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/menu/latte",
+      headers: ownerOperatorHeaders,
+      payload: {
+        name: "Honey Oat Latte",
+        priceCents: 675,
+        visible: true,
+        customizationGroups: [
+          {
+            id: "milk",
+            label: "Milk",
+            selectionType: "single",
+            required: true,
+            sortOrder: 0,
+            options: [
+              {
+                id: "oat",
+                label: "Oat milk",
+                priceDeltaCents: 75,
+                default: true,
+                available: true,
+                sortOrder: 0
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      itemId: "latte",
+      customizationGroups: [
+        {
+          id: "milk",
+          label: "Milk"
+        }
+      ]
+    });
+
+    const updateCall = fetchMock.mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://catalog.internal/v1/catalog/admin/menu/latte" && (init?.method ?? "GET") === "PUT";
+    });
+    expect(updateCall).toBeDefined();
+    expect(JSON.parse(String(updateCall?.[1]?.body ?? "{}"))).toMatchObject({
+      customizationGroups: [
+        {
+          id: "milk",
+          options: [{ id: "oat" }]
+        }
+      ]
+    });
+
+    await app.close();
+  });
+
+  it("rejects invalid admin menu customization updates with a client error", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/admin/menu/latte",
+      headers: ownerOperatorHeaders,
+      payload: {
+        name: "Honey Oat Latte",
+        priceCents: 675,
+        visible: true,
+        customizationGroups: [
+          {
+            id: "milk",
+            label: "Milk",
+            selectionType: "single",
+            required: true,
+            sortOrder: 0,
+            options: [
+              {
+                id: "oat",
+                label: "Oat milk",
+                priceDeltaCents: "75",
+                default: true,
+                available: true,
+                sortOrder: 0
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "INVALID_REQUEST",
+      message: "Admin menu update payload is invalid"
+    });
+
+    const updateCall = fetchMock.mock.calls.find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://catalog.internal/v1/catalog/admin/menu/latte" && (init?.method ?? "GET") === "PUT";
+    });
+    expect(updateCall).toBeUndefined();
 
     await app.close();
   });

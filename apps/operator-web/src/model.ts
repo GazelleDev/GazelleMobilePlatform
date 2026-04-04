@@ -8,6 +8,7 @@ import {
 } from "@gazelle/contracts-auth";
 import {
   adminMenuCategorySchema,
+  adminMenuItemSchema,
   adminMenuItemCreateSchema,
   adminMenuItemUpdateSchema,
   adminStoreConfigUpdateSchema,
@@ -15,6 +16,7 @@ import {
   isLoyaltyVisible,
   isOrderTrackingEnabled,
   isPlatformManagedMenu,
+  menuItemCustomizationGroupSchema,
   isStaffDashboardEnabled,
   resolveAppConfigFulfillmentMode,
   type AppConfig
@@ -37,7 +39,22 @@ export type OperatorOrderFilter = "all" | "active" | "completed";
 export type DashboardSection = "overview" | "orders" | "menu" | "store" | "team";
 export type OperatorCapability = z.output<typeof operatorCapabilitySchema>;
 export type OperatorUser = z.output<typeof operatorUserSchema>;
-export type OperatorMenuCategory = z.output<typeof adminMenuCategorySchema>;
+export const operatorMenuItemSchema = adminMenuItemSchema.extend({
+  customizationGroups: z.array(menuItemCustomizationGroupSchema).default([])
+});
+export const operatorMenuCategorySchema = adminMenuCategorySchema.extend({
+  items: z.array(operatorMenuItemSchema)
+});
+export const operatorMenuResponseSchema = z.object({
+  locationId: z.string().min(1),
+  categories: z.array(operatorMenuCategorySchema)
+});
+export const operatorMenuItemUpdateSchema = adminMenuItemUpdateSchema.extend({
+  customizationGroups: z.array(menuItemCustomizationGroupSchema).optional()
+});
+export type OperatorMenuItem = z.output<typeof operatorMenuItemSchema>;
+export type OperatorMenuCategory = z.output<typeof operatorMenuCategorySchema>;
+export type OperatorMenuResponse = z.output<typeof operatorMenuResponseSchema>;
 
 export type OperatorOrderAction = {
   status: "IN_PREP" | "READY" | "COMPLETED";
@@ -50,6 +67,7 @@ export type OperatorMenuItemFormInput = {
   name?: string;
   priceCents?: string | number;
   visible?: boolean | string;
+  customizationGroups?: unknown;
 };
 
 export type OperatorMenuItemCreateFormInput = {
@@ -81,7 +99,7 @@ export type OperatorUserUpdateFormInput = {
   password?: string;
 };
 
-export type OperatorMenuItemUpdate = z.output<typeof adminMenuItemUpdateSchema>;
+export type OperatorMenuItemUpdate = z.output<typeof operatorMenuItemUpdateSchema>;
 export type OperatorMenuItemCreate = z.output<typeof adminMenuItemCreateSchema>;
 export type OperatorStoreConfigUpdate = z.output<typeof adminStoreConfigUpdateSchema>;
 export type OperatorAppConfig = AppConfig;
@@ -402,11 +420,14 @@ export function getAppConfigCapabilityLabels(config: AppConfig) {
 
 export function normalizeMenuItemForm(input: OperatorMenuItemFormInput | unknown): OperatorMenuItemUpdate {
   const value = toRecord(input);
+  const customizationGroups =
+    value.customizationGroups === undefined ? undefined : z.array(menuItemCustomizationGroupSchema).parse(value.customizationGroups);
 
-  return adminMenuItemUpdateSchema.parse({
+  return operatorMenuItemUpdateSchema.parse({
     name: normalizeText(value.name),
     priceCents: normalizeCents(value.priceCents),
-    visible: normalizeBoolean(value.visible)
+    visible: normalizeBoolean(value.visible),
+    ...(customizationGroups === undefined ? {} : { customizationGroups })
   });
 }
 
