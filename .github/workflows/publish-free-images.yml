@@ -2,24 +2,9 @@ name: publish-free-images
 
 on:
   workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Optional extra image tag to publish in addition to the SHA tag
-        required: false
-        type: string
   push:
     branches:
       - main
-    paths:
-      - "services/**"
-      - "packages/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "turbo.json"
-      - ".dockerignore"
-      - "infra/docker/**"
-      - ".github/workflows/publish-free-images.yml"
 
 permissions:
   contents: read
@@ -31,31 +16,19 @@ jobs:
     outputs:
       image_prefix: ${{ steps.meta.outputs.image_prefix }}
       sha_tag: ${{ steps.meta.outputs.sha_tag }}
-      extra_tag: ${{ steps.meta.outputs.extra_tag }}
-      publish_latest: ${{ steps.meta.outputs.publish_latest }}
     steps:
       - id: meta
         env:
           REPOSITORY: ${{ github.repository }}
-          REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
-          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           owner="${REPOSITORY%%/*}"
           repo="${REPOSITORY##*/}"
           owner="${owner,,}"
           repo="${repo,,}"
-          short_sha="${SHA::12}"
 
           echo "image_prefix=ghcr.io/${owner}/${repo}" >> "$GITHUB_OUTPUT"
-          echo "sha_tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
-          echo "extra_tag=${INPUT_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${REF_NAME}" == "main" ]]; then
-            echo "publish_latest=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_latest=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "sha_tag=${SHA}" >> "$GITHUB_OUTPUT"
 
   publish:
     runs-on: ubuntu-latest
@@ -94,19 +67,11 @@ jobs:
         env:
           IMAGE_PREFIX: ${{ needs.prepare.outputs.image_prefix }}
           SHA_TAG: ${{ needs.prepare.outputs.sha_tag }}
-          EXTRA_TAG: ${{ needs.prepare.outputs.extra_tag }}
-          PUBLISH_LATEST: ${{ needs.prepare.outputs.publish_latest }}
           SERVICE_NAME: ${{ matrix.service_name }}
         run: |
           {
             echo "tags<<EOF"
             echo "${IMAGE_PREFIX}/${SERVICE_NAME}:${SHA_TAG}"
-            if [[ -n "${EXTRA_TAG}" ]]; then
-              echo "${IMAGE_PREFIX}/${SERVICE_NAME}:${EXTRA_TAG}"
-            fi
-            if [[ "${PUBLISH_LATEST}" == "true" ]]; then
-              echo "${IMAGE_PREFIX}/${SERVICE_NAME}:latest"
-            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -133,23 +98,13 @@ jobs:
         env:
           IMAGE_PREFIX: ${{ needs.prepare.outputs.image_prefix }}
           SHA_TAG: ${{ needs.prepare.outputs.sha_tag }}
-          EXTRA_TAG: ${{ needs.prepare.outputs.extra_tag }}
-          PUBLISH_LATEST: ${{ needs.prepare.outputs.publish_latest }}
         run: |
           {
             echo "## Published Free-First Images"
             echo
             echo "- Prefix: \`${IMAGE_PREFIX}\`"
             echo "- SHA tag: \`${SHA_TAG}\`"
-            if [[ -n "${EXTRA_TAG}" ]]; then
-              echo "- Extra tag: \`${EXTRA_TAG}\`"
-            fi
-            if [[ "${PUBLISH_LATEST}" == "true" ]]; then
-              echo "- Latest tag: published"
-            else
-              echo "- Latest tag: not published"
-            fi
             echo
-            echo "A successful \`main\` publish automatically triggers \`deploy-free\` with \`${SHA_TAG}\`."
+            echo "A successful \`main\` publish automatically triggers \`deploy-free\` with the full git SHA tag."
             echo "Use manual \`deploy-free\` \`image_tag\` input overrides only when you want to redeploy or roll back to a specific immutable build."
           } >> "$GITHUB_STEP_SUMMARY"

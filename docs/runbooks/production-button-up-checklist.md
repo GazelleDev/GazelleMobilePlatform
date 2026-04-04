@@ -1,10 +1,10 @@
 # Production Button-Up Checklist
 
-Last updated: `2026-03-11`
+Last updated: `2026-04-03`
 
 ## Phase 0: Unblockers
 
-- [x] Remove workflow-evaluation blockers from `deploy-dev` and `release`.
+- [x] Remove workflow-evaluation blockers from the old release automation and align the repo to the new `dev` -> `main` workflow.
 - [x] Create production prerequisite checklist for Apple/Clover/domain readiness.
 - [x] Refresh stale milestones and release runbook docs.
 

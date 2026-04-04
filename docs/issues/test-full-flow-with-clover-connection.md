@@ -1,5 +1,12 @@
 # Test full mobile ordering flow against a Clover-connected environment
 
+## Status
+
+- `completed`: `2026-04-03`
+- `validated`: live menu/cart/mobile checkout flow against the deployed Clover-connected production test merchant
+- `confirmed`: successful Clover card checkout, declined-payment retry behavior without an active unpaid order, paid-order visibility in Orders, and refund/cancel follow-up
+- `note`: Apple Pay enablement remains a separate launch concern, but it is no longer required to prove the Clover-connected mobile flow
+
 ## Problem
 
 The mobile ordering stack has progressed across menu, cart, checkout, order tracking, session management, and backend order/payment flows, but the full experience has not yet been validated end to end against a real Clover-connected environment.
