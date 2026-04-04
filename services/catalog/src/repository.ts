@@ -3,14 +3,11 @@ import type { FastifyBaseLogger } from "fastify";
 import {
   adminMenuItemCreateSchema,
   adminMenuItemSchema,
-  adminMenuResponseSchema,
   internalLocationBootstrapSchema,
   internalLocationSummarySchema,
   adminStoreConfigSchema,
   adminMutationSuccessSchema,
   appConfigSchema,
-  type AdminMenuItem,
-  type AdminMenuResponse,
   type AdminStoreConfig,
   type AppConfig,
   type AppConfigStoreCapabilities,
@@ -220,6 +217,20 @@ const defaultStoreConfigPayload = storeConfigResponseSchema.parse({
 type MenuResponse = z.output<typeof menuResponseSchema>;
 type StoreConfigResponse = z.output<typeof storeConfigResponseSchema>;
 type MenuItem = z.output<typeof menuItemSchema>;
+const adminMenuItemWithCustomizationsSchema = adminMenuItemSchema.extend({
+  customizationGroups: z.array(menuItemCustomizationGroupSchema).default([])
+});
+const adminMenuCategoryWithCustomizationsSchema = z.object({
+  categoryId: z.string().min(1),
+  title: z.string().min(1),
+  items: z.array(adminMenuItemWithCustomizationsSchema)
+});
+const adminMenuResponseWithCustomizationsSchema = z.object({
+  locationId: z.string().min(1),
+  categories: z.array(adminMenuCategoryWithCustomizationsSchema)
+});
+type AdminMenuItemWithCustomizations = z.output<typeof adminMenuItemWithCustomizationsSchema>;
+type AdminMenuResponseWithCustomizations = z.output<typeof adminMenuResponseWithCustomizationsSchema>;
 
 type CatalogRepository = {
   backend: "memory" | "postgres";
@@ -227,18 +238,19 @@ type CatalogRepository = {
   listInternalLocations(): Promise<InternalLocationSummary[]>;
   getInternalLocationSummary(locationId: string): Promise<InternalLocationSummary | undefined>;
   bootstrapInternalLocation(input: InternalLocationBootstrap): Promise<InternalLocationSummary>;
-  getAdminMenu(): Promise<AdminMenuResponse>;
-  createAdminMenuItem(input: z.output<typeof adminMenuItemCreateSchema>): Promise<AdminMenuItem | undefined>;
+  getAdminMenu(): Promise<AdminMenuResponseWithCustomizations>;
+  createAdminMenuItem(input: z.output<typeof adminMenuItemCreateSchema>): Promise<AdminMenuItemWithCustomizations | undefined>;
   updateAdminMenuItem(input: {
     itemId: string;
     name: string;
     priceCents: number;
     visible: boolean;
-  }): Promise<AdminMenuItem | undefined>;
+    customizationGroups?: unknown[];
+  }): Promise<AdminMenuItemWithCustomizations | undefined>;
   updateAdminMenuItemVisibility(input: {
     itemId: string;
     visible: boolean;
-  }): Promise<AdminMenuItem | undefined>;
+  }): Promise<AdminMenuItemWithCustomizations | undefined>;
   deleteAdminMenuItem(itemId: string): Promise<z.output<typeof adminMutationSuccessSchema>>;
   getAdminStoreConfig(): Promise<AdminStoreConfig>;
   updateAdminStoreConfig(input: {
@@ -275,8 +287,13 @@ function toAdminMenuItem(input: {
   priceCents: number;
   visible: boolean;
   sortOrder: number;
+  customizationGroups?: unknown;
 }) {
-  return adminMenuItemSchema.parse(input);
+  const { customizationGroups, ...adminFields } = input;
+  return adminMenuItemWithCustomizationsSchema.parse({
+    ...adminMenuItemSchema.parse(adminFields),
+    customizationGroups: customizationGroups === undefined ? [] : toCustomizationGroups(customizationGroups)
+  });
 }
 
 function slugifyMenuItemName(name: string) {
@@ -298,10 +315,10 @@ function buildAdminMenuResponse(params: {
   categories: Array<{
     categoryId: string;
     title: string;
-    items: AdminMenuItem[];
+    items: AdminMenuItemWithCustomizations[];
   }>;
 }) {
-  return adminMenuResponseSchema.parse({
+  return adminMenuResponseWithCustomizationsSchema.parse({
     locationId: params.locationId,
     categories: params.categories.map((category) => ({
       categoryId: category.categoryId,
@@ -483,7 +500,8 @@ function createInMemoryRepository(): CatalogRepository {
               description: item.description,
               priceCents: item.priceCents,
               visible: item.visible,
-              sortOrder: index
+              sortOrder: index,
+              customizationGroups: item.customizationGroups
             })
           )
         }))
@@ -528,12 +546,13 @@ function createInMemoryRepository(): CatalogRepository {
         description: nextItem.description,
         priceCents: nextItem.priceCents,
         visible: nextItem.visible,
-        sortOrder: category.items.length
+        sortOrder: category.items.length,
+        customizationGroups: nextItem.customizationGroups
       });
     },
     async updateAdminMenuItem(input) {
       let menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
-      let updatedItem: AdminMenuItem | undefined;
+      let updatedItem: AdminMenuItemWithCustomizations | undefined;
       menu = menuResponseSchema.parse({
         ...menu,
         categories: menu.categories.map((category) => ({
@@ -542,6 +561,10 @@ function createInMemoryRepository(): CatalogRepository {
             if (item.id !== input.itemId) {
               return item;
             }
+            const customizationGroups =
+              input.customizationGroups === undefined
+                ? item.customizationGroups
+                : toCustomizationGroups(input.customizationGroups);
 
             updatedItem = toAdminMenuItem({
               itemId: item.id,
@@ -551,14 +574,16 @@ function createInMemoryRepository(): CatalogRepository {
               description: item.description,
               priceCents: input.priceCents,
               visible: input.visible,
-              sortOrder: index
+              sortOrder: index,
+              customizationGroups
             });
 
             return {
               ...item,
               name: input.name,
               priceCents: input.priceCents,
-              visible: input.visible
+              visible: input.visible,
+              customizationGroups
             };
           })
         }))
@@ -569,7 +594,7 @@ function createInMemoryRepository(): CatalogRepository {
     },
     async updateAdminMenuItemVisibility(input) {
       let menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
-      let updatedItem: AdminMenuItem | undefined;
+      let updatedItem: AdminMenuItemWithCustomizations | undefined;
       menu = menuResponseSchema.parse({
         ...menu,
         categories: menu.categories.map((category) => ({
@@ -587,7 +612,8 @@ function createInMemoryRepository(): CatalogRepository {
               description: item.description,
               priceCents: item.priceCents,
               visible: input.visible,
-              sortOrder: index
+              sortOrder: index,
+              customizationGroups: item.customizationGroups
             });
 
             return {
@@ -957,7 +983,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         .orderBy("sort_order", "asc")
         .execute();
 
-      const itemsByCategory = new Map<string, AdminMenuItem[]>();
+      const itemsByCategory = new Map<string, AdminMenuItemWithCustomizations[]>();
       const categoryTitles = new Map(categories.map((category) => [category.category_id, category.title]));
       for (const item of items) {
         const existing = itemsByCategory.get(item.category_id) ?? [];
@@ -970,7 +996,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
             description: item.description,
             priceCents: item.price_cents,
             visible: item.visible,
-            sortOrder: item.sort_order
+            sortOrder: item.sort_order,
+            customizationGroups: item.customization_groups_json
           })
         );
         itemsByCategory.set(item.category_id, existing);
@@ -1034,7 +1061,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         description: input.description ?? "",
         priceCents: input.priceCents,
         visible: input.visible,
-        sortOrder: nextSortOrder
+        sortOrder: nextSortOrder,
+        customizationGroups: []
       });
     },
     async updateAdminMenuItem(input) {
@@ -1049,13 +1077,18 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       if (!existingRow) {
         return undefined;
       }
+      const customizationGroups =
+        input.customizationGroups === undefined
+          ? toCustomizationGroups(existingRow.customization_groups_json)
+          : toCustomizationGroups(input.customizationGroups);
 
       await db
         .updateTable("catalog_menu_items")
         .set({
           name: input.name,
           price_cents: input.priceCents,
-          visible: input.visible
+          visible: input.visible,
+          customization_groups_json: JSON.stringify(customizationGroups)
         })
         .where("brand_id", "=", DEFAULT_BRAND_ID)
         .where("location_id", "=", defaultMenuPayload.locationId)
@@ -1078,7 +1111,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         description: existingRow.description,
         priceCents: input.priceCents,
         visible: input.visible,
-        sortOrder: existingRow.sort_order
+        sortOrder: existingRow.sort_order,
+        customizationGroups
       });
     },
     async updateAdminMenuItemVisibility(input) {
@@ -1120,7 +1154,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         description: existingRow.description,
         priceCents: existingRow.price_cents,
         visible: input.visible,
-        sortOrder: existingRow.sort_order
+        sortOrder: existingRow.sort_order,
+        customizationGroups: existingRow.customization_groups_json
       });
     },
     async deleteAdminMenuItem(itemId) {

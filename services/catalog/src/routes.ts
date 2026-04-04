@@ -21,6 +21,9 @@ const payloadSchema = z.object({
 const menuItemParamsSchema = z.object({
   itemId: z.string().min(1)
 });
+const adminMenuItemUpdateWithCustomizationsSchema = adminMenuItemUpdateSchema.extend({
+  customizationGroups: z.array(z.unknown()).optional()
+});
 
 const serviceErrorSchema = z.object({
   code: z.string(),
@@ -156,11 +159,38 @@ export async function registerRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const { itemId } = menuItemParamsSchema.parse(request.params);
-      const input = adminMenuItemUpdateSchema.parse(request.body);
-      const updatedItem = await repository.updateAdminMenuItem({
-        itemId,
-        ...input
-      });
+      const parsedInput = adminMenuItemUpdateWithCustomizationsSchema.safeParse(request.body);
+      if (!parsedInput.success) {
+        return sendError(reply, {
+          statusCode: 400,
+          code: "INVALID_MENU_ITEM_UPDATE_PAYLOAD",
+          message: "Menu item update payload is invalid",
+          requestId: request.id,
+          details: {
+            issues: parsedInput.error.issues
+          }
+        });
+      }
+      let updatedItem;
+      try {
+        updatedItem = await repository.updateAdminMenuItem({
+          itemId,
+          ...parsedInput.data
+        });
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return sendError(reply, {
+            statusCode: 400,
+            code: "INVALID_CUSTOMIZATION_GROUPS_PAYLOAD",
+            message: "customizationGroups payload is invalid",
+            requestId: request.id,
+            details: {
+              issues: error.issues
+            }
+          });
+        }
+        throw error;
+      }
 
       if (!updatedItem) {
         return reply.status(404).send(

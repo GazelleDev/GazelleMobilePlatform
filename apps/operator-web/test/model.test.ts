@@ -138,7 +138,8 @@ const sampleMenuCategories: OperatorMenuCategory[] = [
         description: "Sweet espresso latte",
         priceCents: 675,
         sortOrder: 0,
-        visible: true
+        visible: true,
+        customizationGroups: []
       },
       {
         itemId: "drink-2",
@@ -148,7 +149,8 @@ const sampleMenuCategories: OperatorMenuCategory[] = [
         description: "Short milk coffee",
         priceCents: 550,
         sortOrder: 1,
-        visible: false
+        visible: false,
+        customizationGroups: []
       }
     ]
   }
@@ -325,12 +327,52 @@ describe("operator-web model", () => {
       normalizeMenuItemForm({
         name: "  Brown Sugar Latte  ",
         priceCents: "1250",
-        visible: "yes"
+        visible: "yes",
+        customizationGroups: [
+          {
+            id: "milk",
+            label: "Milk",
+            selectionType: "single",
+            required: true,
+            sortOrder: 0,
+            options: [
+              {
+                id: "whole",
+                label: "Whole milk",
+                priceDeltaCents: 0,
+                default: true,
+                available: true,
+                sortOrder: 0
+              }
+            ]
+          }
+        ]
       })
     ).toEqual({
       name: "Brown Sugar Latte",
       priceCents: 1250,
-      visible: true
+      visible: true,
+      customizationGroups: [
+        {
+          id: "milk",
+          label: "Milk",
+          selectionType: "single",
+          required: true,
+          minSelections: 1,
+          maxSelections: 1,
+          sortOrder: 0,
+          options: [
+            {
+              id: "whole",
+              label: "Whole milk",
+              priceDeltaCents: 0,
+              default: true,
+              sortOrder: 0,
+              available: true
+            }
+          ]
+        }
+      ]
     });
 
     expect(

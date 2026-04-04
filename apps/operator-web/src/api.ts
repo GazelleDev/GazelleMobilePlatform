@@ -11,10 +11,7 @@ import {
 } from "@gazelle/contracts-auth";
 import {
   adminMenuItemCreateSchema,
-  adminMenuItemSchema,
-  adminMenuItemUpdateSchema,
   adminMenuItemVisibilityUpdateSchema,
-  adminMenuResponseSchema,
   adminMutationSuccessSchema,
   adminStoreConfigSchema,
   adminStoreConfigUpdateSchema,
@@ -24,10 +21,13 @@ import { orderSchema } from "@gazelle/contracts-orders";
 import {
   normalizeMenuItemCreateForm,
   normalizeMenuItemForm,
+  operatorMenuItemSchema,
+  operatorMenuResponseSchema,
   normalizeOperatorUserCreateForm,
   normalizeOperatorUserUpdateForm,
   normalizeStoreConfigForm,
-  type OperatorOrder
+  type OperatorOrder,
+  type OperatorMenuResponse
 } from "./model.js";
 
 const ordersSchema = z.array(orderSchema);
@@ -42,7 +42,7 @@ export type OperatorAuthProviders = z.output<typeof operatorAuthProvidersSchema>
 export type OperatorDashboardSnapshot = {
   appConfig: z.output<typeof appConfigSchema>;
   orders: OperatorOrder[];
-  menu: z.output<typeof adminMenuResponseSchema>;
+  menu: OperatorMenuResponse;
   storeConfig: z.output<typeof adminStoreConfigSchema>;
   staff: OperatorUser[];
 };
@@ -266,9 +266,9 @@ export async function fetchOperatorSnapshot(session: OperatorSession): Promise<O
           apiBaseUrl: session.apiBaseUrl,
           accessToken: session.accessToken,
           path: "/admin/menu",
-          schema: adminMenuResponseSchema
+          schema: operatorMenuResponseSchema
         })
-      : Promise.resolve(adminMenuResponseSchema.parse({ locationId: session.operator.locationId, categories: [] })),
+      : Promise.resolve(operatorMenuResponseSchema.parse({ locationId: session.operator.locationId, categories: [] })),
     capabilitySet.has("store:read")
       ? requestJson({
           apiBaseUrl: session.apiBaseUrl,
@@ -334,7 +334,7 @@ export function createOperatorMenuItem(
     path: "/admin/menu",
     method: "POST",
     body: adminMenuItemCreateSchema.parse(normalizeMenuItemCreateForm(input)),
-    schema: adminMenuItemSchema
+    schema: operatorMenuItemSchema
   });
 }
 
@@ -348,8 +348,8 @@ export function updateOperatorMenuItem(
     accessToken: session.accessToken,
     path: `/admin/menu/${itemId}`,
     method: "PUT",
-    body: adminMenuItemUpdateSchema.parse(normalizeMenuItemForm(input)),
-    schema: adminMenuItemSchema
+    body: normalizeMenuItemForm(input),
+    schema: operatorMenuItemSchema
   });
 }
 
@@ -360,7 +360,7 @@ export function updateOperatorMenuItemVisibility(session: OperatorSession, itemI
     path: `/admin/menu/${itemId}/visibility`,
     method: "PATCH",
     body: adminMenuItemVisibilityUpdateSchema.parse({ visible }),
-    schema: adminMenuItemSchema
+    schema: operatorMenuItemSchema
   });
 }
 
