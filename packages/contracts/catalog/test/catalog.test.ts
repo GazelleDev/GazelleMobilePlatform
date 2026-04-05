@@ -8,10 +8,6 @@ import {
   buildDefaultCustomizationInput,
   catalogContract,
   describeCustomizationSelection,
-  homeNewsCardCreateSchema,
-  homeNewsCardSchema,
-  homeNewsCardUpdateSchema,
-  homeNewsCardsResponseSchema,
   internalLocationBootstrapSchema,
   internalLocationListResponseSchema,
   internalLocationSummarySchema,
@@ -218,8 +214,8 @@ describe("contracts-catalog", () => {
 
   it("exposes app-config contract metadata", () => {
     expect(catalogContract.routes.appConfig.path).toBe("/app-config");
-    expect(catalogContract.routes.cards.path).toBe("/cards");
-    expect(catalogContract.routes.storeCards.path).toBe("/store/cards");
+    expect(catalogContract.routes.menu.path).toBe("/menu");
+    expect(catalogContract.routes.storeConfig.path).toBe("/store/config");
   });
 
   it("validates admin menu and store config payloads", () => {
@@ -243,43 +239,6 @@ describe("contracts-catalog", () => {
     expect(adminItem.categoryTitle).toBe("Espresso Bar");
     expect(adminStoreConfig.storeName).toBe("Gazelle Coffee Flagship");
     expect(adminStoreConfig.capabilities.operations.dashboardEnabled).toBe(true);
-  });
-
-  it("validates home card payloads", () => {
-    const cards = homeNewsCardsResponseSchema.parse({
-      locationId: "flagship-01",
-      cards: [
-        {
-          cardId: "seasonal-feature",
-          label: "NEW DRINK",
-          title: "Seasonal Feature",
-          body: "Limited-time card copy.",
-          note: "Available today.",
-          sortOrder: 0,
-          visible: true
-        }
-      ]
-    });
-    const card = homeNewsCardSchema.parse(cards.cards[0]);
-    const created = homeNewsCardCreateSchema.parse({
-      label: "DISCOUNT",
-      title: "Afternoon Offer",
-      body: "20% off after 3 PM.",
-      visible: true,
-      sortOrder: 1
-    });
-    const updated = homeNewsCardUpdateSchema.parse({
-      label: "HOLIDAY HOURS",
-      title: "Holiday Hours",
-      body: "Adjusted opening hours.",
-      note: "Closes early",
-      visible: false,
-      sortOrder: 2
-    });
-
-    expect(card.title).toBe("Seasonal Feature");
-    expect(created.visible).toBe(true);
-    expect(updated.sortOrder).toBe(2);
   });
 
   it("validates admin update payloads", () => {
@@ -311,9 +270,6 @@ describe("contracts-catalog", () => {
     expect(storeUpdate.hours).toContain("Weekdays");
     expect(storeUpdate.capabilities?.menu.source).toBe("external_sync");
     expect(catalogContract.routes.adminMenu.path).toBe("/admin/menu");
-    expect(catalogContract.routes.adminCards.path).toBe("/admin/cards");
-    expect(catalogContract.routes.adminCardsUpdate.path).toBe("/admin/cards");
-    expect(catalogContract.routes.adminCardUpdate.path).toBe("/admin/cards/:cardId");
     expect(catalogContract.routes.adminStoreConfig.path).toBe("/admin/store/config");
   });
 

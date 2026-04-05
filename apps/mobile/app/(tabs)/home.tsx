@@ -1,10 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
-import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -16,16 +13,9 @@ import {
 } from "react-native";
 import Animated, { Extrapolation, interpolate, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  resolveAppConfigData,
-  resolveHomeNewsCardsData,
-  resolveStoreConfigData,
-  useAppConfigQuery,
-  useHomeNewsCardsQuery,
-  useStoreConfigQuery
-} from "../../src/menu/catalog";
+import { resolveAppConfigData, resolveStoreConfigData, useAppConfigQuery, useStoreConfigQuery } from "../../src/menu/catalog";
 import { TAB_BAR_HEIGHT, getTabBarBottomOffset } from "../../src/navigation/tabBarMetrics";
-import { GlassCard, ScreenBackdrop, TabBarDepthBackdrop, uiPalette, uiTypography } from "../../src/ui/system";
+import { ScreenBackdrop, TabBarDepthBackdrop, uiPalette, uiTypography } from "../../src/ui/system";
 
 const HEADER_TOP_PADDING = 18;
 const HEADER_EXPANDED_HEIGHT = 212;
@@ -33,63 +23,13 @@ const HEADER_COLLAPSED_HEIGHT = 92;
 const HEADER_SNAP_VELOCITY_THRESHOLD = 0.2;
 const HEADER_SNAP_EDGE_TOLERANCE = 2;
 
-type NewsLabel = string;
-
-function canUseLiquidGlassTag() {
-  if (Platform.OS !== "ios") return false;
-
-  try {
-    return isLiquidGlassAvailable();
-  } catch {
-    return false;
-  }
-}
-
-function HomeNewsTag({ label }: { label: NewsLabel }) {
-  const useLiquidGlass = canUseLiquidGlassTag();
-
-  const content = (
-    <View
-      style={[
-        styles.newsLabelInner,
-        useLiquidGlass
-          ? styles.newsLabelInnerGlass
-          : styles.newsLabelInnerFallback
-      ]}
-    >
-      <Text style={styles.newsLabelText}>{label}</Text>
-    </View>
-  );
-
-  return (
-    <View style={styles.newsLabelShell}>
-      {useLiquidGlass ? (
-        <GlassView
-          glassEffectStyle="regular"
-          colorScheme="auto"
-          isInteractive
-          style={styles.newsLabelFrame}
-        >
-          {content}
-        </GlassView>
-      ) : (
-        <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.newsLabelFrame}>
-          {content}
-        </BlurView>
-      )}
-    </View>
-  );
-}
-
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const appConfigQuery = useAppConfigQuery();
-  const homeNewsCardsQuery = useHomeNewsCardsQuery();
   const storeConfigQuery = useStoreConfigQuery();
   const [isManualRefresh, setIsManualRefresh] = useState(false);
   const appConfig = resolveAppConfigData(appConfigQuery.data);
-  const homeNewsCards = resolveHomeNewsCardsData(homeNewsCardsQuery.data);
   const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const scrollY = useSharedValue(0);
@@ -223,7 +163,7 @@ export default function HomeScreen() {
             progressViewOffset={insets.top + 12}
           />
         }
-        contentContainerStyle={[
+      contentContainerStyle={[
           styles.scrollContent,
           {
             paddingTop: headerExpandedHeight,
@@ -231,22 +171,7 @@ export default function HomeScreen() {
           }
         ]}
       >
-        <View style={styles.cardGrid}>
-          {homeNewsCards.cards.map((item) => (
-            <GlassCard key={item.title} style={styles.newsCard} contentStyle={styles.newsCardContent}>
-              <View style={styles.newsCardHeader}>
-                <HomeNewsTag label={item.label} />
-              </View>
-
-              <View style={styles.newsCopy}>
-                <Text style={styles.newsTitle}>{item.title}</Text>
-                <Text style={styles.newsBody}>{item.body}</Text>
-              </View>
-
-              <Text style={styles.newsNote}>{item.note}</Text>
-            </GlassCard>
-          ))}
-        </View>
+        <View />
       </Animated.ScrollView>
 
       <Animated.View style={[styles.headerShell, { paddingTop: insets.top + HEADER_TOP_PADDING }, headerStyle]}>
@@ -366,80 +291,4 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     fontWeight: "600"
   },
-  cardGrid: {
-    paddingTop: 14,
-    gap: 14
-  },
-  newsCard: {
-    width: "100%",
-    minHeight: 142
-  },
-  newsCardContent: {
-    minHeight: 142,
-    justifyContent: "space-between",
-    gap: 14
-  },
-  newsCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  newsLabelShell: {
-    alignSelf: "flex-start",
-    borderRadius: 999,
-    overflow: "hidden",
-    shadowColor: "#000000",
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4
-  },
-  newsLabelFrame: {
-    borderRadius: 999,
-    overflow: "hidden"
-  },
-  newsLabelInner: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    borderWidth: 1
-  },
-  newsLabelInnerGlass: {
-    backgroundColor: "rgba(255,255,255,0.02)",
-    borderColor: "rgba(255,255,255,0.16)"
-  },
-  newsLabelInnerFallback: {
-    backgroundColor: "rgba(255,255,255,0.36)",
-    borderColor: "rgba(255,255,255,0.28)"
-  },
-  newsLabelText: {
-    fontSize: 11,
-    lineHeight: 13,
-    letterSpacing: 1.1,
-    fontWeight: "700",
-    color: uiPalette.textSecondary
-  },
-  newsCopy: {
-    gap: 6
-  },
-  newsTitle: {
-    fontSize: 24,
-    lineHeight: 28,
-    color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily,
-    fontWeight: "600",
-    letterSpacing: -0.5
-  },
-  newsBody: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: uiPalette.textSecondary
-  },
-  newsNote: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: uiPalette.textMuted,
-    fontWeight: "500"
-  }
 });
