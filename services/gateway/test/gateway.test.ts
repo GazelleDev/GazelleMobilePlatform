@@ -262,6 +262,32 @@ describe("gateway", () => {
         );
       }
 
+      if (url.endsWith("/v1/auth/me") && method === "PUT") {
+        if (!authHeader) {
+          return new Response(
+            JSON.stringify({
+              code: "UNAUTHORIZED",
+              message: "Missing or invalid auth token",
+              requestId: "identity-stub"
+            }),
+            { status: 401, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            userId: "123e4567-e89b-12d3-a456-426614174000",
+            email: "owner@gazellecoffee.com",
+            name: "Avery Quinn",
+            displayName: "Avery Quinn",
+            phoneNumber: "+13135550123",
+            birthday: "1992-04-12",
+            methods: ["apple", "passkey", "magic-link"]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       if (url.endsWith("/v1/operator/auth/me") && method === "GET") {
         if (!authHeader) {
           return new Response(
@@ -1491,6 +1517,30 @@ describe("gateway", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       email: "owner@gazellecoffee.com"
+    });
+    await app.close();
+  });
+
+  it("forwards customer profile updates through /v1/auth/me", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/auth/me",
+      headers: {
+        authorization: "Bearer access-token"
+      },
+      payload: {
+        name: "Avery Quinn",
+        phoneNumber: "+13135550123",
+        birthday: "1992-04-12"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12"
     });
     await app.close();
   });

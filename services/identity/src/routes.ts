@@ -15,6 +15,7 @@ import {
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
   internalOwnerSummarySchema,
+  customerProfileUpdateSchema,
   logoutRequestSchema,
   magicLinkRequestSchema,
   magicLinkVerifySchema,
@@ -109,6 +110,20 @@ function buildMagicLinkUrl(baseUrl: string, token: string) {
   const url = new URL("/auth/magic-link", baseUrl);
   url.searchParams.set("token", token);
   return url.toString();
+}
+
+function deriveCustomerDisplayName(user: { name?: string; email?: string } | undefined) {
+  const name = user?.name?.trim();
+  if (name) {
+    return name;
+  }
+
+  const email = user?.email?.trim();
+  if (!email) {
+    return undefined;
+  }
+
+  return email.split("@")[0] || undefined;
 }
 
 function buildOperatorMagicLinkUrl(baseUrl: string, token: string) {
@@ -1025,11 +1040,74 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
         userId: session.userId,
         email: user?.email,
         name: user?.name,
-        displayName: user?.name,
+        displayName: deriveCustomerDisplayName(user),
         phoneNumber: user?.phoneNumber,
+        birthday: user?.birthday,
         memberSince: user?.createdAt,
         createdAt: user?.createdAt,
         updatedAt: user?.updatedAt,
+        methods
+      });
+    }
+  );
+
+  app.put(
+    "/v1/auth/me",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const parsed = authHeaderSchema.safeParse(request.headers);
+
+      if (!parsed.success || !parsed.data.authorization) {
+        return reply.status(401).send(
+          apiErrorSchema.parse({
+            code: "UNAUTHORIZED",
+            message: "Missing or invalid auth token",
+            requestId: request.id
+          })
+        );
+      }
+
+      const accessToken = parsed.data.authorization.slice("Bearer ".length);
+      const session = await repository.getSessionByAccessToken(accessToken);
+      if (!session) {
+        return reply.status(401).send(
+          apiErrorSchema.parse({
+            code: "UNAUTHORIZED",
+            message: "Missing or invalid auth token",
+            requestId: request.id
+          })
+        );
+      }
+
+      const input = customerProfileUpdateSchema.parse(request.body);
+      const updatedUser = await repository.updateCustomerProfile(session.userId, input);
+      if (!updatedUser) {
+        return reply.status(404).send(
+          apiErrorSchema.parse({
+            code: "USER_NOT_FOUND",
+            message: "Customer profile was not found",
+            requestId: request.id
+          })
+        );
+      }
+
+      logIdentityMutation(request, "customer profile updated", {
+        userId: updatedUser.userId
+      });
+
+      const methods = await repository.listAuthMethodsForUser(session.userId);
+      return meResponseSchema.parse({
+        userId: updatedUser.userId,
+        email: updatedUser.email,
+        name: updatedUser.name,
+        displayName: deriveCustomerDisplayName(updatedUser),
+        phoneNumber: updatedUser.phoneNumber,
+        birthday: updatedUser.birthday,
+        memberSince: updatedUser.createdAt,
+        createdAt: updatedUser.createdAt,
+        updatedAt: updatedUser.updatedAt,
         methods
       });
     }

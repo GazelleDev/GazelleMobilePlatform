@@ -11,6 +11,7 @@ import {
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
   internalOwnerSummarySchema,
+  customerProfileUpdateSchema,
   logoutRequestSchema,
   magicLinkRequestSchema,
   magicLinkVerifySchema,
@@ -34,6 +35,11 @@ import {
   adminMenuItemSchema,
   adminMenuItemUpdateSchema,
   adminMenuItemVisibilityUpdateSchema,
+  homeNewsCardCreateSchema,
+  homeNewsCardSchema,
+  homeNewsCardUpdateSchema,
+  homeNewsCardVisibilityUpdateSchema,
+  homeNewsCardsResponseSchema,
   menuItemCustomizationGroupSchema,
   adminMutationSuccessSchema,
   adminStoreConfigSchema,
@@ -86,6 +92,7 @@ const jwtAccessTokenClaimsSchema = z.object({
 });
 const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
 const menuItemParamsSchema = z.object({ itemId: z.string().min(1) });
+const cardParamsSchema = z.object({ cardId: z.string().min(1) });
 const adminMenuItemWithCustomizationsSchema = adminMenuItemSchema.extend({
   customizationGroups: z.array(menuItemCustomizationGroupSchema).default([])
 });
@@ -1385,6 +1392,27 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
+  app.put(
+    "/v1/auth/me",
+    {
+      preHandler: [app.rateLimit(authWriteRateLimit), requireBearerAuth]
+    },
+    async (request, reply) => {
+    const input = customerProfileUpdateSchema.parse(request.body);
+
+    return proxyUpstream({
+      request,
+      reply,
+      baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
+      method: "PUT",
+      path: "/v1/auth/me",
+      body: input,
+      responseSchema: meResponseSchema
+    });
+    }
+  );
+
   app.get(
     "/v1/me",
     {
@@ -1398,6 +1426,27 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Identity",
       method: "GET",
       path: "/v1/auth/me",
+      responseSchema: meResponseSchema
+    });
+    }
+  );
+
+  app.put(
+    "/v1/me",
+    {
+      preHandler: [app.rateLimit(authWriteRateLimit), requireBearerAuth]
+    },
+    async (request, reply) => {
+    const input = customerProfileUpdateSchema.parse(request.body);
+
+    return proxyUpstream({
+      request,
+      reply,
+      baseUrl: identityBaseUrl,
+      serviceLabel: "Identity",
+      method: "PUT",
+      path: "/v1/auth/me",
+      body: input,
       responseSchema: meResponseSchema
     });
     }
@@ -1617,6 +1666,18 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: "/v1/menu",
       responseSchema: menuResponseSchema
+    })
+  );
+
+  app.get("/v1/cards", { preHandler: app.rateLimit(catalogReadRateLimit) }, async (request, reply) =>
+    proxyUpstream({
+      request,
+      reply,
+      baseUrl: catalogBaseUrl,
+      serviceLabel: "Catalog",
+      method: "GET",
+      path: "/v1/cards",
+      responseSchema: homeNewsCardsResponseSchema
     })
   );
 
@@ -2147,6 +2208,123 @@ export async function registerRoutes(app: FastifyInstance) {
         serviceLabel: "Catalog",
         method: "DELETE",
         path: `/v1/catalog/admin/menu/${itemId}`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: adminMutationSuccessSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/cards",
+    {
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("menu:read")]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: "/v1/catalog/admin/cards",
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: homeNewsCardsResponseSchema
+      })
+  );
+
+  app.post(
+    "/v1/admin/cards",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const input = homeNewsCardCreateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "POST",
+        path: "/v1/catalog/admin/cards",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: homeNewsCardSchema
+      });
+    }
+  );
+
+  app.put(
+    "/v1/admin/cards/:cardId",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const { cardId } = cardParamsSchema.parse(request.params);
+      const input = homeNewsCardUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PUT",
+        path: `/v1/catalog/admin/cards/${cardId}`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: homeNewsCardSchema
+      });
+    }
+  );
+
+  app.patch(
+    "/v1/admin/cards/:cardId/visibility",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:visibility")]
+    },
+    async (request, reply) => {
+      const { cardId } = cardParamsSchema.parse(request.params);
+      const input = homeNewsCardVisibilityUpdateSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PATCH",
+        path: `/v1/catalog/admin/cards/${cardId}/visibility`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: homeNewsCardSchema
+      });
+    }
+  );
+
+  app.delete(
+    "/v1/admin/cards/:cardId",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const { cardId } = cardParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "DELETE",
+        path: `/v1/catalog/admin/cards/${cardId}`,
         additionalHeaders: {
           "x-gateway-token": gatewayInternalApiToken
         },

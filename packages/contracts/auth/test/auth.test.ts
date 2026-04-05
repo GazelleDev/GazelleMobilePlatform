@@ -10,6 +10,7 @@ import {
   operatorGoogleExchangeRequestSchema,
   operatorPasswordSignInSchema,
   operatorUserCreateSchema,
+  customerProfileUpdateSchema,
   passkeyVerifyRequestSchema
 } from "../src";
 
@@ -119,6 +120,7 @@ describe("contracts-auth", () => {
       name: "Avery Quinn",
       displayName: "Avery Quinn",
       phoneNumber: "+13135550123",
+      birthday: "1992-04-12",
       memberSince: "2026-04-01T00:00:00.000Z",
       createdAt: "2026-04-01T00:00:00.000Z",
       updatedAt: "2026-04-02T00:00:00.000Z",
@@ -128,7 +130,22 @@ describe("contracts-auth", () => {
     expect(payload.name).toBe("Avery Quinn");
     expect(payload.displayName).toBe("Avery Quinn");
     expect(payload.phoneNumber).toBe("+13135550123");
+    expect(payload.birthday).toBe("1992-04-12");
     expect(payload.methods).toEqual(["apple", "magic-link"]);
+  });
+
+  it("validates customer profile completion payloads", () => {
+    const payload = customerProfileUpdateSchema.parse({
+      name: " Avery Quinn ",
+      phoneNumber: " +13135550123 ",
+      birthday: "1992-04-12"
+    });
+
+    expect(payload).toEqual({
+      name: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12"
+    });
   });
 
   it("requires passwords when creating operator users", () => {

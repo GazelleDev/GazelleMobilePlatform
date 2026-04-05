@@ -124,6 +124,66 @@ describe("identity service", () => {
     await app.close();
   });
 
+  it("lets authenticated customers complete their profile", async () => {
+    const app = await buildApp();
+    const exchange = await app.inject({
+      method: "POST",
+      url: "/v1/auth/apple/exchange",
+      payload: {
+        identityToken: createFakeAppleIdentityToken({
+          sub: "apple-user-profile",
+          email: "member@example.com"
+        }),
+        authorizationCode: "auth-code",
+        nonce: "profile-completion"
+      }
+    });
+
+    expect(exchange.statusCode).toBe(200);
+    const session = exchange.json();
+
+    const update = await app.inject({
+      method: "PUT",
+      url: "/v1/auth/me",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`
+      },
+      payload: {
+        name: "Avery Quinn",
+        phoneNumber: "+13135550123",
+        birthday: "1992-04-12"
+      }
+    });
+
+    expect(update.statusCode).toBe(200);
+    expect(update.json()).toMatchObject({
+      userId: session.userId,
+      name: "Avery Quinn",
+      displayName: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12",
+      methods: ["apple"]
+    });
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`
+      }
+    });
+
+    expect(me.statusCode).toBe(200);
+    expect(me.json()).toMatchObject({
+      name: "Avery Quinn",
+      displayName: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12"
+    });
+
+    await app.close();
+  });
+
   it("supports refresh rotation and invalidates prior access tokens after logout", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));

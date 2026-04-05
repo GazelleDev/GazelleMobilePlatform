@@ -91,10 +91,17 @@ export const meResponseSchema = z.object({
   name: z.string().trim().min(1).optional(),
   displayName: z.string().trim().min(1).optional(),
   phoneNumber: z.string().trim().min(1).optional(),
+  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   memberSince: z.string().datetime().optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
   methods: z.array(z.enum(["apple", "passkey", "magic-link"]))
+});
+
+export const customerProfileUpdateSchema = z.object({
+  name: z.string().trim().min(1),
+  phoneNumber: z.string().trim().min(1),
+  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 });
 
 export const operatorRoleSchema = z.enum(["owner", "manager", "staff"]);
@@ -280,6 +287,12 @@ export const authContract = {
       method: "GET",
       path: "/me",
       request: z.undefined(),
+      response: meResponseSchema
+    },
+    updateMe: {
+      method: "PUT",
+      path: "/me",
+      request: customerProfileUpdateSchema,
       response: meResponseSchema
     }
   }

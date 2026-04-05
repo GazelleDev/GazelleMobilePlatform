@@ -33,6 +33,7 @@ type PersistedIdentityUserRow = {
   email: string | null;
   name: string | null;
   phone_number: string | null;
+  birthday: string | null;
   created_at: string | Date;
   updated_at: string | Date;
 };
@@ -135,6 +136,7 @@ export type IdentityUserRecord = {
   email?: string;
   name?: string;
   phoneNumber?: string;
+  birthday?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -168,6 +170,10 @@ export type IdentityRepository = {
   findOrCreateUserByAppleSub(appleSub: string, email?: string): Promise<string>;
   findOrCreateUserByEmail(email: string): Promise<string>;
   getUserById(userId: string): Promise<IdentityUserRecord | undefined>;
+  updateCustomerProfile(
+    userId: string,
+    input: { name: string; phoneNumber: string; birthday: string }
+  ): Promise<IdentityUserRecord | undefined>;
   listAuthMethodsForUser(userId: string): Promise<CustomerAuthMethod[]>;
   rotateRefreshSession(
     refreshToken: string,
@@ -322,6 +328,7 @@ function toIdentityUserRecord(row: PersistedIdentityUserRow): IdentityUserRecord
     email: row.email ? normalizeEmail(row.email) : undefined,
     name: row.name?.trim() || undefined,
     phoneNumber: row.phone_number?.trim() || undefined,
+    birthday: row.birthday?.trim() || undefined,
     createdAt: parseIsoDate(row.created_at),
     updatedAt: parseIsoDate(row.updated_at)
   };
@@ -505,6 +512,7 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
         email: normalizedEmail ?? existingUser?.email,
         name: existingUser?.name,
         phoneNumber: existingUser?.phoneNumber,
+        birthday: existingUser?.birthday,
         createdAt: existingUser?.createdAt ?? now,
         updatedAt: now
       });
@@ -527,6 +535,7 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
           email: normalizedEmail,
           name: existingUser?.name,
           phoneNumber: existingUser?.phoneNumber,
+          birthday: existingUser?.birthday,
           createdAt: existingUser?.createdAt ?? now,
           updatedAt: now
         });
@@ -545,6 +554,23 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
     },
     async getUserById(userId) {
       return usersById.get(userId);
+    },
+    async updateCustomerProfile(userId, input) {
+      const existing = usersById.get(userId);
+      if (!existing) {
+        return undefined;
+      }
+
+      const updated: IdentityUserRecord = {
+        ...existing,
+        name: input.name.trim(),
+        phoneNumber: input.phoneNumber.trim(),
+        birthday: input.birthday,
+        updatedAt: new Date().toISOString()
+      };
+
+      usersById.set(userId, updated);
+      return updated;
     },
     async listAuthMethodsForUser(userId) {
       const methods = new Set<CustomerAuthMethod>(customerAuthMethodsByUserId.get(userId) ?? []);
@@ -1235,6 +1261,36 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
       }
 
       return toIdentityUserRecord(row as PersistedIdentityUserRow);
+    },
+    async updateCustomerProfile(userId, input) {
+      const existing = await db
+        .selectFrom("identity_users")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .executeTakeFirst();
+
+      if (!existing) {
+        return undefined;
+      }
+
+      await db
+        .updateTable("identity_users")
+        .set({
+          name: input.name.trim(),
+          phone_number: input.phoneNumber.trim(),
+          birthday: input.birthday,
+          updated_at: new Date().toISOString()
+        })
+        .where("user_id", "=", userId)
+        .execute();
+
+      const updated = await db
+        .selectFrom("identity_users")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .executeTakeFirstOrThrow();
+
+      return toIdentityUserRecord(updated as PersistedIdentityUserRow);
     },
     async listAuthMethodsForUser(userId) {
       const [userRow, sessionRows] = await Promise.all([
