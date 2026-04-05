@@ -17,7 +17,7 @@ const plans = [
       "Basic loyalty program",
       "Client dashboard",
       "Push notifications",
-      "Stripe payments",
+      "Clover + Apple Pay",
     ],
     featured: false,
     cta: "Request intro",
@@ -282,8 +282,7 @@ export function Pricing() {
           ))}
         </Stagger>
         <div className="pricing-note">
-          LatteLink pricing is flat. The platform does not take an extra cut on
-          each order as your volume grows.
+          LatteLink pricing is flat. We do not take an extra cut on each order. During pilot, payments use Clover in-store and Apple Pay on mobile; additional processors will be added as they go live.
         </div>
       </div>
     </section>
