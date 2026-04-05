@@ -88,6 +88,12 @@ export const logoutRequestSchema = z.object({
 export const meResponseSchema = z.object({
   userId: z.string().uuid(),
   email: z.string().email().optional(),
+  name: z.string().trim().min(1).optional(),
+  displayName: z.string().trim().min(1).optional(),
+  phoneNumber: z.string().trim().min(1).optional(),
+  memberSince: z.string().datetime().optional(),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional(),
   methods: z.array(z.enum(["apple", "passkey", "magic-link"]))
 });
 

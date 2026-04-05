@@ -1016,10 +1016,21 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
         );
       }
 
+      const [user, methods] = await Promise.all([
+        repository.getUserById(session.userId),
+        repository.listAuthMethodsForUser(session.userId)
+      ]);
+
       return meResponseSchema.parse({
         userId: session.userId,
-        email: "owner@gazellecoffee.com",
-        methods: ["apple", "passkey", "magic-link"]
+        email: user?.email,
+        name: user?.name,
+        displayName: user?.name,
+        phoneNumber: user?.phoneNumber,
+        memberSince: user?.createdAt,
+        createdAt: user?.createdAt,
+        updatedAt: user?.updatedAt,
+        methods
       });
     }
   );

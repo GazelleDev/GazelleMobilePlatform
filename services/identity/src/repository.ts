@@ -27,6 +27,16 @@ type PersistedSessionRow = {
   revoked_at: string | Date | null;
 };
 
+type PersistedIdentityUserRow = {
+  user_id: string;
+  apple_sub: string | null;
+  email: string | null;
+  name: string | null;
+  phone_number: string | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+};
+
 type StoredSession = AuthSession & {
   refreshExpiresAt: string;
 };
@@ -123,7 +133,13 @@ export type IdentityUserRecord = {
   userId: string;
   appleSub?: string;
   email?: string;
+  name?: string;
+  phoneNumber?: string;
+  createdAt: string;
+  updatedAt: string;
 };
+
+type CustomerAuthMethod = "apple" | "passkey" | "magic-link";
 
 export type MagicLinkRecord = {
   token: string;
@@ -151,6 +167,8 @@ export type IdentityRepository = {
   ): Promise<void>;
   findOrCreateUserByAppleSub(appleSub: string, email?: string): Promise<string>;
   findOrCreateUserByEmail(email: string): Promise<string>;
+  getUserById(userId: string): Promise<IdentityUserRecord | undefined>;
+  listAuthMethodsForUser(userId: string): Promise<CustomerAuthMethod[]>;
   rotateRefreshSession(
     refreshToken: string,
     createNextSession: (userId: string) => StoredSession,
@@ -297,6 +315,48 @@ function toMagicLinkRecord(row: PersistedMagicLinkRow): MagicLinkRecord {
   };
 }
 
+function toIdentityUserRecord(row: PersistedIdentityUserRow): IdentityUserRecord {
+  return {
+    userId: row.user_id,
+    appleSub: row.apple_sub ?? undefined,
+    email: row.email ? normalizeEmail(row.email) : undefined,
+    name: row.name?.trim() || undefined,
+    phoneNumber: row.phone_number?.trim() || undefined,
+    createdAt: parseIsoDate(row.created_at),
+    updatedAt: parseIsoDate(row.updated_at)
+  };
+}
+
+function normalizeCustomerAuthMethod(
+  value: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh"
+): CustomerAuthMethod | undefined {
+  switch (value) {
+    case "apple":
+      return "apple";
+    case "passkey-register":
+    case "passkey-auth":
+      return "passkey";
+    case "magic-link":
+      return "magic-link";
+    case "refresh":
+    default:
+      return undefined;
+  }
+}
+
+function toSortedCustomerAuthMethods(methods: Iterable<CustomerAuthMethod>): CustomerAuthMethod[] {
+  const ordered: CustomerAuthMethod[] = [];
+  const methodSet = new Set(methods);
+
+  for (const method of ["apple", "passkey", "magic-link"] as const) {
+    if (methodSet.has(method)) {
+      ordered.push(method);
+    }
+  }
+
+  return ordered;
+}
+
 function getDefaultOperatorLocationId() {
   const configured = process.env.DEFAULT_OPERATOR_LOCATION_ID?.trim();
   return configured && configured.length > 0 ? configured : "flagship-01";
@@ -384,6 +444,7 @@ function toStoredOperatorSession(row: PersistedOperatorSessionRow): StoredOperat
 export function createInMemoryIdentityRepository(): IdentityRepository {
   const sessionsByAccessToken = new Map<string, { session: StoredSession; revokedAt?: string }>();
   const accessTokenByRefreshToken = new Map<string, string>();
+  const customerAuthMethodsByUserId = new Map<string, Set<CustomerAuthMethod>>();
   const operatorSessionsByAccessToken = new Map<string, { session: StoredOperatorSession; revokedAt?: string }>();
   const operatorAccessTokenByRefreshToken = new Map<string, string>();
   const passkeyChallengesByFlow = new Map<"register" | "auth", PasskeyChallengeRecord[]>();
@@ -419,7 +480,14 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
 
   return {
     backend: "memory",
-    async saveSession(session) {
+    async saveSession(session, authMethod) {
+      const normalizedAuthMethod = normalizeCustomerAuthMethod(authMethod);
+      if (normalizedAuthMethod) {
+        const methods = customerAuthMethodsByUserId.get(session.userId) ?? new Set<CustomerAuthMethod>();
+        methods.add(normalizedAuthMethod);
+        customerAuthMethodsByUserId.set(session.userId, methods);
+      }
+
       sessionsByAccessToken.set(session.accessToken, { session });
       accessTokenByRefreshToken.set(session.refreshToken, session.accessToken);
     },
@@ -429,11 +497,16 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
         userIdByAppleSub.get(appleSub) ?? (normalizedEmail ? userIdByEmail.get(normalizedEmail) : undefined);
       const userId = existingUserId ?? randomUUID();
       const existingUser = usersById.get(userId);
+      const now = new Date().toISOString();
 
       usersById.set(userId, {
         userId,
         appleSub,
-        email: normalizedEmail ?? existingUser?.email
+        email: normalizedEmail ?? existingUser?.email,
+        name: existingUser?.name,
+        phoneNumber: existingUser?.phoneNumber,
+        createdAt: existingUser?.createdAt ?? now,
+        updatedAt: now
       });
       userIdByAppleSub.set(appleSub, userId);
       if (normalizedEmail) {
@@ -445,12 +518,17 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
     async findOrCreateUserByEmail(email) {
       const normalizedEmail = normalizeEmail(email);
       const existingUserId = userIdByEmail.get(normalizedEmail);
+      const now = new Date().toISOString();
       if (existingUserId) {
         const existingUser = usersById.get(existingUserId);
         usersById.set(existingUserId, {
           userId: existingUserId,
           appleSub: existingUser?.appleSub,
-          email: normalizedEmail
+          email: normalizedEmail,
+          name: existingUser?.name,
+          phoneNumber: existingUser?.phoneNumber,
+          createdAt: existingUser?.createdAt ?? now,
+          updatedAt: now
         });
         return existingUserId;
       }
@@ -458,10 +536,23 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
       const userId = randomUUID();
       usersById.set(userId, {
         userId,
-        email: normalizedEmail
+        email: normalizedEmail,
+        createdAt: now,
+        updatedAt: now
       });
       userIdByEmail.set(normalizedEmail, userId);
       return userId;
+    },
+    async getUserById(userId) {
+      return usersById.get(userId);
+    },
+    async listAuthMethodsForUser(userId) {
+      const methods = new Set<CustomerAuthMethod>(customerAuthMethodsByUserId.get(userId) ?? []);
+      const user = usersById.get(userId);
+      if (user?.appleSub) {
+        methods.add("apple");
+      }
+      return toSortedCustomerAuthMethods(methods);
     },
     async rotateRefreshSession(refreshToken, createNextSession) {
       const accessToken = accessTokenByRefreshToken.get(refreshToken);
@@ -1131,6 +1222,47 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
 
         return toPublicSession(nextSession);
       });
+    },
+    async getUserById(userId) {
+      const row = await db
+        .selectFrom("identity_users")
+        .selectAll()
+        .where("user_id", "=", userId)
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      return toIdentityUserRecord(row as PersistedIdentityUserRow);
+    },
+    async listAuthMethodsForUser(userId) {
+      const [userRow, sessionRows] = await Promise.all([
+        db
+          .selectFrom("identity_users")
+          .select(["apple_sub"])
+          .where("user_id", "=", userId)
+          .executeTakeFirst(),
+        db
+          .selectFrom("identity_sessions")
+          .select(["auth_method"])
+          .where("user_id", "=", userId)
+          .execute()
+      ]);
+
+      const methods = new Set<CustomerAuthMethod>();
+      if (userRow?.apple_sub) {
+        methods.add("apple");
+      }
+
+      for (const row of sessionRows) {
+        const method = normalizeCustomerAuthMethod(row.auth_method);
+        if (method) {
+          methods.add(method);
+        }
+      }
+
+      return toSortedCustomerAuthMethods(methods);
     },
     async getSessionByAccessToken(accessToken) {
       const row = await db

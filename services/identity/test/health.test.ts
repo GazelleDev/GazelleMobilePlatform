@@ -86,12 +86,16 @@ describe("identity service", () => {
   });
 
   it("supports auth session -> me happy path", async () => {
+    const customerEmail = "member@example.com";
     const app = await buildApp();
     const exchange = await app.inject({
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createFakeAppleIdentityToken({
+          sub: "apple-user-happy-path",
+          email: customerEmail
+        }),
         authorizationCode: "auth-code",
         nonce: "happy-path"
       }
@@ -110,7 +114,12 @@ describe("identity service", () => {
 
     expect(me.statusCode).toBe(200);
     expect(me.json()).toMatchObject({
-      email: "owner@gazellecoffee.com"
+      userId: session.userId,
+      email: customerEmail,
+      methods: ["apple"],
+      memberSince: expect.any(String),
+      createdAt: expect.any(String),
+      updatedAt: expect.any(String)
     });
     await app.close();
   });

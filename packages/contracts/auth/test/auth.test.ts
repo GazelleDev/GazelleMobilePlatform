@@ -6,6 +6,7 @@ import {
   internalOwnerProvisionResponseSchema,
   internalOwnerSummarySchema,
   magicLinkRequestSchema,
+  meResponseSchema,
   operatorGoogleExchangeRequestSchema,
   operatorPasswordSignInSchema,
   operatorUserCreateSchema,
@@ -109,6 +110,25 @@ describe("contracts-auth", () => {
 
     expect(payload.email).toBe("owner@gazellecoffee.com");
     expect(payload.password).toBe("Password123!");
+  });
+
+  it("accepts me responses with optional customer profile fields", () => {
+    const payload = meResponseSchema.parse({
+      userId: "123e4567-e89b-12d3-a456-426614174000",
+      email: "member@example.com",
+      name: "Avery Quinn",
+      displayName: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      memberSince: "2026-04-01T00:00:00.000Z",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-02T00:00:00.000Z",
+      methods: ["apple", "magic-link"]
+    });
+
+    expect(payload.name).toBe("Avery Quinn");
+    expect(payload.displayName).toBe("Avery Quinn");
+    expect(payload.phoneNumber).toBe("+13135550123");
+    expect(payload.methods).toEqual(["apple", "magic-link"]);
   });
 
   it("requires passwords when creating operator users", () => {
