@@ -173,6 +173,7 @@ describe("orders service layer", () => {
           locationId: "flagship-01",
           hoursText: "Daily · 7:00 AM - 6:00 PM",
           isOpen: storeConfigIsOpen,
+          nextOpenAt: storeConfigIsOpen ? null : "2026-03-10T07:00:00.000Z",
           prepEtaMinutes: 12,
           taxRateBasisPoints: 600,
           pickupInstructions: "Pickup at the flagship order counter."
@@ -900,7 +901,11 @@ describe("orders service layer", () => {
     if (!("error" in closedQuoteResult)) {
       throw new Error("Expected closed-store quote error");
     }
-    expect(closedQuoteResult.error.code).toBe("STORE_CLOSED");
+    expect(closedQuoteResult.error).toMatchObject({
+      statusCode: 409,
+      code: "STORE_CLOSED",
+      message: "The store is currently closed"
+    });
 
     storeConfigIsOpen = true;
     const openQuoteResult = await createQuote({
@@ -928,6 +933,10 @@ describe("orders service layer", () => {
     if (!("error" in closedCreateResult)) {
       throw new Error("Expected closed-store createOrder error");
     }
-    expect(closedCreateResult.error.code).toBe("STORE_CLOSED");
+    expect(closedCreateResult.error).toMatchObject({
+      statusCode: 409,
+      code: "STORE_CLOSED",
+      message: "The store is currently closed"
+    });
   });
 });

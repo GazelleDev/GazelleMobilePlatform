@@ -62,6 +62,16 @@ describe("catalog service", () => {
     await app.close();
   });
 
+  it("returns v1 store cards payload", async () => {
+    const app = await buildApp();
+    const response = await app.inject({ method: "GET", url: "/v1/store/cards" });
+
+    expect(response.statusCode).toBe(200);
+    const parsed = homeNewsCardsResponseSchema.parse(response.json());
+    expect(parsed.cards.length).toBeGreaterThan(0);
+    await app.close();
+  });
+
   it("returns v1 app config payload", async () => {
     const app = await buildApp();
     const response = await app.inject({ method: "GET", url: "/v1/app-config" });
@@ -101,6 +111,7 @@ describe("catalog service", () => {
     const parsed = storeConfigResponseSchema.parse(response.json());
     expect(parsed.hoursText).toContain("Daily");
     expect(parsed.isOpen).toBe(true);
+    expect(parsed.nextOpenAt).toBeNull();
     expect(parsed.prepEtaMinutes).toBeGreaterThan(0);
     await app.close();
   });
@@ -114,6 +125,7 @@ describe("catalog service", () => {
     expect(response.statusCode).toBe(200);
     const parsed = storeConfigResponseSchema.parse(response.json());
     expect(parsed.isOpen).toBe(false);
+    expect(parsed.nextOpenAt).toBeTruthy();
     await app.close();
   });
 
@@ -145,6 +157,32 @@ describe("catalog service", () => {
     expect(adminCardsResponse.statusCode).toBe(200);
     const adminCards = homeNewsCardsResponseSchema.parse(adminCardsResponse.json());
     expect(adminCards.cards.length).toBeGreaterThan(0);
+
+    const bulkCardsResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/catalog/admin/cards",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      },
+      payload: {
+        locationId: adminCards.locationId,
+        cards: [
+          {
+            cardId: "night-special",
+            label: "FEATURED",
+            title: "Night Special",
+            body: "Extended service through 8 PM.",
+            note: "Weeknights only.",
+            visible: true,
+            sortOrder: 0
+          }
+        ]
+      }
+    });
+    expect(bulkCardsResponse.statusCode).toBe(200);
+    const bulkCards = homeNewsCardsResponseSchema.parse(bulkCardsResponse.json());
+    expect(bulkCards.cards).toHaveLength(1);
+    expect(bulkCards.cards[0]?.cardId).toBe("night-special");
 
     const updateResponse = await app.inject({
       method: "PUT",

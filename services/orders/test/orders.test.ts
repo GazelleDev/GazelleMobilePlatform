@@ -108,6 +108,7 @@ describe("orders service", () => {
           locationId: "flagship-01",
           hoursText: "Daily · 7:00 AM - 6:00 PM",
           isOpen: true,
+          nextOpenAt: null,
           prepEtaMinutes: 12,
           taxRateBasisPoints: 600,
           pickupInstructions: "Pickup at the flagship order counter."

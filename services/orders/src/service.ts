@@ -277,10 +277,11 @@ function buildStoreClosedError(storeConfig: StoreConfigResponse) {
   return buildServiceError({
     statusCode: 409,
     code: "STORE_CLOSED",
-    message: `The store is currently closed. Orders are accepted during ${storeConfig.hoursText}.`,
+    message: "The store is currently closed",
     details: {
       locationId: storeConfig.locationId,
-      hoursText: storeConfig.hoursText
+      hoursText: storeConfig.hoursText,
+      nextOpenAt: storeConfig.nextOpenAt
     }
   });
 }

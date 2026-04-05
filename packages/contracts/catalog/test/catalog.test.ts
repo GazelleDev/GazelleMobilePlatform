@@ -94,6 +94,7 @@ describe("contracts-catalog", () => {
       locationId: "flagship-01",
       hoursText: "Daily · 7:00 AM - 6:00 PM",
       isOpen: true,
+      nextOpenAt: null,
       prepEtaMinutes: 12,
       taxRateBasisPoints: 600,
       pickupInstructions: "Pickup at the flagship order counter."
@@ -101,6 +102,7 @@ describe("contracts-catalog", () => {
 
     expect(config.taxRateBasisPoints).toBe(600);
     expect(config.isOpen).toBe(true);
+    expect(config.nextOpenAt).toBeNull();
   });
 
   it("validates app config payload", () => {
@@ -217,6 +219,7 @@ describe("contracts-catalog", () => {
   it("exposes app-config contract metadata", () => {
     expect(catalogContract.routes.appConfig.path).toBe("/app-config");
     expect(catalogContract.routes.cards.path).toBe("/cards");
+    expect(catalogContract.routes.storeCards.path).toBe("/store/cards");
   });
 
   it("validates admin menu and store config payloads", () => {
@@ -309,6 +312,7 @@ describe("contracts-catalog", () => {
     expect(storeUpdate.capabilities?.menu.source).toBe("external_sync");
     expect(catalogContract.routes.adminMenu.path).toBe("/admin/menu");
     expect(catalogContract.routes.adminCards.path).toBe("/admin/cards");
+    expect(catalogContract.routes.adminCardsUpdate.path).toBe("/admin/cards");
     expect(catalogContract.routes.adminCardUpdate.path).toBe("/admin/cards/:cardId");
     expect(catalogContract.routes.adminStoreConfig.path).toBe("/admin/store/config");
   });
@@ -360,6 +364,7 @@ describe("contracts-catalog", () => {
         locationId: "flagship-01",
         hoursText: "Daily · 7:00 AM - 6:00 PM",
         isOpen: true,
+        nextOpenAt: null,
         prepEtaMinutes: 12,
         taxRateBasisPoints: 10001,
         pickupInstructions: "Pickup at the flagship order counter."

@@ -99,7 +99,7 @@ export default function CheckoutScreen() {
   const checkoutMutation = useApplePayCheckoutMutation();
   const storeClosedMessage =
     storeConfig && !storeConfig.isOpen
-      ? `The store is closed right now. Orders are accepted during ${storeConfig.hoursText}.`
+      ? "The store is currently closed. Come back during opening hours."
       : null;
   const checkoutUnavailableMessage = !storeConfig
     ? "Store details are temporarily unavailable. Retry loading checkout before paying."
@@ -289,7 +289,7 @@ export default function CheckoutScreen() {
               {storeConfig
                 ? storeConfig.isOpen
                   ? `Estimated wait is ${storeConfig.prepEtaMinutes} min`
-                  : `Closed now · Orders resume during ${storeConfig.hoursText}`
+                  : "Store closed"
                 : "Checkout details unavailable"}
             </Text>
           </View>
