@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
@@ -15,6 +15,7 @@ import {
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
   internalOwnerSummarySchema,
+  customerProfileRequestSchema,
   logoutRequestSchema,
   magicLinkRequestSchema,
   magicLinkVerifySchema,
@@ -38,6 +39,14 @@ import { apiErrorSchema, authSessionSchema } from "@gazelle/contracts-core";
 import { createIdentityRepository, type IdentityRepository } from "./repository.js";
 import { createMailSender, type MailSender } from "./mail.js";
 import { provisionOwnerAccess } from "./provisioning.js";
+
+type CustomerSession = NonNullable<Awaited<ReturnType<IdentityRepository["getSessionByAccessToken"]>>>;
+
+declare module "fastify" {
+  interface FastifyRequest {
+    customerSession?: CustomerSession;
+  }
+}
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
@@ -109,6 +118,70 @@ function buildMagicLinkUrl(baseUrl: string, token: string) {
   const url = new URL("/auth/magic-link", baseUrl);
   url.searchParams.set("token", token);
   return url.toString();
+}
+
+function buildCustomerMeResponse(input: {
+  userId: string;
+  user: {
+    email?: string;
+    name?: string;
+    displayName?: string;
+    phoneNumber?: string;
+    birthday?: string;
+    profileCompletedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+  } | undefined;
+  methods: Array<"apple" | "passkey" | "magic-link">;
+}) {
+  return meResponseSchema.parse({
+    userId: input.userId,
+    email: input.user?.email,
+    name: input.user?.name?.trim() || undefined,
+    displayName: input.user?.displayName?.trim() || undefined,
+    phoneNumber: input.user?.phoneNumber?.trim() || undefined,
+    birthday: input.user?.birthday?.trim() || undefined,
+    profileCompleted: Boolean(input.user?.profileCompletedAt),
+    memberSince: input.user?.createdAt,
+    createdAt: input.user?.createdAt,
+    updatedAt: input.user?.updatedAt,
+    methods: input.methods
+  });
+}
+
+async function getAuthenticatedCustomerSession(input: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  repository: IdentityRepository;
+}): Promise<CustomerSession | undefined> {
+  const { request, reply, repository } = input;
+  const parsed = authHeaderSchema.safeParse(request.headers);
+
+  if (!parsed.success || !parsed.data.authorization) {
+    reply.status(401).send(
+      apiErrorSchema.parse({
+        code: "UNAUTHORIZED",
+        message: "Missing or invalid auth token",
+        requestId: request.id
+      })
+    );
+    return undefined;
+  }
+
+  const accessToken = parsed.data.authorization.slice("Bearer ".length);
+  const session = await repository.getSessionByAccessToken(accessToken);
+  if (!session) {
+    reply.status(401).send(
+      apiErrorSchema.parse({
+        code: "UNAUTHORIZED",
+        message: "Missing or invalid auth token",
+        requestId: request.id
+      })
+    );
+    return undefined;
+  }
+
+  return session;
 }
 
 function buildOperatorMagicLinkUrl(baseUrl: string, token: string) {
@@ -507,6 +580,15 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
   const passkeyVerifyRateLimit = {
     max: toPositiveInteger(process.env.IDENTITY_RATE_LIMIT_PASSKEY_VERIFY_MAX, defaultPasskeyVerifyRateLimitMax),
     timeWindow: rateLimitWindowMs
+  };
+
+  const requireCustomerAuth = async (request: FastifyRequest, reply: FastifyReply) => {
+    const session = await getAuthenticatedCustomerSession({ request, reply, repository });
+    if (!session) {
+      return;
+    }
+
+    request.customerSession = session;
   };
 
   app.addHook("onClose", async () => {
@@ -989,31 +1071,12 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
   app.get(
     "/v1/auth/me",
     {
-      preHandler: app.rateLimit(authReadRateLimit)
+      preHandler: [app.rateLimit(authReadRateLimit), requireCustomerAuth]
     },
-    async (request, reply) => {
-      const parsed = authHeaderSchema.safeParse(request.headers);
-
-      if (!parsed.success || !parsed.data.authorization) {
-        return reply.status(401).send(
-          apiErrorSchema.parse({
-            code: "UNAUTHORIZED",
-            message: "Missing or invalid auth token",
-            requestId: request.id
-          })
-        );
-      }
-
-      const accessToken = parsed.data.authorization.slice("Bearer ".length);
-      const session = await repository.getSessionByAccessToken(accessToken);
+    async (request) => {
+      const session = request.customerSession;
       if (!session) {
-        return reply.status(401).send(
-          apiErrorSchema.parse({
-            code: "UNAUTHORIZED",
-            message: "Missing or invalid auth token",
-            requestId: request.id
-          })
-        );
+        return;
       }
 
       const [user, methods] = await Promise.all([
@@ -1021,15 +1084,45 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
         repository.listAuthMethodsForUser(session.userId)
       ]);
 
-      return meResponseSchema.parse({
+      return buildCustomerMeResponse({
         userId: session.userId,
-        email: user?.email,
-        name: user?.name,
-        displayName: user?.name,
-        phoneNumber: user?.phoneNumber,
-        memberSince: user?.createdAt,
-        createdAt: user?.createdAt,
-        updatedAt: user?.updatedAt,
+        user,
+        methods
+      });
+    }
+  );
+
+  app.post(
+    "/v1/auth/profile",
+    {
+      preHandler: [app.rateLimit(authWriteRateLimit), requireCustomerAuth]
+    },
+    async (request, reply) => {
+      const session = request.customerSession;
+      if (!session) {
+        return;
+      }
+
+      const input = customerProfileRequestSchema.parse(request.body);
+      const updatedUser = await repository.updateCustomerProfile(session.userId, input);
+      if (!updatedUser) {
+        return reply.status(404).send(
+          apiErrorSchema.parse({
+            code: "USER_NOT_FOUND",
+            message: "Customer profile was not found",
+            requestId: request.id
+          })
+        );
+      }
+
+      logIdentityMutation(request, "customer profile updated", {
+        userId: updatedUser.userId
+      });
+
+      const methods = await repository.listAuthMethodsForUser(session.userId);
+      return buildCustomerMeResponse({
+        userId: updatedUser.userId,
+        user: updatedUser,
         methods
       });
     }

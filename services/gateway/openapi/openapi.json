@@ -197,8 +197,8 @@
         }
       }
     },
-    "/me": {
-      "get": {
+    "/auth/profile": {
+      "post": {
         "responses": {
           "200": {
             "description": "Default Response"

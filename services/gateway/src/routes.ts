@@ -11,6 +11,7 @@ import {
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
   internalOwnerSummarySchema,
+  customerProfileRequestSchema,
   logoutRequestSchema,
   magicLinkRequestSchema,
   magicLinkVerifySchema,
@@ -1391,19 +1392,22 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.get(
-    "/v1/me",
+  app.post(
+    "/v1/auth/profile",
     {
-      preHandler: [app.rateLimit(authReadRateLimit), requireBearerAuth]
+      preHandler: [app.rateLimit(authWriteRateLimit), requireBearerAuth]
     },
     async (request, reply) => {
+    const input = customerProfileRequestSchema.parse(request.body);
+
     return proxyUpstream({
       request,
       reply,
       baseUrl: identityBaseUrl,
       serviceLabel: "Identity",
-      method: "GET",
-      path: "/v1/auth/me",
+      method: "POST",
+      path: "/v1/auth/profile",
+      body: input,
       responseSchema: meResponseSchema
     });
     }

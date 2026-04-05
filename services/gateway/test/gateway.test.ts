@@ -256,6 +256,35 @@ describe("gateway", () => {
           JSON.stringify({
             userId: "123e4567-e89b-12d3-a456-426614174000",
             email: "owner@gazellecoffee.com",
+            displayName: "Avery Quinn",
+            profileCompleted: false,
+            methods: ["apple", "passkey", "magic-link"]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/auth/profile") && method === "POST") {
+        if (!authHeader) {
+          return new Response(
+            JSON.stringify({
+              code: "UNAUTHORIZED",
+              message: "Missing or invalid auth token",
+              requestId: "identity-stub"
+            }),
+            { status: 401, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            userId: "123e4567-e89b-12d3-a456-426614174000",
+            email: "owner@gazellecoffee.com",
+            name: "Avery Quinn",
+            displayName: "Avery Quinn",
+            phoneNumber: "+13135550123",
+            birthday: "1992-04-12",
+            profileCompleted: true,
             methods: ["apple", "passkey", "magic-link"]
           }),
           { status: 200, headers: { "content-type": "application/json" } }
@@ -1491,6 +1520,32 @@ describe("gateway", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       email: "owner@gazellecoffee.com"
+    });
+    await app.close();
+  });
+
+  it("forwards customer profile updates through /v1/auth/profile", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/profile",
+      headers: {
+        authorization: "Bearer access-token"
+      },
+      payload: {
+        name: "Avery Quinn",
+        displayName: "Avery Quinn",
+        phoneNumber: "+13135550123",
+        birthday: "1992-04-12"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12",
+      profileCompleted: true
     });
     await app.close();
   });

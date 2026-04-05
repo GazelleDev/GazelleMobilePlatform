@@ -124,6 +124,7 @@ describe("sdk-mobile", () => {
     expect(menu.categories[0]?.items[0]?.name).toBe("Latte");
     expect(storeConfig.taxRateBasisPoints).toBe(600);
     expect(storeConfig.nextOpenAt).toBeNull();
+    expect(storeConfig.isOpen).toBe(true);
     expect(appConfig.brand.brandName).toBe("Gazelle Coffee");
     expect(appConfig.fulfillment.mode).toBe("time_based");
   });
@@ -195,6 +196,35 @@ describe("sdk-mobile", () => {
     expect(order.status).toBe("PENDING_PAYMENT");
     expect(paidOrder.status).toBe("PAID");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("supports customer profile completion updates", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          userId: "123e4567-e89b-12d3-a456-426614174000",
+          email: "member@example.com",
+          name: "Avery Quinn",
+          displayName: "Avery Quinn",
+          phoneNumber: "+13135550123",
+          birthday: "1992-04-12",
+          profileCompleted: true,
+          methods: ["apple"]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+
+    const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
+    const me = await client.saveCustomerProfile({
+      name: "Avery Quinn",
+      displayName: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12"
+    });
+
+    expect(me.name).toBe("Avery Quinn");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("supports structured Apple Pay wallet payload for payOrder", async () => {
@@ -313,6 +343,7 @@ describe("sdk-mobile", () => {
           JSON.stringify({
             userId: "123e4567-e89b-12d3-a456-426614174000",
             email: "owner@gazellecoffee.com",
+            profileCompleted: false,
             methods: ["apple"]
           }),
           { status: 200, headers: { "content-type": "application/json" } }

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getAuthScreenRecoveryCopy } from "../src/auth/recovery";
+import { useCustomerProfileQuery, isCustomerProfileComplete } from "../src/auth/profile";
 import { useAppleExchangeMutation } from "../src/auth/useAuth";
 import { generateAuthNonce } from "../src/auth/nonce";
 import { useAuthSession } from "../src/auth/session";
@@ -43,29 +44,28 @@ export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
-  const { session, isAuthenticated, isHydrating, authRecoveryState } = useAuthSession();
+  const { session, isAuthenticated, isHydrating, authRecoveryState, profileSetupDeferred } = useAuthSession();
 
   const [appleAvailable, setAppleAvailable] = useState(false);
-
   const appleExchange = useAppleExchangeMutation();
   const returnTo = useMemo(() => resolveReturnToPath(params.returnTo), [params.returnTo]);
   const topContentInset = insets.top + 52;
   const recoveryCopy = useMemo(() => getAuthScreenRecoveryCopy(authRecoveryState), [authRecoveryState]);
+  const profileQuery = useCustomerProfileQuery(isAuthenticated && !isHydrating);
+  const profile = profileQuery.data;
+  const profileComplete = isCustomerProfileComplete(profile);
+  const profileNeedsSetup = isAuthenticated && profileQuery.isSuccess && !profileComplete && !profileSetupDeferred;
 
   useEffect(() => {
-    if (!isAuthenticated || !returnTo) return;
-
-    if (returnTo === "cart") {
-      if (router.canGoBack()) {
-        router.back();
-        return;
-      }
-      router.replace("/cart");
+    if (!isAuthenticated || isHydrating || profileQuery.isLoading) {
       return;
     }
 
-    router.replace(returnTo);
-  }, [isAuthenticated, returnTo, router]);
+    if (!profileQuery.isSuccess || profileNeedsSetup) {
+      const nextRoute = returnTo ? { pathname: "/profile-setup", params: { returnTo } } : "/profile-setup";
+      router.replace(nextRoute);
+    }
+  }, [isAuthenticated, isHydrating, profileNeedsSetup, profileQuery.isLoading, profileQuery.isSuccess, returnTo, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,16 +114,8 @@ export default function AuthScreen() {
   }
 
   function continueIntoApp() {
-    if (returnTo === "cart") {
-      if (router.canGoBack()) {
-        router.back();
-        return;
-      }
-      router.replace("/cart");
-      return;
-    }
-
-    router.replace(returnTo ?? "/(tabs)/menu");
+    const destination = returnTo === "cart" ? "/cart" : returnTo ?? "/(tabs)/menu";
+    router.replace(destination);
   }
 
   if (isHydrating) {
@@ -150,12 +142,32 @@ export default function AuthScreen() {
       </View>
       <View style={[styles.centerContent, { paddingTop: topContentInset }]}>
         {isAuthenticated ? (
-          <>
-            <Text style={styles.title}>You’re signed in.</Text>
-            <Text style={styles.body}>
-              {session ? `Your session is active until ${formatExpiresAt(session.expiresAt)}.` : "Your account is ready to go."}
-            </Text>
-          </>
+          profileQuery.isLoading ? (
+            <>
+              <Text style={styles.title}>Checking your profile…</Text>
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color={uiPalette.primary} />
+                <Text style={styles.body}>Preparing your account details.</Text>
+              </View>
+            </>
+          ) : profileQuery.isError ? (
+            <>
+              <Text style={styles.title}>We could not load your profile.</Text>
+              <Text style={styles.body}>We’ll open profile setup so you can continue.</Text>
+            </>
+          ) : profileNeedsSetup ? (
+            <>
+              <Text style={styles.title}>Finish your signup.</Text>
+              <Text style={styles.body}>We need a profile setup step before you can enter the app.</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.title}>You’re signed in.</Text>
+              <Text style={styles.body}>
+                {session ? `Your session is active until ${formatExpiresAt(session.expiresAt)}.` : "Your account is ready to go."}
+              </Text>
+            </>
+          )
         ) : (
           <>
             <Text style={styles.title}>{recoveryCopy.title}</Text>
@@ -166,7 +178,13 @@ export default function AuthScreen() {
 
       <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 16) + 10 }]}>
         {isAuthenticated ? (
-          <Button label={getReturnLabel(returnTo)} onPress={continueIntoApp} />
+          profileNeedsSetup ? (
+            <Button label="Open Profile Setup" onPress={() => router.replace("/profile-setup")} />
+          ) : profileQuery.isError ? (
+            <Button label="Open Profile Setup" onPress={() => router.replace("/profile-setup")} />
+          ) : (
+            <Button label={getReturnLabel(returnTo)} onPress={continueIntoApp} />
+          )
         ) : appleAvailable ? (
           <AppleAuthentication.AppleAuthenticationButton
             buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}

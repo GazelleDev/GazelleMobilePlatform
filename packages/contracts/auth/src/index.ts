@@ -85,12 +85,20 @@ export const logoutRequestSchema = z.object({
   refreshToken: z.string().min(1)
 });
 
+export const customerProfileRequestSchema = z.object({
+  name: z.string().trim().min(1),
+  phoneNumber: z.string().trim().min(1).optional(),
+  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+});
+
 export const meResponseSchema = z.object({
   userId: z.string().uuid(),
   email: z.string().email().optional(),
   name: z.string().trim().min(1).optional(),
   displayName: z.string().trim().min(1).optional(),
   phoneNumber: z.string().trim().min(1).optional(),
+  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  profileCompleted: z.boolean(),
   memberSince: z.string().datetime().optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
@@ -280,6 +288,12 @@ export const authContract = {
       method: "GET",
       path: "/me",
       request: z.undefined(),
+      response: meResponseSchema
+    },
+    profile: {
+      method: "POST",
+      path: "/profile",
+      request: customerProfileRequestSchema,
       response: meResponseSchema
     }
   }

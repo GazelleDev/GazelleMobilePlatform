@@ -116,11 +116,75 @@ describe("identity service", () => {
     expect(me.json()).toMatchObject({
       userId: session.userId,
       email: customerEmail,
+      profileCompleted: false,
       methods: ["apple"],
       memberSince: expect.any(String),
       createdAt: expect.any(String),
       updatedAt: expect.any(String)
     });
+    await app.close();
+  });
+
+  it("lets authenticated customers complete their profile", async () => {
+    const app = await buildApp();
+    const exchange = await app.inject({
+      method: "POST",
+      url: "/v1/auth/apple/exchange",
+      payload: {
+        identityToken: createFakeAppleIdentityToken({
+          sub: "apple-user-profile",
+          email: "member@example.com"
+        }),
+        authorizationCode: "auth-code",
+        nonce: "profile-completion"
+      }
+    });
+
+    expect(exchange.statusCode).toBe(200);
+    const session = exchange.json();
+
+    const update = await app.inject({
+      method: "POST",
+      url: "/v1/auth/profile",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`
+      },
+      payload: {
+        name: "Avery Quinn",
+        displayName: "Avery Quinn",
+        phoneNumber: "+13135550123",
+        birthday: "1992-04-12"
+      }
+    });
+
+    expect(update.statusCode).toBe(200);
+    expect(update.json()).toMatchObject({
+      userId: session.userId,
+      name: "Avery Quinn",
+      displayName: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12",
+      profileCompleted: true,
+      methods: ["apple"]
+    });
+
+    const me = await app.inject({
+      method: "GET",
+      url: "/v1/auth/me",
+      headers: {
+        authorization: `Bearer ${session.accessToken}`
+      }
+    });
+
+    expect(me.statusCode).toBe(200);
+    expect(me.json()).toMatchObject({
+      name: "Avery Quinn",
+      displayName: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12",
+      profileCompleted: true
+    });
+
     await app.close();
   });
 

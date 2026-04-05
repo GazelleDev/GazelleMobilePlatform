@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appleExchangeRequestSchema,
+  customerProfileRequestSchema,
   googleOAuthStartRequestSchema,
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
@@ -119,6 +120,8 @@ describe("contracts-auth", () => {
       name: "Avery Quinn",
       displayName: "Avery Quinn",
       phoneNumber: "+13135550123",
+      birthday: "1992-04-12",
+      profileCompleted: true,
       memberSince: "2026-04-01T00:00:00.000Z",
       createdAt: "2026-04-01T00:00:00.000Z",
       updatedAt: "2026-04-02T00:00:00.000Z",
@@ -128,7 +131,24 @@ describe("contracts-auth", () => {
     expect(payload.name).toBe("Avery Quinn");
     expect(payload.displayName).toBe("Avery Quinn");
     expect(payload.phoneNumber).toBe("+13135550123");
+    expect(payload.birthday).toBe("1992-04-12");
+    expect(payload.profileCompleted).toBe(true);
     expect(payload.methods).toEqual(["apple", "magic-link"]);
+  });
+
+  it("validates customer profile completion payloads", () => {
+    const payload = customerProfileRequestSchema.parse({
+      name: " Avery Quinn ",
+      displayName: " Avery Quinn ",
+      phoneNumber: " +13135550123 ",
+      birthday: "1992-04-12"
+    });
+
+    expect(payload).toEqual({
+      name: "Avery Quinn",
+      phoneNumber: "+13135550123",
+      birthday: "1992-04-12"
+    });
   });
 
   it("requires passwords when creating operator users", () => {

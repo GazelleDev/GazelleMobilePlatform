@@ -19,6 +19,8 @@ import * as migration0011 from "../src/migrations/0011_operator_access.js";
 import * as migration0012 from "../src/migrations/0012_operator_passwords.js";
 import * as migration0013 from "../src/migrations/0013_operator_google_sso.js";
 import * as migration0014 from "../src/migrations/0014_identity_customer_profile_fields.js";
+import * as migration0015 from "../src/migrations/0015_identity_customer_birthday.js";
+import * as migration0016 from "../src/migrations/0016_identity_customer_profile_completion.js";
 import { resolveMigrationFolderPath } from "../src/migrate.js";
 
 describe("persistence", () => {
@@ -67,7 +69,9 @@ describe("persistence", () => {
       "0011_operator_access": migration0011,
       "0012_operator_passwords": migration0012,
       "0013_operator_google_sso": migration0013,
-      "0014_identity_customer_profile_fields": migration0014
+      "0014_identity_customer_profile_fields": migration0014,
+      "0015_identity_customer_birthday": migration0015,
+      "0016_identity_customer_profile_completion": migration0016
     };
 
     expect(basename(resolveMigrationFolderPath())).toBe("migrations");
@@ -85,7 +89,9 @@ describe("persistence", () => {
       "0011_operator_access",
       "0012_operator_passwords",
       "0013_operator_google_sso",
-      "0014_identity_customer_profile_fields"
+      "0014_identity_customer_profile_fields",
+      "0015_identity_customer_birthday",
+      "0016_identity_customer_profile_completion"
     ]);
 
     for (const migration of Object.values(migrations)) {
