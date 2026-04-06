@@ -103,6 +103,14 @@ export default function RootLayout() {
                         contentStyle: { backgroundColor: uiPalette.surfaceStrong }
                       }}
                     />
+                    <Stack.Screen
+                      name="orders/[orderId]"
+                      options={{
+                        presentation: "modal",
+                        animation: "slide_from_bottom",
+                        contentStyle: { backgroundColor: "transparent" }
+                      }}
+                    />
                   </Stack>
                 </CheckoutFlowProvider>
               </CartProvider>

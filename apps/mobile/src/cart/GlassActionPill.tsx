@@ -17,9 +17,10 @@ type GlassActionPillProps = {
   label: string;
   onPress: () => void;
   tone?: "default" | "danger" | "dark";
+  disabled?: boolean;
 };
 
-export function GlassActionPill({ label, onPress, tone = "default" }: GlassActionPillProps) {
+export function GlassActionPill({ label, onPress, tone = "default", disabled = false }: GlassActionPillProps) {
   const useLiquidGlass = canUseLiquidGlass();
   const useDarkTone = tone === "dark";
   const glassTintColor = useDarkTone ? "rgba(30, 27, 24, 0.9)" : undefined;
@@ -51,7 +52,7 @@ export function GlassActionPill({ label, onPress, tone = "default" }: GlassActio
   );
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.actionPillShell, pressed ? styles.actionPillPressed : null]}>
+    <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.actionPillShell, pressed && !disabled ? styles.actionPillPressed : null, disabled ? styles.actionPillDisabled : null]}>
       {useLiquidGlass ? (
         <GlassView
           glassEffectStyle="regular"
@@ -129,5 +130,8 @@ const styles = StyleSheet.create({
   },
   actionPillTextDanger: {
     color: uiPalette.danger
+  },
+  actionPillDisabled: {
+    opacity: 0.45
   }
 });

@@ -79,6 +79,33 @@ function HomeNewsTag({ label }: { label: NewsLabel }) {
     </View>
   );
 }
+
+function formatNextOpenLabel(nextOpenAt: string | null): string | null {
+  if (!nextOpenAt) return null;
+
+  const reopenAt = new Date(nextOpenAt);
+  if (Number.isNaN(reopenAt.getTime())) return null;
+
+  const now = new Date();
+  const isSameDay =
+    reopenAt.getFullYear() === now.getFullYear() &&
+    reopenAt.getMonth() === now.getMonth() &&
+    reopenAt.getDate() === now.getDate();
+
+  if (isSameDay) {
+    return reopenAt.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
+
+  return reopenAt.toLocaleString([], {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -89,6 +116,7 @@ export default function HomeScreen() {
   const appConfig = resolveAppConfigData(appConfigQuery.data);
   const homeNewsCards = homeNewsCardsQuery.data?.cards ?? [];
   const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
+  const nextOpenLabel = formatNextOpenLabel(storeConfig.nextOpenAt);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const scrollY = useSharedValue(0);
   const dockBottom = getTabBarBottomOffset(insets.bottom > 0);
@@ -261,7 +289,9 @@ export default function HomeScreen() {
               <Text style={[styles.storeMeta, !storeConfig.isOpen ? styles.storeMetaClosed : null]}>
                 {storeConfig.isOpen
                   ? `Estimated pick-up is ${storeConfig.prepEtaMinutes} mins`
-                  : `Closed now · Orders resume during ${storeConfig.hoursText}`}
+                  : nextOpenLabel
+                    ? `Closed now · Opens ${nextOpenLabel}`
+                    : "Closed now"}
               </Text>
             </Animated.View>
             <Animated.Text style={[styles.storeTitle, storeTitleStyle]}>{appConfig.brand.marketLabel}</Animated.Text>

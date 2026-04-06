@@ -1,58 +1,34 @@
-import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
-import { useMemo, useRef, type ComponentRef } from "react";
-import { StyleSheet, Text, View } from "react-native";
-import type { LoyaltyLedgerEntry, OrderHistoryEntry } from "../account/data";
-import { GlassActionPill } from "../cart/GlassActionPill";
-import { formatUsd } from "../menu/catalog";
-import { findLatestOrderTime, formatOrderDateTime, formatOrderReference, formatOrderStatus, getLatestOrderTimelineNote } from "./history";
-import { uiPalette, uiTypography } from "../ui/system";
-
-type OrderDetailSheetProps = {
-  order: OrderHistoryEntry;
-  refundEntries: LoyaltyLedgerEntry[];
-  bottomInset: number;
-  onClose: () => void;
-};
-
-function getStatusTone(status: OrderHistoryEntry["status"]) {
-  switch (status) {
-    case "PENDING_PAYMENT":
-      return {
-        backgroundColor: "rgba(164, 108, 44, 0.08)",
-        borderColor: "rgba(164, 108, 44, 0.18)",
-        textColor: uiPalette.warning
-      };
-    case "READY":
-      return {
-        backgroundColor: "rgba(79, 122, 99, 0.1)",
-        borderColor: "rgba(79, 122, 99, 0.22)",
-        textColor: uiPalette.success
-      };
-    case "CANCELED":
-      return {
-        backgroundColor: "rgba(180, 91, 79, 0.08)",
-        borderColor: "rgba(180, 91, 79, 0.18)",
-        textColor: uiPalette.danger
-      };
-    case "COMPLETED":
-      return {
-        backgroundColor: "rgba(23, 21, 19, 0.05)",
-        borderColor: "rgba(23, 21, 19, 0.1)",
-        textColor: uiPalette.textSecondary
-      };
-    case "PAID":
-    case "IN_PREP":
-    default:
-      return {
-        backgroundColor: uiPalette.accentSoft,
-        borderColor: "rgba(30, 27, 24, 0.1)",
-        textColor: uiPalette.accent
-      };
-  }
-}
+import { BlurView } from "expo-blur";
+import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useMemo } from "react";
+import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { type LoyaltyLedgerEntry, type OrderHistoryEntry, useLoyaltyLedgerQuery, useOrderHistoryQuery } from "../../src/account/data";
+import { useAuthSession } from "../../src/auth/session";
+import { formatUsd } from "../../src/menu/catalog";
+import {
+  findLatestOrderTime,
+  findRefundEntriesForOrder,
+  formatOrderDateTime,
+  formatOrderReference,
+  formatOrderStatus,
+  getLatestOrderTimelineNote
+} from "../../src/orders/history";
+import { Button, uiPalette, uiTypography } from "../../src/ui/system";
 
 function sumReturnedPoints(entries: LoyaltyLedgerEntry[]) {
   return entries.reduce((sum, entry) => sum + entry.points, 0);
+}
+
+function canUseLiquidGlassStatusPill() {
+  if (Platform.OS !== "ios") return false;
+
+  try {
+    return isLiquidGlassAvailable();
+  } catch {
+    return false;
+  }
 }
 
 function DetailRow({
@@ -71,42 +47,105 @@ function DetailRow({
 }
 
 function StatusBadge({ status }: { status: OrderHistoryEntry["status"] }) {
-  const tone = getStatusTone(status);
+  const useLiquidGlass = canUseLiquidGlassStatusPill();
 
   return (
-    <View style={[styles.statusBadge, { backgroundColor: tone.backgroundColor, borderColor: tone.borderColor }]}>
-      <Text style={[styles.statusBadgeText, { color: tone.textColor }]}>{formatOrderStatus(status)}</Text>
+    <View style={styles.statusBadgeShell}>
+      {useLiquidGlass ? (
+        <GlassView glassEffectStyle="regular" colorScheme="auto" isInteractive style={styles.statusBadgeFrame} />
+      ) : (
+        <BlurView tint="light" intensity={Platform.OS === "ios" ? 24 : 20} style={styles.statusBadgeFrame} />
+      )}
+      <View pointerEvents="none" style={styles.statusBadgeContent}>
+        <Text style={[styles.statusBadgeText, styles.statusBadgeTextGlass]}>{formatOrderStatus(status)}</Text>
+      </View>
     </View>
   );
 }
 
-export function OrderDetailSheet({ order, refundEntries, bottomInset, onClose }: OrderDetailSheetProps) {
-  const sheetRef = useRef<ComponentRef<typeof BottomSheet>>(null);
-  const snapPoints = useMemo(() => ["82%"], []);
-  const latestNote = getLatestOrderTimelineNote(order);
+function EmptyState({
+  title,
+  actionLabel,
+  onAction
+}: {
+  title: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <View style={styles.screen}>
+      <View style={[styles.handleWrap, styles.handleWrapTop]}>
+        <View style={styles.handle} />
+      </View>
+      <View style={styles.emptyWrap}>
+        <Text style={styles.emptyTitle}>{title}</Text>
+        <Button label={actionLabel} onPress={onAction} style={styles.emptyAction} />
+      </View>
+    </View>
+  );
+}
+
+export default function OrderDetailRoute() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ orderId?: string | string[] }>();
+  const orderId = Array.isArray(params.orderId) ? params.orderId[0] : params.orderId;
+  const { isAuthenticated } = useAuthSession();
+  const ordersQuery = useOrderHistoryQuery(isAuthenticated);
+  const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
+
+  const order = useMemo(
+    () => (orderId ? (ordersQuery.data ?? []).find((entry) => entry.id === orderId) ?? null : null),
+    [orderId, ordersQuery.data]
+  );
+  const refundEntries = useMemo(
+    () => (orderId ? findRefundEntriesForOrder(orderId, loyaltyLedgerQuery.data ?? []) : []),
+    [loyaltyLedgerQuery.data, orderId]
+  );
   const returnedPoints = useMemo(() => sumReturnedPoints(refundEntries), [refundEntries]);
-  const hasRefundDetails = refundEntries.length > 0 || order.status === "CANCELED";
+  const hasRefundDetails = refundEntries.length > 0 || order?.status === "CANCELED";
+
+  function goBackToOrders() {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace("/(tabs)/orders");
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <EmptyState
+        title="Sign in to view this order."
+        actionLabel="Sign In"
+        onAction={() => router.push({ pathname: "/auth", params: { returnTo: "/(tabs)/orders" } })}
+      />
+    );
+  }
+
+  if (ordersQuery.isLoading && !ordersQuery.data) {
+    return <EmptyState title="Loading order details…" actionLabel="Back to Orders" onAction={goBackToOrders} />;
+  }
+
+  if (!order) {
+    return <EmptyState title="Order not found." actionLabel="Back to Orders" onAction={goBackToOrders} />;
+  }
 
   return (
-    <BottomSheet
-      ref={sheetRef}
-      index={0}
-      snapPoints={snapPoints}
-      animateOnMount
-      enablePanDownToClose
-      onChange={(index) => {
-        if (index === -1) {
-          onClose();
-        }
-      }}
-      backdropComponent={(props) => (
-        <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} opacity={0.36} pressBehavior="close" />
-      )}
-      backgroundStyle={styles.sheet}
-    >
-      <BottomSheetScrollView
+    <View style={styles.screen}>
+      <View style={[styles.handleWrap, styles.handleWrapTop]}>
+        <View style={styles.handle} />
+      </View>
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.content, { paddingBottom: Math.max(bottomInset, 12) }]}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + 28,
+            paddingBottom: Math.max(insets.bottom, 12) + 20
+          }
+        ]}
       >
         <View style={styles.hero}>
           <Text style={styles.kicker}>Order details</Text>
@@ -123,14 +162,14 @@ export function OrderDetailSheet({ order, refundEntries, bottomInset, onClose }:
           <DetailRow label="Updated" value={formatOrderDateTime(findLatestOrderTime(order))} />
         </View>
 
-        <View style={styles.pickupSection}>
+        <View style={styles.section}>
           <Text style={styles.sectionLabel}>Pickup code</Text>
           <Text style={styles.pickupCode}>{order.pickupCode}</Text>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Status note</Text>
-          <Text style={styles.note}>{latestNote}</Text>
+          <Text style={styles.note}>{getLatestOrderTimelineNote(order)}</Text>
         </View>
 
         <View style={styles.section}>
@@ -143,8 +182,10 @@ export function OrderDetailSheet({ order, refundEntries, bottomInset, onClose }:
               return (
                 <View key={`${order.id}-${item.itemId}-${index}`} style={styles.itemRow}>
                   <View style={styles.itemCopy}>
-                    <Text style={styles.itemName}>{label}</Text>
-                    <Text style={styles.itemMeta}>{`${item.quantity}x`}</Text>
+                    <Text style={styles.itemName}>
+                      <Text style={styles.itemQuantity}>{`${item.quantity} x `}</Text>
+                      {label}
+                    </Text>
                   </View>
                   <Text style={styles.itemAmount}>{formatUsd(lineTotal)}</Text>
                 </View>
@@ -176,26 +217,35 @@ export function OrderDetailSheet({ order, refundEntries, bottomInset, onClose }:
             )}
           </View>
         ) : null}
-
-        <View style={styles.actions}>
-          <GlassActionPill label="Close" onPress={onClose} tone="dark" />
-        </View>
-      </BottomSheetScrollView>
-    </BottomSheet>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  sheet: {
-    backgroundColor: uiPalette.surfaceStrong,
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    borderWidth: 1,
-    borderColor: uiPalette.borderStrong
+  screen: {
+    flex: 1,
+    backgroundColor: uiPalette.surfaceStrong
+  },
+  handleWrap: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 10
+  },
+  handleWrapTop: {
+    paddingTop: 10
+  },
+  handle: {
+    width: 38,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "rgba(151, 160, 154, 0.52)"
   },
   content: {
-    paddingHorizontal: 20,
-    paddingTop: 24
+    paddingHorizontal: 20
   },
   hero: {
     paddingBottom: 18,
@@ -236,27 +286,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 7,
     borderRadius: 999,
-    borderWidth: 1,
+    borderWidth: 1
+  },
+  statusBadgeShell: {
+    position: "relative",
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  statusBadgeFrame: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 999,
+    overflow: "hidden"
+  },
+  statusBadgeContent: {
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999
   },
   statusBadgeText: {
     fontSize: 11,
     lineHeight: 14,
     letterSpacing: 1,
     textTransform: "uppercase",
-    color: uiPalette.accent,
     fontWeight: "700"
+  },
+  statusBadgeTextGlass: {
+    color: uiPalette.text
   },
   section: {
     paddingTop: 18,
+    paddingBottom: 18,
     borderBottomWidth: 1,
-    borderBottomColor: uiPalette.border,
-    paddingBottom: 18
-  },
-  pickupSection: {
-    paddingTop: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: uiPalette.border,
-    paddingBottom: 18
+    borderBottomColor: uiPalette.border
   },
   sectionLabel: {
     fontSize: 11,
@@ -322,8 +384,7 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     fontWeight: "600"
   },
-  itemMeta: {
-    marginTop: 2,
+  itemQuantity: {
     fontSize: 12,
     lineHeight: 18,
     color: uiPalette.textSecondary
@@ -371,7 +432,22 @@ const styles = StyleSheet.create({
     fontFamily: uiTypography.monoFamily,
     fontWeight: "600"
   },
-  actions: {
-    paddingTop: 18
+  emptyWrap: {
+    flex: 1,
+    backgroundColor: uiPalette.surfaceStrong,
+    paddingHorizontal: 20,
+    justifyContent: "center"
+  },
+  emptyTitle: {
+    fontSize: 24,
+    lineHeight: 30,
+    letterSpacing: -0.4,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "700"
+  },
+  emptyAction: {
+    marginTop: 18,
+    alignSelf: "flex-start"
   }
 });

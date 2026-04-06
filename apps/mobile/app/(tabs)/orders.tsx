@@ -21,18 +21,15 @@ import {
   orderHistoryQueryKey,
   sortOrdersByLatestActivity,
   useCancelOrderMutation,
-  useLoyaltyLedgerQuery,
   useOrderHistoryQuery,
   type OrderHistoryEntry
 } from "../../src/account/data";
 import { apiClient } from "../../src/api/client";
 import { formatUsd, resolveMenuData, useMenuQuery, type MenuItem } from "../../src/menu/catalog";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../../src/navigation/tabBarMetrics";
-import { OrderDetailSheet } from "../../src/orders/OrderDetailSheet";
 import { useCheckoutFlow } from "../../src/orders/flow";
 import {
   findLatestOrderTime,
-  findRefundEntriesForOrder,
   formatOrderDateTime,
   formatOrderReference,
   formatOrderStatus,
@@ -462,6 +459,11 @@ function HistoryRow({
   menuItemsById: Map<string, MenuItem>;
   onPress: () => void;
 }) {
+  const previewItems = order.items.slice(0, 3);
+  const remainingItemTypes = order.items.length - previewItems.length;
+  const totalUnits = countOrderUnits(order);
+  const historyStatus = order.status === "CANCELED" ? "CANCELED" : "COMPLETED";
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -470,10 +472,33 @@ function HistoryRow({
       style={({ pressed }) => [styles.historyRow, pressed ? styles.historyRowPressed : null]}
     >
       <View style={styles.historyTopRow}>
+        <StatusPill status={historyStatus} glassStyle="regular" />
         <Text style={styles.historyAmount}>{formatUsd(order.total.amountCents)}</Text>
       </View>
 
-      <OrderItemStrip order={order} menuItemsById={menuItemsById} />
+      <View style={styles.historyContentRow}>
+        <View style={styles.historyThumbStack}>
+          {previewItems.length > 0 ? (
+            previewItems.map((item, index) => (
+              <OrderItemThumbnail key={`${order.id}-${item.itemId}-${index}`} item={item} menuItemsById={menuItemsById} stacked={index > 0} />
+            ))
+          ) : (
+            <View style={styles.orderThumb}>
+              <Ionicons name="receipt-outline" size={16} color={uiPalette.accent} />
+            </View>
+          )}
+          {remainingItemTypes > 0 ? (
+            <View style={[styles.orderThumb, styles.orderThumbStacked, styles.orderThumbCount]}>
+              <Text style={styles.orderThumbCountText}>{`+${remainingItemTypes}`}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.orderItemsCopy}>
+        <Text style={styles.orderItemsTitle}>{buildOrderItemsSummary(order, menuItemsById)}</Text>
+        <Text style={styles.orderItemsMeta}>{`${totalUnits} item${totalUnits === 1 ? "" : "s"}`}</Text>
+      </View>
 
       <View style={styles.historyMetaRow}>
         <Text style={styles.historyMeta}>{formatOrderDateTime(findLatestOrderTime(order))}</Text>
@@ -511,7 +536,6 @@ export default function OrdersScreen() {
   const { isAuthenticated, isHydrating, authRecoveryState } = useAuthSession();
   const { clearFailure, clearRetryOrder } = useCheckoutFlow();
   const ordersQuery = useOrderHistoryQuery(isAuthenticated);
-  const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated);
   const cancelOrderMutation = useCancelOrderMutation();
   const menuQuery = useMenuQuery();
   const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
@@ -519,22 +543,12 @@ export default function OrdersScreen() {
   const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
   const [isManualRefresh, setIsManualRefresh] = useState(false);
   const [pendingCancelError, setPendingCancelError] = useState<string | null>(null);
-  const [selectedHistoryOrderId, setSelectedHistoryOrderId] = useState<string | null>(null);
 
   const orders = ordersQuery.data ?? [];
-  const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
   const menu = resolveMenuData(menuQuery.data);
   const menuItemsById = useMemo(
     () => new Map(menu.categories.flatMap((category) => category.items).map((item) => [item.id, item])),
     [menu.categories]
-  );
-  const selectedHistoryOrder = useMemo(
-    () => (selectedHistoryOrderId ? orders.find((order) => order.id === selectedHistoryOrderId) ?? null : null),
-    [orders, selectedHistoryOrderId]
-  );
-  const selectedOrderRefundEntries = useMemo(
-    () => (selectedHistoryOrder ? findRefundEntriesForOrder(selectedHistoryOrder.id, loyaltyLedger) : []),
-    [loyaltyLedger, selectedHistoryOrder]
   );
   const realActiveOrder = findActiveOrder(orders);
   const activeOrder = realActiveOrder;
@@ -616,7 +630,7 @@ export default function OrdersScreen() {
     if (isManualRefresh) return;
 
     setIsManualRefresh(true);
-    void Promise.allSettled([ordersQuery.refetch(), loyaltyLedgerQuery.refetch()]).finally(() => {
+    void Promise.allSettled([ordersQuery.refetch()]).finally(() => {
       setIsManualRefresh(false);
     });
   };
@@ -754,7 +768,11 @@ export default function OrdersScreen() {
             <View style={styles.historyList}>
               {orderHistory.map((order, index) => (
                 <View key={order.id}>
-                  <HistoryRow order={order} menuItemsById={menuItemsById} onPress={() => setSelectedHistoryOrderId(order.id)} />
+                  <HistoryRow
+                    order={order}
+                    menuItemsById={menuItemsById}
+                    onPress={() => router.push({ pathname: "/orders/[orderId]", params: { orderId: order.id } })}
+                  />
                   {index < orderHistory.length - 1 ? <View style={styles.historyDivider} /> : null}
                 </View>
               ))}
@@ -762,15 +780,6 @@ export default function OrdersScreen() {
           ) : null}
         </View>
       </ScreenScroll>
-
-      {selectedHistoryOrder ? (
-        <OrderDetailSheet
-          order={selectedHistoryOrder}
-          refundEntries={selectedOrderRefundEntries}
-          bottomInset={Math.max(insets.bottom, 12)}
-          onClose={() => setSelectedHistoryOrderId(null)}
-        />
-      ) : null}
 
       <View pointerEvents="none" style={[styles.pageHeaderFloating, { paddingTop: insets.top, height: insets.top + ORDERS_HEADER_HEIGHT }]}>
         <OrdersHeader title={activeOrder ? "Track your order" : "Past Orders"} />
@@ -1147,13 +1156,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     borderRadius: 20
   },
+  historyContentRow: {
+    marginTop: 12,
+    alignItems: "flex-start"
+  },
+  historyThumbStack: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 0
+  },
   historyRowPressed: {
     opacity: 0.78
   },
   historyTopRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
     gap: 12
   },
   historyAmount: {
@@ -1239,6 +1257,7 @@ const styles = StyleSheet.create({
   },
   historyDivider: {
     height: 1,
+    marginVertical: 10,
     backgroundColor: uiPalette.border
   }
 });
