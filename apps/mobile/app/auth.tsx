@@ -62,8 +62,11 @@ export default function AuthScreen() {
     }
 
     if (!profileQuery.isSuccess || profileNeedsSetup) {
-      const nextRoute = returnTo ? { pathname: "/profile-setup", params: { returnTo } } : "/profile-setup";
-      router.replace(nextRoute);
+      if (returnTo) {
+        router.replace({ pathname: "/profile-setup", params: { returnTo } });
+        return;
+      }
+      router.replace("/profile-setup");
     }
   }, [isAuthenticated, isHydrating, profileNeedsSetup, profileQuery.isLoading, profileQuery.isSuccess, returnTo, router]);
 

@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiClient } from "../src/api/client";
 import { customerProfileQueryKey, isCustomerProfileComplete, useCustomerProfileQuery } from "../src/auth/profile";
 import { useAuthSession } from "../src/auth/session";
-import { Button, uiPalette, uiTypography } from "../src/ui/system";
+import { GlassActionPill } from "../src/cart/GlassActionPill";
+import { uiPalette, uiTypography } from "../src/ui/system";
 
 type ReturnToPath = "cart" | "/(tabs)/home" | "/(tabs)/orders" | "/(tabs)/account";
 
@@ -167,19 +168,13 @@ export default function ProfileSetupScreen() {
         </View>
       </View>
 
-      <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 16) + 10 }]}>
-        {profileQuery.isError ? (
-          <Text style={styles.errorText}>Profile lookup failed. You can still continue or skip.</Text>
-        ) : null}
-        <Button
-          label={saveProfileMutation.isPending ? "Saving…" : "Continue"}
-          onPress={handleContinue}
-          disabled={saveProfileMutation.isPending || name.trim().length === 0}
-        />
-        <View style={styles.skipRow}>
-          <Button label="Skip for now" variant="secondary" onPress={handleSkip} disabled={saveProfileMutation.isPending} />
+      <View style={[styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {profileQuery.isError ? (
+            <Text style={styles.errorText}>Profile lookup failed. You can still continue or skip.</Text>
+          ) : null}
+          <GlassActionPill label={saveProfileMutation.isPending ? "Saving…" : "Continue"} onPress={handleContinue} tone="dark" disabled={saveProfileMutation.isPending || name.trim().length === 0} />
+          <GlassActionPill label="Skip for now" onPress={handleSkip} />
         </View>
-      </View>
     </View>
   );
 }
@@ -265,11 +260,10 @@ const styles = StyleSheet.create({
   },
   bottomDock: {
     paddingHorizontal: 20,
-    paddingTop: 16,
-    gap: 10
-  },
-  skipRow: {
-    marginTop: 4
+    paddingTop: 18,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: uiPalette.border,
+    gap: 12
   },
   errorText: {
     marginBottom: 2,

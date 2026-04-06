@@ -104,9 +104,8 @@ export default function AccountScreen() {
   const loyaltyBalance = loyaltyBalanceQuery.data;
   const identity = identityQuery.data;
   const accountGreeting =
-    identity?.displayName?.trim() ||
     identity?.name?.trim() ||
-    identity?.email?.split("@")[0] ||
+    identity?.displayName?.trim() ||
     "Welcome back";
   const headerOffset = insets.top + ACCOUNT_HEADER_HEIGHT;
   const contentBottomInset = Math.max(getTabBarBottomOffset(insets.bottom > 0) + TAB_BAR_HEIGHT + 24 - insets.bottom, 24);
@@ -186,7 +185,7 @@ export default function AccountScreen() {
         <View style={styles.listSection}>
           <View style={styles.pageList}>
             <AccountPageRow label="Rewards activity" onPress={() => openAccountRoute("/account/rewards")} />
-            <AccountPageRow label="Alerts" onPress={() => openAccountRoute("/account/alerts")} />
+            <AccountPageRow label="Profile" onPress={() => openAccountRoute("/account/alerts")} />
             <AccountPageRow label="Session" onPress={() => openAccountRoute("/account/session")} />
             <AccountPageRow label="Settings" isLast onPress={() => openAccountRoute("/account/settings")} />
           </View>
