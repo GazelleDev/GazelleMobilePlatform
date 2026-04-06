@@ -7,10 +7,10 @@ import {
   type AppConfig
 } from "@gazelle/contracts-catalog";
 
-export const DEFAULT_BRAND_ID = "gazelle-default";
+export const DEFAULT_BRAND_ID = "rawaqcoffee";
 export const DEFAULT_LOCATION_ID = "flagship-01";
-export const DEFAULT_BRAND_NAME = "Gazelle Coffee";
-export const DEFAULT_LOCATION_NAME = "Gazelle Coffee Flagship";
+export const DEFAULT_BRAND_NAME = "Rawaq Coffee";
+export const DEFAULT_LOCATION_NAME = "Rawaq Coffee Flagship";
 export const DEFAULT_MARKET_LABEL = "Ann Arbor, MI";
 export const DEFAULT_STORE_HOURS = "Daily · 7:00 AM - 6:00 PM";
 
