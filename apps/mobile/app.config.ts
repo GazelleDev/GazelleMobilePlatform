@@ -54,11 +54,20 @@ const config: ExpoConfig = {
   version: process.env.APP_VERSION ?? "1.0.0",
   orientation: "portrait",
   userInterfaceStyle: "light",
+  updates: {
+    url: "https://u.expo.dev/18320a67-0f15-4860-9f84-845eb0f4c31c"
+  },
   ios: {
     supportsTablet: false,
     bundleIdentifier: resolveBundleIdentifier(variant),
     usesAppleSignIn: true,
-    associatedDomains: resolveAssociatedDomains()
+    associatedDomains: resolveAssociatedDomains(),
+    runtimeVersion: "1.0.0"
+  },
+  android: {
+    runtimeVersion: {
+      policy: "appVersion"
+    }
   },
   experiments: {
     typedRoutes: true
