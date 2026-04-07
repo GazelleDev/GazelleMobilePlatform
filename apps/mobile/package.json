@@ -4,10 +4,12 @@
   "private": true,
   "main": "./index.js",
   "scripts": {
+    "build:workspace-deps": "cd ../.. && pnpm --filter @gazelle/contracts-core build && pnpm --filter @gazelle/contracts-auth build && pnpm --filter @gazelle/contracts-catalog build && pnpm --filter @gazelle/contracts-orders build && pnpm --filter @gazelle/contracts-loyalty build && pnpm --filter @gazelle/contracts-notifications build && pnpm --filter @gazelle/design-tokens build && pnpm --filter @gazelle/sdk-mobile build",
     "dev": "expo start --clear",
     "ios": "expo run:ios",
     "android": "expo run:android",
     "build": "echo 'Use EAS build for mobile artifacts'",
+    "postinstall": "pnpm run build:workspace-deps",
     "release:check": "node scripts/validate-release-env.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint app src test --max-warnings=0",
