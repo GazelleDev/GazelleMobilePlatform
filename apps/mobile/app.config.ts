@@ -11,7 +11,7 @@ function resolveAppVariant(): AppVariant {
 }
 
 function resolveDisplayName(variant: AppVariant) {
-  const baseName = process.env.APP_DISPLAY_NAME_BASE ?? "LatteLink";
+  const baseName = process.env.APP_DISPLAY_NAME_BASE ?? "Rawaq Coffee";
   switch (variant) {
     case "production":
       return process.env.APP_DISPLAY_NAME ?? baseName;
