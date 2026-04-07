@@ -1,8 +1,10 @@
 import "react-native-gesture-handler";
 import "../global.css";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
+import * as SplashScreen from "expo-splash-screen";
 import { Stack } from "expo-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -22,7 +24,17 @@ const queryClient = new QueryClient({
   }
 });
 
+SplashScreen.preventAutoHideAsync();
+
 export default function RootLayout() {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      SplashScreen.hideAsync();
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
@@ -38,7 +50,7 @@ export default function RootLayout() {
                       contentStyle: { backgroundColor: uiPalette.background }
                     }}
                   >
-                    <Stack.Screen name="(tabs)" />
+                    <Stack.Screen name="(tabs)" options={{ animation: "none" }} />
                     <Stack.Screen
                       name="cart"
                       options={{
