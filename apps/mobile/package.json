@@ -53,6 +53,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@babel/plugin-transform-react-jsx": "^7.28.6",
     "@expo/ngrok": "^4.1.0",
     "@gazelle/config-eslint": "workspace:*",
     "@types/react": "^19.1.17",
