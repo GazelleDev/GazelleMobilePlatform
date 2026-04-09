@@ -1,29 +1,68 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DeleteAccountSheet } from "../../src/account/DeleteAccountSheet";
+import { AccountFloatingHeader, ACCOUNT_HEADER_HEIGHT } from "../../src/account/AccountFloatingHeader";
 import { getSettingsRecoveryCopy } from "../../src/auth/recovery";
 import { useAuthSession } from "../../src/auth/session";
 import { useCart } from "../../src/cart/store";
-import { AccountFloatingHeader, ACCOUNT_HEADER_HEIGHT } from "../../src/account/AccountFloatingHeader";
+import { resolvePrivacyPolicyUrl } from "../../src/legal/links";
 import { isMobileLoyaltyVisible, resolveAppConfigData, useAppConfigQuery } from "../../src/menu/catalog";
-import { Button, Card, Chip, GlassCard, ScreenScroll, SectionLabel, uiPalette, uiTypography } from "../../src/ui/system";
+import { Button, Chip, GlassCard, ScreenScroll, SectionLabel, uiPalette, uiTypography } from "../../src/ui/system";
 
-function DetailRow({
+function SettingsInfoRow({
   label,
   value,
-  showDivider = true
+  isLast = false
 }: {
   label: string;
   value: string;
-  showDivider?: boolean;
+  isLast?: boolean;
 }) {
   return (
-    <View style={[styles.detailRow, showDivider ? styles.detailRowDivider : null]}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+    <View style={styles.sectionRow}>
+      <View style={styles.sectionRowInner}>
+        <Text style={styles.sectionRowLabel}>{label}</Text>
+        <Text style={styles.sectionRowValue}>{value}</Text>
+      </View>
+      {isLast ? null : <View style={styles.sectionRowDivider} />}
     </View>
+  );
+}
+
+function SettingsActionRow({
+  label,
+  onPress,
+  disabled = false,
+  isLast = false,
+  tone = "default"
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  isLast?: boolean;
+  tone?: "default" | "danger";
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [styles.sectionRow, pressed && !disabled ? styles.sectionRowPressed : null]}
+    >
+      <View style={styles.sectionRowInner}>
+        <Text
+          style={[
+            styles.sectionRowLabel,
+            tone === "danger" ? styles.sectionRowLabelDanger : null,
+            disabled ? styles.sectionRowLabelDisabled : null
+          ]}
+        >
+          {label}
+        </Text>
+      </View>
+      {isLast ? null : <View style={styles.sectionRowDivider} />}
+    </Pressable>
   );
 }
 
@@ -36,6 +75,7 @@ export default function SettingsPage() {
   const appConfig = resolveAppConfigData(appConfigQuery.data);
   const loyaltyEnabled = isMobileLoyaltyVisible(appConfigQuery.data);
   const pushEnabled = appConfig.featureFlags.pushNotifications;
+  const privacyPolicyUrl = resolvePrivacyPolicyUrl();
   const headerOffset = insets.top + ACCOUNT_HEADER_HEIGHT;
   const [signOutPending, setSignOutPending] = useState(false);
   const [deleteAccountPending, setDeleteAccountPending] = useState(false);
@@ -80,6 +120,21 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleOpenPrivacyPolicy() {
+    setActionError(null);
+
+    if (!privacyPolicyUrl) {
+      setActionError("This build is missing its privacy policy link.");
+      return;
+    }
+
+    try {
+      await Linking.openURL(privacyPolicyUrl);
+    } catch {
+      setActionError("We couldn't open the privacy policy right now. Try again in a moment.");
+    }
+  }
+
   if (!isAuthenticated) {
     return (
       <View style={styles.screenShell}>
@@ -95,6 +150,22 @@ export default function SettingsPage() {
               style={styles.heroAction}
             />
           </GlassCard>
+
+          {actionError ? <Text style={styles.sectionError}>{actionError}</Text> : null}
+
+          <View style={styles.settingsSection}>
+            <SectionLabel label="Legal" />
+            <View style={styles.sectionList}>
+              <SettingsActionRow
+                label="Privacy Policy"
+                onPress={() => {
+                  void handleOpenPrivacyPolicy();
+                }}
+                disabled={!privacyPolicyUrl}
+                isLast
+              />
+            </View>
+          </View>
         </ScreenScroll>
 
         <AccountFloatingHeader title="Settings" insetTop={insets.top} onBack={goBack} />
@@ -116,49 +187,52 @@ export default function SettingsPage() {
           </View>
         </GlassCard>
 
-        <Card style={styles.sectionCard}>
+        {actionError ? <Text style={styles.sectionError}>{actionError}</Text> : null}
+
+        <View style={styles.settingsSection}>
           <SectionLabel label="App" />
-          <View style={styles.detailGroup}>
-            <DetailRow label="Location" value={appConfig.brand.locationName} />
-            <DetailRow label="Alerts" value={pushEnabled ? "Enabled" : "Disabled"} />
-            <DetailRow label="Loyalty" value={loyaltyEnabled ? "Enabled" : "Disabled"} showDivider={false} />
+          <View style={styles.sectionList}>
+            <SettingsInfoRow label="Location" value={appConfig.brand.locationName} />
+            <SettingsInfoRow label="Alerts" value={pushEnabled ? "Enabled" : "Disabled"} />
+            <SettingsInfoRow label="Loyalty" value={loyaltyEnabled ? "Enabled" : "Disabled"} isLast />
           </View>
-        </Card>
+        </View>
 
-        {actionError ? (
-          <Card style={styles.feedbackCard}>
-            <Text style={styles.feedbackText}>{actionError}</Text>
-          </Card>
-        ) : null}
+        <View style={styles.settingsSection}>
+          <SectionLabel label="Legal" />
+          <View style={styles.sectionList}>
+            <SettingsActionRow
+              label="Privacy Policy"
+              onPress={() => {
+                void handleOpenPrivacyPolicy();
+              }}
+              disabled={!privacyPolicyUrl}
+              isLast
+            />
+          </View>
+        </View>
 
-        <Card style={styles.deleteAccountCard}>
+        <View style={styles.settingsSection}>
           <SectionLabel label="Account" />
-          <Text style={styles.deleteAccountBody}>
-            Permanently remove this account and everything attached to it from the app.
-          </Text>
-          <Button
-            label={deleteAccountPending ? "Deleting Account…" : "Delete Account"}
-            variant="ghost"
-            onPress={() => {
-              setDeleteAccountSheetOpen(true);
-            }}
-            disabled={deleteAccountPending || signOutPending}
-            style={styles.deleteAccountButton}
-            labelStyle={styles.deleteAccountButtonLabel}
-          />
-        </Card>
-
-        <Card style={styles.signOutCard}>
-          <Button
-            label={signOutPending ? "Signing Out…" : "Sign Out"}
-            variant="ghost"
-            onPress={() => {
-              void handleSignOut();
-            }}
-            disabled={signOutPending || deleteAccountPending}
-            style={styles.signOutButton}
-          />
-        </Card>
+          <View style={styles.sectionList}>
+            <SettingsActionRow
+              label={deleteAccountPending ? "Deleting Account…" : "Delete Account"}
+              onPress={() => {
+                setDeleteAccountSheetOpen(true);
+              }}
+              disabled={deleteAccountPending || signOutPending}
+              tone="danger"
+            />
+            <SettingsActionRow
+              label={signOutPending ? "Signing Out…" : "Sign Out"}
+              onPress={() => {
+                void handleSignOut();
+              }}
+              disabled={signOutPending || deleteAccountPending}
+              isLast
+            />
+          </View>
+        </View>
       </ScreenScroll>
 
       <AccountFloatingHeader title="Settings" insetTop={insets.top} onBack={goBack} />
@@ -214,69 +288,62 @@ const styles = StyleSheet.create({
     marginTop: 18,
     alignSelf: "flex-start"
   },
-  sectionCard: {
-    marginTop: 14
+  settingsSection: {
+    marginTop: 28
   },
-  feedbackCard: {
-    marginTop: 14
-  },
-  feedbackText: {
+  sectionError: {
+    marginTop: 10,
     fontSize: 14,
     lineHeight: 21,
     color: uiPalette.danger
   },
-  detailGroup: {
-    marginTop: 14
+  sectionList: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: uiPalette.border,
+    borderBottomWidth: 1,
+    borderBottomColor: uiPalette.border
   },
-  detailRow: {
-    minHeight: 50,
+  sectionRow: {
+    minHeight: 68
+  },
+  sectionRowPressed: {
+    opacity: 0.72
+  },
+  sectionRowInner: {
+    minHeight: 68,
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 16
   },
-  detailRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: uiPalette.border
+  sectionRowDivider: {
+    marginHorizontal: 12,
+    height: 1,
+    backgroundColor: uiPalette.border
   },
-  detailLabel: {
-    fontSize: 14,
+  sectionRowLabel: {
+    flex: 1,
+    fontSize: 15,
     lineHeight: 20,
-    color: uiPalette.textSecondary
-  },
-  detailValue: {
-    flexShrink: 1,
-    textAlign: "right",
-    fontSize: 14,
-    lineHeight: 20,
+    letterSpacing: 1,
+    textTransform: "uppercase",
     color: uiPalette.text,
     fontFamily: uiTypography.displayFamily,
     fontWeight: "600"
   },
-  deleteAccountCard: {
-    marginTop: 14
-  },
-  deleteAccountBody: {
-    marginTop: 10,
-    fontSize: 14,
-    lineHeight: 21,
-    color: uiPalette.textSecondary
-  },
-  deleteAccountButton: {
-    marginTop: 18,
-    alignSelf: "stretch",
-    borderColor: "rgba(180, 91, 79, 0.2)",
-    backgroundColor: "rgba(180, 91, 79, 0.08)"
-  },
-  deleteAccountButtonLabel: {
+  sectionRowLabelDanger: {
     color: uiPalette.danger
   },
-  signOutCard: {
-    marginTop: 14,
-    marginBottom: 8,
-    alignItems: "stretch"
+  sectionRowLabelDisabled: {
+    color: uiPalette.textMuted
   },
-  signOutButton: {
-    alignSelf: "stretch"
+  sectionRowValue: {
+    flexShrink: 1,
+    textAlign: "right",
+    fontSize: 14,
+    lineHeight: 20,
+    color: uiPalette.textSecondary
   }
 });

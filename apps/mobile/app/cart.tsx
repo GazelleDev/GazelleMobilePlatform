@@ -42,25 +42,6 @@ function SummaryRow({
   );
 }
 
-function StatusBanner({
-  message,
-  tone = "info"
-}: {
-  message: string;
-  tone?: "info" | "warning";
-}) {
-  return (
-    <View style={[styles.banner, tone === "warning" ? styles.bannerWarning : null]}>
-      <Ionicons
-        name={tone === "warning" ? "alert-circle-outline" : "information-circle-outline"}
-        size={16}
-        color={tone === "warning" ? uiPalette.warning : uiPalette.accent}
-      />
-      <Text style={[styles.bannerText, tone === "warning" ? styles.bannerTextWarning : null]}>{message}</Text>
-    </View>
-  );
-}
-
 function canUseLiquidGlassSheets() {
   if (Platform.OS !== "ios") return false;
 
@@ -389,13 +370,6 @@ export default function CartModalScreen() {
             </View>
           ) : (
             <>
-              {retryableOrder ? (
-                <StatusBanner
-                  message={`Payment for order ${retryableOrder.pickupCode} did not complete. You can retry without rebuilding the bag.`}
-                  tone="warning"
-                />
-              ) : null}
-
               <View style={styles.sectionBlock}>
                 <SectionHeading
                   eyebrow="Bag"
@@ -456,8 +430,6 @@ export default function CartModalScreen() {
                   })}
                 </View>
               </View>
-
-              {checkoutUnavailableMessage ? <StatusBanner message={checkoutUnavailableMessage} tone="warning" /> : null}
 
               <View style={styles.checkoutDeck}>
                 {storeConfig ? (
@@ -628,31 +600,6 @@ const styles = StyleSheet.create({
     color: uiPalette.textSecondary,
     maxWidth: 340,
     textAlign: "center"
-  },
-  banner: {
-    marginTop: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 18,
-    backgroundColor: uiPalette.surfaceMuted,
-    borderWidth: 1,
-    borderColor: uiPalette.border,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10
-  },
-  bannerWarning: {
-    backgroundColor: "rgba(176, 122, 58, 0.08)",
-    borderColor: "rgba(176, 122, 58, 0.18)"
-  },
-  bannerText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 19,
-    color: uiPalette.textSecondary
-  },
-  bannerTextWarning: {
-    color: uiPalette.text
   },
   sectionBlock: {
     marginTop: 4

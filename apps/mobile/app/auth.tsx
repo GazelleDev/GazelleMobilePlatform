@@ -71,6 +71,14 @@ export default function AuthScreen() {
   }, [isAuthenticated, isHydrating, profileNeedsSetup, profileQuery.isLoading, profileQuery.isSuccess, returnTo, router]);
 
   useEffect(() => {
+    if (!isAuthenticated || isHydrating || profileQuery.isLoading || !profileQuery.isSuccess || !profileComplete) {
+      return;
+    }
+
+    continueIntoApp();
+  }, [continueIntoApp, isAuthenticated, isHydrating, profileComplete, profileQuery.isLoading, profileQuery.isSuccess]);
+
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
       const available = await AppleAuthentication.isAvailableAsync();
@@ -118,7 +126,7 @@ export default function AuthScreen() {
 
   function continueIntoApp() {
     const destination = returnTo === "cart" ? "/cart" : returnTo ?? "/(tabs)/menu";
-    router.replace(destination);
+    router.dismissTo(destination);
   }
 
   if (isHydrating) {
@@ -163,6 +171,14 @@ export default function AuthScreen() {
               <Text style={styles.title}>Finish your signup.</Text>
               <Text style={styles.body}>We need a profile setup step before you can enter the app.</Text>
             </>
+          ) : profileComplete ? (
+            <>
+              <Text style={styles.title}>Returning…</Text>
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color={uiPalette.primary} />
+                <Text style={styles.body}>Closing this sheet.</Text>
+              </View>
+            </>
           ) : (
             <>
               <Text style={styles.title}>You’re signed in.</Text>
@@ -185,6 +201,8 @@ export default function AuthScreen() {
             <Button label="Open Profile Setup" onPress={() => router.replace("/profile-setup")} />
           ) : profileQuery.isError ? (
             <Button label="Open Profile Setup" onPress={() => router.replace("/profile-setup")} />
+          ) : profileComplete ? (
+            <Button label="Returning…" variant="secondary" disabled />
           ) : (
             <Button label={getReturnLabel(returnTo)} onPress={continueIntoApp} />
           )

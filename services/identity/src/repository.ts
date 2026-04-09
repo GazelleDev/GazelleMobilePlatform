@@ -30,6 +30,8 @@ type PersistedSessionRow = {
 type PersistedIdentityUserRow = {
   user_id: string;
   apple_sub: string | null;
+  apple_client_id: string | null;
+  apple_refresh_token: string | null;
   email: string | null;
   name: string | null;
   display_name: string | null;
@@ -147,6 +149,12 @@ export type IdentityUserRecord = {
 
 type CustomerAuthMethod = "apple" | "passkey" | "magic-link";
 
+export type AppleAccountRecord = {
+  appleSub: string;
+  clientId?: string;
+  refreshToken?: string;
+};
+
 export type MagicLinkRecord = {
   token: string;
   email: string;
@@ -171,8 +179,14 @@ export type IdentityRepository = {
     session: StoredSession,
     authMethod: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh"
   ): Promise<void>;
-  findOrCreateUserByAppleSub(appleSub: string, email?: string): Promise<string>;
+  findOrCreateUserByAppleSub(input: {
+    appleSub: string;
+    email?: string;
+    clientId: string;
+    refreshToken?: string;
+  }): Promise<{ userId: string; hasRefreshToken: boolean }>;
   findOrCreateUserByEmail(email: string): Promise<string>;
+  getAppleAccountForUser(userId: string): Promise<AppleAccountRecord | undefined>;
   getUserById(userId: string): Promise<IdentityUserRecord | undefined>;
   deleteCustomerAccount(userId: string): Promise<boolean>;
   updateCustomerProfile(
@@ -481,6 +495,8 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
   const passkeyChallengesByFlow = new Map<"register" | "auth", PasskeyChallengeRecord[]>();
   const passkeyCredentialsById = new Map<string, PasskeyCredentialRecord>();
   const usersById = new Map<string, IdentityUserRecord>();
+  const appleRefreshTokenByUserId = new Map<string, string>();
+  const appleClientIdByUserId = new Map<string, string>();
   const userIdByAppleSub = new Map<string, string>();
   const userIdByEmail = new Map<string, string>();
   const magicLinksByToken = new Map<string, MagicLinkRecord>();
@@ -522,17 +538,17 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
       sessionsByAccessToken.set(session.accessToken, { session });
       accessTokenByRefreshToken.set(session.refreshToken, session.accessToken);
     },
-    async findOrCreateUserByAppleSub(appleSub, email) {
-      const normalizedEmail = email ? normalizeEmail(email) : undefined;
+    async findOrCreateUserByAppleSub(input) {
+      const normalizedEmail = input.email ? normalizeEmail(input.email) : undefined;
       const existingUserId =
-        userIdByAppleSub.get(appleSub) ?? (normalizedEmail ? userIdByEmail.get(normalizedEmail) : undefined);
+        userIdByAppleSub.get(input.appleSub) ?? (normalizedEmail ? userIdByEmail.get(normalizedEmail) : undefined);
       const userId = existingUserId ?? randomUUID();
       const existingUser = usersById.get(userId);
       const now = new Date().toISOString();
 
       usersById.set(userId, {
         userId,
-        appleSub,
+        appleSub: input.appleSub,
         email: normalizedEmail ?? existingUser?.email,
         name: existingUser?.name,
         displayName: existingUser?.displayName,
@@ -542,12 +558,20 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
         createdAt: existingUser?.createdAt ?? now,
         updatedAt: now
       });
-      userIdByAppleSub.set(appleSub, userId);
+      userIdByAppleSub.set(input.appleSub, userId);
       if (normalizedEmail) {
         userIdByEmail.set(normalizedEmail, userId);
       }
 
-      return userId;
+      if (input.refreshToken) {
+        appleRefreshTokenByUserId.set(userId, input.refreshToken);
+        appleClientIdByUserId.set(userId, input.clientId);
+      }
+
+      return {
+        userId,
+        hasRefreshToken: appleRefreshTokenByUserId.has(userId)
+      };
     },
     async findOrCreateUserByEmail(email) {
       const normalizedEmail = normalizeEmail(email);
@@ -583,6 +607,18 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
     async getUserById(userId) {
       return usersById.get(userId);
     },
+    async getAppleAccountForUser(userId) {
+      const user = usersById.get(userId);
+      if (!user?.appleSub) {
+        return undefined;
+      }
+
+      return {
+        appleSub: user.appleSub,
+        clientId: appleClientIdByUserId.get(userId),
+        refreshToken: appleRefreshTokenByUserId.get(userId)
+      };
+    },
     async deleteCustomerAccount(userId) {
       const existing = usersById.get(userId);
       if (!existing) {
@@ -598,6 +634,8 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
       if (existing.email) {
         userIdByEmail.delete(existing.email);
       }
+      appleRefreshTokenByUserId.delete(userId);
+      appleClientIdByUserId.delete(userId);
 
       for (const [accessToken, entry] of sessionsByAccessToken.entries()) {
         if (entry.session.userId !== userId) {
@@ -1111,15 +1149,15 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
           .execute();
       }
     },
-    async findOrCreateUserByAppleSub(appleSub, email) {
-      const normalizedEmail = email ? normalizeEmail(email) : undefined;
+    async findOrCreateUserByAppleSub(input) {
+      const normalizedEmail = input.email ? normalizeEmail(input.email) : undefined;
       const now = new Date().toISOString();
 
       return db.transaction().execute(async (trx) => {
         const existingAppleRow = await trx
           .selectFrom("identity_users")
-          .select(["user_id", "email"])
-          .where("apple_sub", "=", appleSub)
+          .select(["user_id", "email", "apple_refresh_token"])
+          .where("apple_sub", "=", input.appleSub)
           .executeTakeFirst();
 
         if (existingAppleRow) {
@@ -1135,6 +1173,12 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
                 .updateTable("identity_users")
                 .set({
                   email: normalizedEmail,
+                  ...(input.refreshToken
+                    ? {
+                        apple_client_id: input.clientId,
+                        apple_refresh_token: input.refreshToken
+                      }
+                    : {}),
                   updated_at: now
                 })
                 .where("user_id", "=", existingAppleRow.user_id)
@@ -1144,19 +1188,28 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
             await trx
               .updateTable("identity_users")
               .set({
+                ...(input.refreshToken
+                  ? {
+                      apple_client_id: input.clientId,
+                      apple_refresh_token: input.refreshToken
+                    }
+                  : {}),
                 updated_at: now
               })
               .where("user_id", "=", existingAppleRow.user_id)
               .execute();
           }
 
-          return existingAppleRow.user_id;
+          return {
+            userId: existingAppleRow.user_id,
+            hasRefreshToken: Boolean(input.refreshToken ?? existingAppleRow.apple_refresh_token)
+          };
         }
 
         if (normalizedEmail) {
           const existingEmailRow = await trx
             .selectFrom("identity_users")
-            .select(["user_id"])
+            .select(["user_id", "apple_refresh_token"])
             .where("email", "=", normalizedEmail)
             .executeTakeFirst();
 
@@ -1164,13 +1217,22 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
             await trx
               .updateTable("identity_users")
               .set({
-                apple_sub: appleSub,
+                apple_sub: input.appleSub,
+                ...(input.refreshToken
+                  ? {
+                      apple_client_id: input.clientId,
+                      apple_refresh_token: input.refreshToken
+                    }
+                  : {}),
                 updated_at: now
               })
               .where("user_id", "=", existingEmailRow.user_id)
               .execute();
 
-            return existingEmailRow.user_id;
+            return {
+              userId: existingEmailRow.user_id,
+              hasRefreshToken: Boolean(input.refreshToken ?? existingEmailRow.apple_refresh_token)
+            };
           }
         }
 
@@ -1181,26 +1243,46 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
             .insertInto("identity_users")
             .values({
               user_id: userId,
-              apple_sub: appleSub,
+              apple_sub: input.appleSub,
+              apple_client_id: input.refreshToken ? input.clientId : null,
+              apple_refresh_token: input.refreshToken ?? null,
               email: normalizedEmail ?? null
             })
             .execute();
-          return userId;
+          return {
+            userId,
+            hasRefreshToken: Boolean(input.refreshToken)
+          };
         } catch {
           const concurrentAppleRow = await trx
             .selectFrom("identity_users")
-            .select(["user_id"])
-            .where("apple_sub", "=", appleSub)
+            .select(["user_id", "apple_refresh_token"])
+            .where("apple_sub", "=", input.appleSub)
             .executeTakeFirst();
 
           if (concurrentAppleRow) {
-            return concurrentAppleRow.user_id;
+            if (input.refreshToken) {
+              await trx
+                .updateTable("identity_users")
+                .set({
+                  apple_client_id: input.clientId,
+                  apple_refresh_token: input.refreshToken,
+                  updated_at: now
+                })
+                .where("user_id", "=", concurrentAppleRow.user_id)
+                .execute();
+            }
+
+            return {
+              userId: concurrentAppleRow.user_id,
+              hasRefreshToken: Boolean(input.refreshToken ?? concurrentAppleRow.apple_refresh_token)
+            };
           }
 
           if (normalizedEmail) {
             const concurrentEmailRow = await trx
               .selectFrom("identity_users")
-              .select(["user_id"])
+              .select(["user_id", "apple_refresh_token"])
               .where("email", "=", normalizedEmail)
               .executeTakeFirst();
 
@@ -1208,19 +1290,45 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
               await trx
                 .updateTable("identity_users")
                 .set({
-                  apple_sub: appleSub,
+                  apple_sub: input.appleSub,
+                  ...(input.refreshToken
+                    ? {
+                        apple_client_id: input.clientId,
+                        apple_refresh_token: input.refreshToken
+                      }
+                    : {}),
                   updated_at: now
                 })
                 .where("user_id", "=", concurrentEmailRow.user_id)
                 .execute();
 
-              return concurrentEmailRow.user_id;
+              return {
+                userId: concurrentEmailRow.user_id,
+                hasRefreshToken: Boolean(input.refreshToken ?? concurrentEmailRow.apple_refresh_token)
+              };
             }
           }
 
           throw new Error("Failed to resolve identity user for Apple Sign-In");
         }
       });
+    },
+    async getAppleAccountForUser(userId) {
+      const row = await db
+        .selectFrom("identity_users")
+        .select(["apple_sub", "apple_client_id", "apple_refresh_token"])
+        .where("user_id", "=", userId)
+        .executeTakeFirst();
+
+      if (!row?.apple_sub) {
+        return undefined;
+      }
+
+      return {
+        appleSub: row.apple_sub,
+        clientId: row.apple_client_id ?? undefined,
+        refreshToken: row.apple_refresh_token ?? undefined
+      };
     },
     async findOrCreateUserByEmail(email) {
       const normalizedEmail = normalizeEmail(email);

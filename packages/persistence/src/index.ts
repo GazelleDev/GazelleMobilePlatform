@@ -118,6 +118,8 @@ export interface OrdersPaymentIdempotencyTable {
 export interface IdentityUserTable {
   user_id: string;
   apple_sub: string | null;
+  apple_client_id: string | null;
+  apple_refresh_token: string | null;
   email: string | null;
   name: string | null;
   display_name: string | null;
@@ -535,6 +537,8 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
     CREATE TABLE IF NOT EXISTS identity_users (
       user_id UUID PRIMARY KEY,
       apple_sub TEXT UNIQUE,
+      apple_client_id TEXT,
+      apple_refresh_token TEXT,
       email TEXT,
       name TEXT,
       display_name TEXT,
@@ -544,6 +548,16 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE identity_users
+    ADD COLUMN IF NOT EXISTS apple_client_id TEXT
+  `.execute(trx);
+
+  await sql`
+    ALTER TABLE identity_users
+    ADD COLUMN IF NOT EXISTS apple_refresh_token TEXT
   `.execute(trx);
 
   await sql`

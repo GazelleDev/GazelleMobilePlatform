@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MailSender } from "../src/mail.js";
 import { buildApp } from "../src/app.js";
 import { createInMemoryIdentityRepository } from "../src/repository.js";
+import { createSignedAppleIdentityToken, installAppleAuthEnv, installAppleAuthFetchMock } from "./apple-test-helpers.js";
 
 function createCapturingMailSender() {
   const sent: Array<{ to: string; magicLinkUrl: string }> = [];
@@ -24,13 +25,12 @@ function extractTokenFromUrl(url: string) {
   return token;
 }
 
-function createFakeJwt(payload: Record<string, unknown>) {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  return `${header}.${body}.signature`;
-}
-
 describe("magic link auth", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
   it("stores an unconsumed token on request in log-compatible mode", async () => {
     const repository = createInMemoryIdentityRepository();
     const { sender, sent } = createCapturingMailSender();
@@ -192,12 +192,15 @@ describe("magic link auth", () => {
   });
 
   it("reuses the canonical Apple-backed user for magic-link verification on the same email", async () => {
+    installAppleAuthEnv();
+    installAppleAuthFetchMock();
     const repository = createInMemoryIdentityRepository();
     const { sender, sent } = createCapturingMailSender();
     const app = await buildApp({ repository, mailSender: sender });
-    const appleToken = createFakeJwt({
+    const appleToken = createSignedAppleIdentityToken({
       sub: "apple-user-merge",
-      email: "owner@gazellecoffee.com"
+      email: "owner@gazellecoffee.com",
+      nonce: "apple-magic-link"
     });
 
     const appleExchange = await app.inject({

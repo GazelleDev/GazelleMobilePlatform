@@ -54,6 +54,9 @@ Optional values:
 - `IOS_ASSOCIATED_DOMAINS`
 - `EXPO_PUBLIC_CATALOG_SERVICE_BASE_URL`
 - `EXPO_PUBLIC_CATALOG_API_BASE_URL`
+- `EXPO_PUBLIC_PRIVACY_POLICY_URL`
+  - defaults to `https://lattelink.da0ud.me/privacy-policy`
+  - set it only if a tenant or release needs a different public policy URL
 
 ## Recommended Matrix
 
@@ -99,6 +102,7 @@ The preflight validates that the env is complete and catches common mistakes suc
 - wrong bundle identifier for the profile
 - `beta` or `production` pointing to localhost or non-HTTPS API URLs
 - malformed Apple Pay merchant identifiers
+- missing or invalid in-app privacy policy URLs
 
 Then run the actual EAS build:
 
@@ -115,6 +119,7 @@ Before creating a `beta` or `production` build:
 - run `pnpm --filter @gazelle/mobile release:check -- <profile>`
 - confirm the target API base URL is correct
 - confirm the Apple Pay merchant identifier matches the target environment
+- confirm the privacy policy URL is live and public
 - confirm the bundle identifier matches the provisioning target
 - confirm the app display name matches the intended lane
 - confirm the build profile matches the destination

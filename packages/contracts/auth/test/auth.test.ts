@@ -26,12 +26,12 @@ describe("contracts-auth", () => {
     expect(data.authorizationCode).toBe("code");
   });
 
-  it("accepts legacy apple exchange payloads that only provide nonce", () => {
-    const data = appleExchangeRequestSchema.parse({
-      nonce: "legacy-nonce"
-    });
-
-    expect(data.nonce).toBe("legacy-nonce");
+  it("rejects apple exchange payloads without the Apple tokens", () => {
+    expect(() =>
+      appleExchangeRequestSchema.parse({
+        nonce: "legacy-nonce"
+      })
+    ).toThrowError();
   });
 
   it("accepts Google OAuth start payloads", () => {

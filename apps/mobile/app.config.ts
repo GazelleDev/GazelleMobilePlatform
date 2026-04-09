@@ -4,6 +4,7 @@ type AppVariant = "internal" | "beta" | "production";
 const DEFAULT_APP_VARIANT: AppVariant = "beta";
 const DEFAULT_BETA_BUNDLE_IDENTIFIER = "com.lattelink.rawaq.beta";
 const DEFAULT_BETA_APPLE_PAY_MERCHANT_IDENTIFIER = "merchant.com.lattelink.rawaq.beta";
+const DEFAULT_PRIVACY_POLICY_URL = "https://lattelink.da0ud.me/privacy-policy";
 
 function resolveAppVariant(): AppVariant {
   const rawVariant = process.env.APP_VARIANT;
@@ -108,6 +109,7 @@ const config: ExpoConfig = {
     easBuildProfile: process.env.EAS_BUILD_PROFILE ?? null,
     apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? null,
     applePayMerchantIdentifier,
+    privacyPolicyUrl: process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL ?? DEFAULT_PRIVACY_POLICY_URL,
     eas: {
       projectId: "18320a67-0f15-4860-9f84-845eb0f4c31c"
     }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { AnimateIn, Stagger, StaggerItem } from "./AnimateIn";
 import { SectionEye, SectionH } from "./Features";
-import { contactEmail, demoHref } from "@/lib/site";
+import { contactEmail, demoHref, privacyPolicyPath } from "@/lib/site";
 import { LeadCapture } from "./LeadCapture";
 import { TrackedAnchor } from "./TrackedAnchor";
 
@@ -522,10 +522,11 @@ export function Footer() {
             { href: "#features", label: "Features" },
             { href: "#pricing", label: "Pricing" },
             { href: "#about", label: "About" },
+            { href: privacyPolicyPath, label: "Privacy" },
             { href: demoHref, label: "Contact" },
           ].map((l) => (
             <li key={l.href}>
-              <a
+              <Link
                 href={l.href}
                 style={{
                   fontSize: 13,
@@ -535,7 +536,7 @@ export function Footer() {
                 }}
               >
                 {l.label}
-              </a>
+              </Link>
             </li>
           ))}
         </ul>

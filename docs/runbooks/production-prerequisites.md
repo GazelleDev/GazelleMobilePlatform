@@ -50,7 +50,7 @@ Set in GitHub Environments (`dev`, `staging`, `prod`) and documented in internal
 - [ ] `APPLE_TEAM_ID`
 - [ ] `APPLE_KEY_ID`
 - [ ] `APPLE_PRIVATE_KEY`
-- [ ] `APPLE_SERVICE_ID`
+- [ ] `APPLE_CLIENT_ID` or `APPLE_ALLOWED_CLIENT_IDS`
 - [ ] `APPLE_MERCHANT_ID`
 - [ ] `CLOVER_APP_ID`
 - [ ] `CLOVER_APP_SECRET`

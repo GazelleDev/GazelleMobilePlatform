@@ -36,6 +36,13 @@ import {
   refreshRequestSchema
 } from "@gazelle/contracts-auth";
 import { apiErrorSchema, authSessionSchema } from "@gazelle/contracts-core";
+import {
+  AppleAuthError,
+  exchangeAppleAuthorizationCode,
+  loadAppleAuthConfig,
+  revokeAppleRefreshToken,
+  verifyAppleIdentityToken
+} from "./apple.js";
 import { createIdentityRepository, type IdentityRepository } from "./repository.js";
 import { createMailSender, type MailSender } from "./mail.js";
 import { provisionOwnerAccess } from "./provisioning.js";
@@ -94,24 +101,6 @@ function toPositiveInteger(value: string | undefined, fallback: number) {
   }
 
   return Math.floor(parsed);
-}
-
-function extractAppleTokenClaims(identityToken: string): { sub?: string; email?: string } {
-  try {
-    const parts = identityToken.split(".");
-    if (parts.length !== 3 || !parts[1]) {
-      return {};
-    }
-
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
-
-    return {
-      sub: typeof payload.sub === "string" ? payload.sub : undefined,
-      email: typeof payload.email === "string" ? payload.email : undefined
-    };
-  } catch {
-    return {};
-  }
 }
 
 function buildMagicLinkUrl(baseUrl: string, token: string) {
@@ -561,7 +550,7 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
   const allowDevOperatorAccess =
     options.allowDevOperatorAccess ??
     (process.env.ALLOW_DEV_OPERATOR_LOGIN === "true" || process.env.NODE_ENV !== "production");
-  const appleSignInVerificationEnabled = process.env.APPLE_SIGN_IN_VERIFY === "true";
+  const appleAuthConfig = loadAppleAuthConfig();
   const authWriteRateLimit = {
     max: toPositiveInteger(process.env.IDENTITY_RATE_LIMIT_AUTH_WRITE_MAX, defaultAuthWriteRateLimitMax),
     timeWindow: rateLimitWindowMs
@@ -614,60 +603,90 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
     async (request, reply) => {
       const input = appleExchangeRequestSchema.parse(request.body);
 
-      if (appleSignInVerificationEnabled) {
-        // Apple verification is intentionally fail-closed when explicitly enabled. Until full JWKS
-        // signature verification exists, we reject these requests instead of accepting unverifiable tokens.
-        app.log.warn(
-          {
-            requestId: request.id
-          },
-          "Apple Sign-In verification is enabled, but full JWT verification has not been implemented yet"
-        );
+      if (!appleAuthConfig) {
         return reply.status(503).send(
           buildApiError(
             request.id,
-            "APPLE_VERIFICATION_UNAVAILABLE",
-            "Apple Sign-In verification is enabled but not yet implemented"
+            "APPLE_SIGN_IN_NOT_CONFIGURED",
+            "Apple Sign-In is not configured on the identity service"
           )
         );
       }
 
-      if (input.identityToken) {
-        const claims = extractAppleTokenClaims(input.identityToken);
-        if (claims.sub) {
-          const userId = await repository.findOrCreateUserByAppleSub(claims.sub, claims.email);
-          return issueSession({
-            repository,
-            seed: input.nonce,
-            userId,
-            authMethod: "apple"
-          });
+      let verifiedIdentity: Awaited<ReturnType<typeof verifyAppleIdentityToken>>;
+      try {
+        verifiedIdentity = await verifyAppleIdentityToken({
+          config: appleAuthConfig,
+          identityToken: input.identityToken,
+          nonce: input.nonce
+        });
+      } catch (error) {
+        if (error instanceof AppleAuthError) {
+          request.log.warn(
+            {
+              requestId: request.id,
+              code: error.code
+            },
+            "Apple Sign-In identity verification failed"
+          );
+          const statusCode = error.code === "INVALID_APPLE_IDENTITY" ? 401 : 502;
+          return reply.status(statusCode).send(buildApiError(request.id, error.code, error.message));
         }
 
-        app.log.warn(
+        throw error;
+      }
+
+      let tokenResponse: Awaited<ReturnType<typeof exchangeAppleAuthorizationCode>>;
+      try {
+        tokenResponse = await exchangeAppleAuthorizationCode({
+          authorizationCode: input.authorizationCode,
+          clientId: verifiedIdentity.clientId,
+          config: appleAuthConfig
+        });
+      } catch (error) {
+        if (error instanceof AppleAuthError) {
+          request.log.warn(
+            {
+              requestId: request.id,
+              code: error.code
+            },
+            "Apple Sign-In token exchange failed"
+          );
+          return reply.status(502).send(buildApiError(request.id, error.code, error.message));
+        }
+
+        throw error;
+      }
+
+      const resolvedUser = await repository.findOrCreateUserByAppleSub({
+        appleSub: verifiedIdentity.sub,
+        email: verifiedIdentity.email,
+        clientId: verifiedIdentity.clientId,
+        refreshToken: tokenResponse.refresh_token
+      });
+      if (!resolvedUser.hasRefreshToken) {
+        request.log.error(
           {
-            requestId: request.id
+            requestId: request.id,
+            userId: resolvedUser.userId
           },
-          "Apple Sign-In token was present but did not contain a usable sub claim"
+          "Apple Sign-In did not produce a revocable refresh token"
         );
-        return reply.status(401).send(
+        return reply.status(502).send(
           buildApiError(
             request.id,
-            "INVALID_APPLE_IDENTITY",
-            "Apple Sign-In token is invalid or missing a required subject claim"
+            "APPLE_REFRESH_TOKEN_UNAVAILABLE",
+            "Apple Sign-In could not establish a revocable session for this account"
           )
         );
-      } else {
-        app.log.warn(
-          {
-            requestId: request.id
-          },
-          "Apple Sign-In request omitted identityToken"
-        );
-        return reply
-          .status(401)
-          .send(buildApiError(request.id, "INVALID_APPLE_IDENTITY", "Apple Sign-In identity token is required"));
       }
+
+      return issueSession({
+        repository,
+        seed: input.nonce,
+        userId: resolvedUser.userId,
+        authMethod: "apple"
+      });
     }
   );
 
@@ -1077,6 +1096,51 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
       const session = request.customerSession;
       if (!session) {
         return;
+      }
+
+      const appleAccount = await repository.getAppleAccountForUser(session.userId);
+      if (appleAccount?.appleSub) {
+        if (!appleAuthConfig) {
+          return reply.status(503).send(
+            buildApiError(
+              request.id,
+              "APPLE_SIGN_IN_NOT_CONFIGURED",
+              "Apple Sign-In is not configured on the identity service"
+            )
+          );
+        }
+
+        if (!appleAccount.refreshToken || !appleAccount.clientId) {
+          return reply.status(409).send(
+            buildApiError(
+              request.id,
+              "APPLE_REVOCATION_UNAVAILABLE",
+              "Apple Sign-In must be refreshed before this account can be deleted"
+            )
+          );
+        }
+
+        try {
+          await revokeAppleRefreshToken({
+            refreshToken: appleAccount.refreshToken,
+            clientId: appleAccount.clientId,
+            config: appleAuthConfig
+          });
+        } catch (error) {
+          if (error instanceof AppleAuthError) {
+            request.log.error(
+              {
+                requestId: request.id,
+                code: error.code,
+                userId: session.userId
+              },
+              "Apple Sign-In token revocation failed before account deletion"
+            );
+            return reply.status(502).send(buildApiError(request.id, error.code, error.message));
+          }
+
+          throw error;
+        }
       }
 
       const deleted = await repository.deleteCustomerAccount(session.userId);

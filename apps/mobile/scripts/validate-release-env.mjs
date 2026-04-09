@@ -130,6 +130,27 @@ if (merchantIdentifier) {
   }
 }
 
+const privacyPolicyUrl = process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL?.trim() ?? "https://lattelink.da0ud.me/privacy-policy";
+if (privacyPolicyUrl) {
+  let parsedPrivacyPolicyUrl;
+
+  try {
+    parsedPrivacyPolicyUrl = new URL(privacyPolicyUrl);
+  } catch {
+    errors.push(`EXPO_PUBLIC_PRIVACY_POLICY_URL must be a valid URL. Received: ${privacyPolicyUrl}`);
+  }
+
+  if (parsedPrivacyPolicyUrl) {
+    if ((profile === "beta" || profile === "production") && parsedPrivacyPolicyUrl.protocol !== "https:") {
+      errors.push(`${profile} builds must use an https privacy policy URL. Received: ${privacyPolicyUrl}`);
+    }
+
+    if (parsedPrivacyPolicyUrl.hostname.toLowerCase() === "example.com") {
+      errors.push(`EXPO_PUBLIC_PRIVACY_POLICY_URL cannot use placeholder example.com. Received: ${privacyPolicyUrl}`);
+    }
+  }
+}
+
 const associatedDomains = (process.env.IOS_ASSOCIATED_DOMAINS ?? "")
   .split(",")
   .map((entry) => entry.trim())

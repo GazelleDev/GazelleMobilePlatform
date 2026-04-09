@@ -471,8 +471,7 @@ export default function CheckoutScreen() {
           </View>
         ) : null}
 
-        <SectionLabel label="Checkout" />
-        <Text style={styles.headerTitle}>Review your order</Text>
+        <Text style={styles.headerTitle}>Checkout</Text>
         <Text style={styles.headerSubtitle}>
           {storeConfig
             ? storeConfig.isOpen
@@ -717,19 +716,21 @@ const styles = StyleSheet.create({
     color: uiPalette.textSecondary
   },
   headerTitle: {
-    marginTop: 10,
-    fontSize: 32,
-    lineHeight: 36,
-    fontWeight: "700",
-    letterSpacing: -0.8,
+    marginTop: 15,
+    fontSize: 19,
+    lineHeight: 24,
+    letterSpacing: 2,
+    textTransform: "uppercase",
     color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600"
   },
   headerSubtitle: {
-    marginTop: 8,
+    marginTop: 6,
+    marginBottom: 6,
     maxWidth: 320,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 18,
     color: uiPalette.textSecondary
   },
   content: {

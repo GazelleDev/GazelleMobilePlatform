@@ -1,16 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
-
-function createFakeAppleIdentityToken(payload: Record<string, unknown>) {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  return `${header}.${body}.signature`;
-}
-
-const defaultAppleIdentityToken = createFakeAppleIdentityToken({
-  sub: "apple-user-jwt",
-  email: "owner@gazellecoffee.com"
-});
+import { createSignedAppleIdentityToken, installAppleAuthEnv, installAppleAuthFetchMock } from "./apple-test-helpers.js";
 
 function decodeJwtPayload(token: string) {
   const [, encodedPayload] = token.split(".");
@@ -30,19 +20,26 @@ describe("identity JWT access tokens", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("issues JWT access tokens when JWT_SECRET is configured", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
     vi.stubEnv("JWT_SECRET", "12345678901234567890123456789012");
+    installAppleAuthEnv();
+    installAppleAuthFetchMock();
 
     const app = await buildApp();
     const response = await app.inject({
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createSignedAppleIdentityToken({
+          sub: "apple-user-jwt",
+          email: "owner@gazellecoffee.com",
+          nonce: "jwt-issuance"
+        }),
         authorizationCode: "auth-code",
         nonce: "jwt-issuance"
       }
@@ -76,12 +73,18 @@ describe("identity JWT access tokens", () => {
   });
 
   it("keeps issuing opaque access tokens when JWT_SECRET is unset", async () => {
+    installAppleAuthEnv();
+    installAppleAuthFetchMock();
     const app = await buildApp();
     const response = await app.inject({
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createSignedAppleIdentityToken({
+          sub: "apple-user-jwt",
+          email: "owner@gazellecoffee.com",
+          nonce: "opaque-fallback"
+        }),
         authorizationCode: "auth-code",
         nonce: "opaque-fallback"
       }

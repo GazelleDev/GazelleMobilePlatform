@@ -1,21 +1,37 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
+import { createSignedAppleIdentityToken, installAppleAuthEnv, installAppleAuthFetchMock } from "./apple-test-helpers.js";
 
-function createFakeAppleIdentityToken(payload: Record<string, unknown>) {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url");
-  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  return `${header}.${body}.signature`;
+function createAppleIdentityToken(
+  nonce: string,
+  payload: Partial<{
+    sub: string;
+    email: string;
+    aud: string;
+    iss: string;
+    expSecondsFromNow: number;
+  }> = {}
+) {
+  return createSignedAppleIdentityToken({
+    sub: payload.sub ?? "apple-user-health",
+    email: payload.email ?? "owner@gazellecoffee.com",
+    nonce,
+    ...(payload.aud ? { aud: payload.aud } : {}),
+    ...(payload.iss ? { iss: payload.iss } : {}),
+    ...(payload.expSecondsFromNow !== undefined ? { expSecondsFromNow: payload.expSecondsFromNow } : {})
+  });
 }
 
-const defaultAppleIdentityToken = createFakeAppleIdentityToken({
-  sub: "apple-user-health",
-  email: "owner@gazellecoffee.com"
-});
-
 describe("identity service", () => {
+  beforeEach(() => {
+    installAppleAuthEnv();
+    installAppleAuthFetchMock();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("responds on /health and /ready", async () => {
@@ -41,7 +57,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createAppleIdentityToken("nonce-value"),
         authorizationCode: "auth-code",
         nonce: "nonce-value"
       }
@@ -92,7 +108,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: createFakeAppleIdentityToken({
+        identityToken: createAppleIdentityToken("happy-path", {
           sub: "apple-user-happy-path",
           email: customerEmail
         }),
@@ -131,7 +147,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: createFakeAppleIdentityToken({
+        identityToken: createAppleIdentityToken("profile-completion", {
           sub: "apple-user-profile",
           email: "member@example.com"
         }),
@@ -197,7 +213,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createAppleIdentityToken("rotation"),
         authorizationCode: "auth-code",
         nonce: "rotation"
       }
@@ -285,7 +301,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: createFakeAppleIdentityToken({
+        identityToken: createAppleIdentityToken("delete-account", {
           sub: "apple-user-delete-account",
           email: "member@example.com"
         }),
@@ -322,7 +338,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: createFakeAppleIdentityToken({
+        identityToken: createAppleIdentityToken("delete-account-again", {
           sub: "apple-user-delete-account",
           email: "member@example.com"
         }),
@@ -346,7 +362,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createAppleIdentityToken("parallel-rotation"),
         authorizationCode: "auth-code",
         nonce: "parallel-rotation"
       }
@@ -412,7 +428,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createAppleIdentityToken("thirty-minute-access"),
         authorizationCode: "auth-code",
         nonce: "thirty-minute-access"
       }
@@ -455,7 +471,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createAppleIdentityToken("thirty-day-refresh"),
         authorizationCode: "auth-code",
         nonce: "thirty-day-refresh"
       }
@@ -479,7 +495,7 @@ describe("identity service", () => {
       method: "POST",
       url: "/v1/auth/apple/exchange",
       payload: {
-        identityToken: defaultAppleIdentityToken,
+        identityToken: createAppleIdentityToken("expired-refresh"),
         authorizationCode: "auth-code",
         nonce: "expired-refresh"
       }

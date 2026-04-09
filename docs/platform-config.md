@@ -6,6 +6,10 @@ Last updated: `2026-03-20`
 
 This repo now exposes a runtime app-config contract so the mobile app and backend can stop relying on hardcoded brand assumptions.
 
+Related architecture plan:
+
+- [`docs/architecture/mobile-screen-variant-plan.md`](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/architecture/mobile-screen-variant-plan.md)
+
 The current implementation is additive:
 
 - existing menu and store config behavior remains unchanged
