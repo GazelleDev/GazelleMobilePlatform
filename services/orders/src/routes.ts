@@ -8,7 +8,7 @@ import {
   quoteRequestSchema
 } from "@gazelle/contracts-orders";
 import { z } from "zod";
-import { resolveConfiguredOrderFulfillment } from "./fulfillment.js";
+import { createFulfillmentConfigCache } from "./fulfillment.js";
 import { createOrdersRepository } from "./repository.js";
 import {
   advanceOrderStatus,
@@ -314,7 +314,7 @@ export async function registerRoutes(app: FastifyInstance) {
     timeWindow: ordersRateLimitWindowMs
   };
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
-  const fulfillmentConfig = resolveConfiguredOrderFulfillment();
+  const fulfillmentConfigCache = createFulfillmentConfigCache({ catalogBaseUrl });
   const repository = await createOrdersRepository(app.log);
   const sharedDeps = {
     repository,
@@ -324,12 +324,12 @@ export async function registerRoutes(app: FastifyInstance) {
     loyaltyBaseUrl,
     loyaltyInternalToken: loyaltyInternalApiToken,
     notificationsBaseUrl,
-    notificationsInternalToken: notificationsInternalApiToken,
-    fulfillmentConfig
+    notificationsInternalToken: notificationsInternalApiToken
   };
 
   const getServiceDeps = (request: FastifyRequest): OrderServiceDeps => ({
     ...sharedDeps,
+    fulfillmentConfig: fulfillmentConfigCache.get(),
     posAdapter: createPosAdapter({
       paymentsBaseUrl,
       paymentsInternalToken: internalApiToken,

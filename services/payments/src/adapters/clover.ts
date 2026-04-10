@@ -226,6 +226,8 @@ export class CloverAdapter implements PosAdapter {
         cloverOrderId,
         bearerToken
       });
+    } else {
+      await this.deleteCloverOrder({ cloverOrderId, bearerToken });
     }
 
     return paidOrder;
@@ -663,6 +665,43 @@ export class CloverAdapter implements PosAdapter {
       },
       providerPaymentId: providerPaymentId ?? params.internalPaymentId
     };
+  }
+
+  private async deleteCloverOrder(params: { cloverOrderId: string; bearerToken: string }): Promise<void> {
+    const baseUrl = resolveCloverApiBaseUrl(this.oauthConfig.environment);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(
+        `${baseUrl}/v3/merchants/${encodeURIComponent(this.credentials.merchantId)}/orders/${encodeURIComponent(params.cloverOrderId)}`,
+        {
+          method: "DELETE",
+          headers: {
+            authorization: `Bearer ${params.bearerToken}`,
+            "x-request-id": this.requestId
+          },
+          signal: controller.signal
+        }
+      );
+      if (!response.ok) {
+        this.logger.warn(
+          { cloverOrderId: params.cloverOrderId, merchantId: this.credentials.merchantId, status: response.status },
+          "Clover order delete failed after payment failure"
+        );
+      } else {
+        this.logger.info(
+          { cloverOrderId: params.cloverOrderId, merchantId: this.credentials.merchantId },
+          "Clover order deleted after payment failure"
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        { error, cloverOrderId: params.cloverOrderId, merchantId: this.credentials.merchantId },
+        "Clover order delete request failed after payment failure"
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private async triggerPrintEvent(params: { orderId: string; cloverOrderId: string; bearerToken: string }) {

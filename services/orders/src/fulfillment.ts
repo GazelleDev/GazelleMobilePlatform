@@ -1,6 +1,7 @@
 import {
   DEFAULT_APP_CONFIG_FULFILLMENT,
   appConfigFulfillmentModeSchema,
+  appConfigFulfillmentSchema,
   type AppConfigFulfillment
 } from "@gazelle/contracts-catalog";
 import { orderSchema, orderStatusSchema } from "@gazelle/contracts-orders";
@@ -42,6 +43,51 @@ export function resolveConfiguredOrderFulfillment(
   return {
     ...DEFAULT_APP_CONFIG_FULFILLMENT,
     mode: resolveConfiguredFulfillmentMode(env.ORDER_FULFILLMENT_MODE)
+  };
+}
+
+export function createFulfillmentConfigCache(params: {
+  catalogBaseUrl: string;
+  ttlMs?: number;
+}): { get: () => AppConfigFulfillment } {
+  const ttlMs = params.ttlMs ?? 30_000;
+  let value: AppConfigFulfillment = resolveConfiguredOrderFulfillment();
+  let fetchedAt = 0;
+  let refreshing = false;
+
+  async function refresh(): Promise<void> {
+    refreshing = true;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5_000);
+      let response: Response;
+      try {
+        response = await fetch(`${params.catalogBaseUrl}/v1/app-config`, { signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (response.ok) {
+        const body = await response.json();
+        const parsed = appConfigFulfillmentSchema.safeParse((body as Record<string, unknown>)?.fulfillment);
+        if (parsed.success) {
+          value = parsed.data;
+          fetchedAt = Date.now();
+        }
+      }
+    } catch {
+      // keep last known value
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  return {
+    get() {
+      if (Date.now() - fetchedAt > ttlMs && !refreshing) {
+        refresh().catch(() => {});
+      }
+      return value;
+    }
   };
 }
 
