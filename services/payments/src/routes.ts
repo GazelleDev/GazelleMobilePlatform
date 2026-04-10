@@ -34,6 +34,7 @@ const cloverEndpointsByEnvironment = {
     authorizeEndpoint: "https://sandbox.dev.clover.com/oauth/v2/authorize",
     tokenEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/token",
     refreshEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/refresh",
+    recoveryEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/recovery",
     pakmsEndpoint: "https://scl-sandbox.dev.clover.com/pakms/apikey",
     chargeEndpoint: "https://scl-sandbox.dev.clover.com/v1/charges",
     refundEndpoint: "https://scl-sandbox.dev.clover.com/v1/refunds",
@@ -43,6 +44,7 @@ const cloverEndpointsByEnvironment = {
     authorizeEndpoint: "https://www.clover.com/oauth/v2/authorize",
     tokenEndpoint: "https://api.clover.com/oauth/v2/token",
     refreshEndpoint: "https://api.clover.com/oauth/v2/refresh",
+    recoveryEndpoint: "https://api.clover.com/oauth/v2/recovery",
     pakmsEndpoint: "https://scl.clover.com/pakms/apikey",
     chargeEndpoint: "https://scl.clover.com/v1/charges",
     refundEndpoint: "https://scl.clover.com/v1/refunds",
@@ -1134,6 +1136,7 @@ export type CloverOAuthConfig = {
   authorizeEndpoint: string;
   tokenEndpoint: string;
   refreshEndpoint: string;
+  recoveryEndpoint: string;
   pakmsEndpoint: string;
   misconfigurationReason?: string;
 };
@@ -1205,6 +1208,7 @@ function resolveCloverOAuthConfig(env: NodeJS.ProcessEnv = process.env): CloverO
     authorizeEndpoint: endpoints.authorizeEndpoint,
     tokenEndpoint: endpoints.tokenEndpoint,
     refreshEndpoint: endpoints.refreshEndpoint,
+    recoveryEndpoint: endpoints.recoveryEndpoint,
     pakmsEndpoint: endpoints.pakmsEndpoint,
     misconfigurationReason:
       missing.length > 0 ? `Missing required env for Clover OAuth flow: ${missing.join(", ")}` : undefined
@@ -1432,14 +1436,15 @@ async function refreshCloverConnection(params: {
     clearTimeout(tokenRefreshTimeout)
   }
   const parsedBody = parseJsonSafely(await upstream.text());
-  if (!upstream.ok) {
-    throw new Error(
-      firstStringAtPaths(parsedBody, [["message"], ["error_description"], ["error"]]) ??
-        `Clover OAuth refresh failed with status ${upstream.status}`
-    );
-  }
-
-  const parsed = cloverOauthTokenResponseSchema.parse(parsedBody);
+  const parsed =
+    upstream.ok
+      ? cloverOauthTokenResponseSchema.parse(parsedBody)
+      : await recoverCloverTokenPair({
+          oauthConfig,
+          connection,
+          refreshResponse: upstream,
+          refreshResponseBody: parsedBody
+        });
   const nowMs = Date.now();
   return {
     merchantId: connection.merchantId,
@@ -1461,6 +1466,54 @@ async function refreshCloverConnection(params: {
     tokenType: parsed.token_type ?? connection.tokenType,
     scope: normalizeScope(parsed.scope) ?? connection.scope
   };
+}
+
+async function recoverCloverTokenPair(params: {
+  oauthConfig: CloverOAuthConfig;
+  connection: CloverConnection;
+  refreshResponse: Response;
+  refreshResponseBody: unknown;
+}) {
+  if (
+    params.refreshResponse.status !== 401 ||
+    params.refreshResponse.headers.get("x-clover-recovery-available") !== "true" ||
+    !params.oauthConfig.appSecret
+  ) {
+    throw new Error(
+      firstStringAtPaths(params.refreshResponseBody, [["message"], ["error_description"], ["error"]]) ??
+        `Clover OAuth refresh failed with status ${params.refreshResponse.status}`
+    );
+  }
+
+  const recoveryController = new AbortController()
+  const recoveryTimeout = setTimeout(() => recoveryController.abort(), 10_000)
+  let recoveryResponse: Response
+  try {
+    recoveryResponse = await fetch(params.oauthConfig.recoveryEndpoint, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        client_id: params.oauthConfig.appId,
+        client_secret: params.oauthConfig.appSecret,
+        recovery_token: params.connection.refreshToken
+      }),
+      signal: recoveryController.signal,
+    })
+  } finally {
+    clearTimeout(recoveryTimeout)
+  }
+  const recoveryBody = parseJsonSafely(await recoveryResponse.text());
+  if (!recoveryResponse.ok) {
+    throw new Error(
+      firstStringAtPaths(recoveryBody, [["message"], ["error_description"], ["error"]]) ??
+        `Clover OAuth recovery failed with status ${recoveryResponse.status}`
+    );
+  }
+
+  return cloverOauthTokenResponseSchema.parse(recoveryBody);
 }
 
 async function fetchCloverApiAccessKey(params: {

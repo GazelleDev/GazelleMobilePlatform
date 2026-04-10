@@ -783,6 +783,138 @@ describe("payments service", () => {
     await app.close();
   });
 
+  it("recovers Clover OAuth credentials when refresh token recovery is available during charge", async () => {
+    stubLiveCloverOauthEnv();
+
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://apisandbox.dev.clover.com/oauth/v2/token") {
+        return new Response(
+          JSON.stringify({
+            access_token: "oauth-access-token-expired",
+            refresh_token: "oauth-refresh-token-expired",
+            token_type: "Bearer",
+            access_token_expiration: Math.floor(Date.now() / 1000) - 60,
+            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "https://scl-sandbox.dev.clover.com/pakms/apikey") {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-expired");
+        return new Response(
+          JSON.stringify({
+            apiAccessKey: "oauth-api-access-key-1"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "https://apisandbox.dev.clover.com/oauth/v2/refresh") {
+        return new Response(
+          JSON.stringify({
+            status: "Unauthorized",
+            message: "Invalid refresh token."
+          }),
+          {
+            status: 401,
+            headers: {
+              "content-type": "application/json",
+              "x-clover-recovery-available": "true"
+            }
+          }
+        );
+      }
+
+      if (url === "https://apisandbox.dev.clover.com/oauth/v2/recovery") {
+        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({
+          client_id: "clover-app-id",
+          client_secret: "clover-app-secret",
+          recovery_token: "oauth-refresh-token-expired"
+        });
+        return new Response(
+          JSON.stringify({
+            access_token: "oauth-access-token-recovered",
+            refresh_token: "oauth-refresh-token-recovered",
+            token_type: "Bearer",
+            access_token_expiration: Math.floor(Date.now() / 1000) + 3600,
+            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-recovery-1/orders") {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-recovered");
+        return new Response(JSON.stringify({ id: "clover-order-recovery-1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-recovery-1/orders/clover-order-recovery-1/line_items") {
+        return new Response(JSON.stringify({ id: "line-item-recovery-1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "https://scl-sandbox.dev.clover.com/v1/orders/clover-order-recovery-1/pay") {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-recovered");
+        return new Response(
+          JSON.stringify({
+            id: "oauth-recovered-charge-1",
+            status: "APPROVED",
+            approved: true,
+            message: "Charge accepted"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-recovery-1/print_event") {
+        return new Response(JSON.stringify({ accepted: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      throw new Error(`unexpected live Clover URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    await connectCloverOauth(app, "merchant-recovery-1");
+
+    const chargeResponse = await app.inject({
+      method: "POST",
+      url: "/v1/payments/charges",
+      headers: internalHeaders(),
+      payload: {
+        orderId: "123e4567-e89b-12d3-a456-426614174191",
+        order: buildChargeOrder("123e4567-e89b-12d3-a456-426614174191", 1200),
+        amountCents: 1200,
+        currency: "USD",
+        paymentSourceToken: "clv_card_source_token",
+        idempotencyKey: "live-charge-recovery-1"
+      }
+    });
+
+    expect(chargeResponse.statusCode).toBe(200);
+    expect(chargeResponse.json()).toMatchObject({
+      provider: "CLOVER",
+      status: "SUCCEEDED",
+      approved: true
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    await app.close();
+  });
+
   it("accepts live order submission when Clover print_event fails after order creation", async () => {
     stubLiveCloverOauthEnv();
 
