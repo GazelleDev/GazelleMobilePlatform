@@ -433,6 +433,15 @@ export class CloverAdapter implements PosAdapter {
         createOrderBody.orderType = { id: orderTypeId };
       }
 
+      this.logger.info(
+        {
+          orderId: order.id,
+          merchantId: this.credentials.merchantId,
+          createOrderRequest: sanitizeCloverResponseBodyForLogs(createOrderBody)
+        },
+        "Submitting Clover order create request"
+      );
+
       const createdOrder = await this.postClover({
         url: `${baseUrl}/v3/merchants/${encodeURIComponent(this.credentials.merchantId)}/orders`,
         bearerToken,
@@ -442,6 +451,18 @@ export class CloverAdapter implements PosAdapter {
       if (!cloverOrderId) {
         throw new Error("Clover order creation did not return an order id");
       }
+
+      this.logger.info(
+        {
+          orderId: order.id,
+          merchantId: this.credentials.merchantId,
+          cloverOrderId,
+          createOrderRequest: sanitizeCloverResponseBodyForLogs(createOrderBody),
+          createdOrderSummary: summarizeCloverOrderForLogs(createdOrder),
+          createdOrderResponse: sanitizeCloverResponseBodyForLogs(createdOrder)
+        },
+        "Clover order create response received"
+      );
 
       for (const item of order.items) {
         const quantity = Math.max(1, Math.floor(item.quantity));
@@ -469,21 +490,47 @@ export class CloverAdapter implements PosAdapter {
         }
 
         for (let count = 0; count < quantity; count += 1) {
+          const lineItemRequestBody = {
+            name: item.itemName ?? item.itemId,
+            alternateName: trimToUndefined(item.itemId),
+            price: item.unitPriceCents,
+            ...(lineItemNote ? { note: lineItemNote } : {}),
+            taxRates: []
+          };
+          this.logger.info(
+            {
+              orderId: order.id,
+              merchantId: this.credentials.merchantId,
+              cloverOrderId,
+              lineItemIndex: count + 1,
+              lineItemQuantity: quantity,
+              lineItemRequest: sanitizeCloverResponseBodyForLogs(lineItemRequestBody)
+            },
+            "Submitting Clover line item create request"
+          );
           const lineItemResponse = await this.postClover({
             url: `${baseUrl}/v3/merchants/${encodeURIComponent(this.credentials.merchantId)}/orders/${encodeURIComponent(cloverOrderId)}/line_items`,
             bearerToken,
-            body: {
-              name: item.itemName ?? item.itemId,
-              alternateName: trimToUndefined(item.itemId),
-              price: item.unitPriceCents,
-              ...(lineItemNote ? { note: lineItemNote } : {}),
-              taxRates: []
-            }
+            body: lineItemRequestBody
           });
           const lineItemId = firstStringAtPaths(lineItemResponse, [["id"], ["lineItemId"], ["lineItem", "id"], ["data", "id"]]);
           if (!lineItemId) {
             throw new Error(`Clover line item creation did not return a line item id for order ${order.id}`);
           }
+
+          this.logger.info(
+            {
+              orderId: order.id,
+              merchantId: this.credentials.merchantId,
+              cloverOrderId,
+              lineItemId,
+              lineItemIndex: count + 1,
+              lineItemRequest: sanitizeCloverResponseBodyForLogs(lineItemRequestBody),
+              lineItemResponseSummary: summarizeCloverLineItemForLogs(lineItemResponse),
+              lineItemResponse: sanitizeCloverResponseBodyForLogs(lineItemResponse)
+            },
+            "Clover line item create response received"
+          );
 
           for (const entry of mappedModifierIds) {
             await this.postClover({
@@ -659,6 +706,17 @@ function firstBooleanAtPaths(value: unknown, paths: string[][]): boolean | undef
   return undefined;
 }
 
+function firstNumberAtPaths(value: unknown, paths: string[][]): number | undefined {
+  for (const path of paths) {
+    const candidate = readPath(value, path);
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
 function summarizeCloverResponseForLogs(value: unknown): Record<string, string> {
   const summary = {
     status: firstStringAtPaths(value, [
@@ -690,6 +748,46 @@ function summarizeCloverResponseForLogs(value: unknown): Record<string, string> 
 
   const entries = Object.entries(summary).filter((entry): entry is [string, string] => entry[1] !== undefined);
   return Object.fromEntries(entries);
+}
+
+type CloverLogSummaryValue = string | number | boolean;
+
+function buildCloverLogSummary(
+  summary: Record<string, CloverLogSummaryValue | undefined>
+): Record<string, CloverLogSummaryValue> {
+  return Object.fromEntries(
+    Object.entries(summary).filter((entry): entry is [string, CloverLogSummaryValue] => entry[1] !== undefined)
+  );
+}
+
+function summarizeCloverOrderForLogs(value: unknown): Record<string, string | number | boolean> {
+  const summary = {
+    id: firstStringAtPaths(value, [["id"], ["orderId"], ["order", "id"], ["data", "id"]]),
+    title: firstStringAtPaths(value, [["title"], ["data", "title"]]),
+    state: firstStringAtPaths(value, [["state"], ["data", "state"]]),
+    paymentState: firstStringAtPaths(value, [["paymentState"], ["data", "paymentState"]]),
+    total: firstNumberAtPaths(value, [["total"], ["data", "total"]]),
+    groupLineItems: firstBooleanAtPaths(value, [["groupLineItems"], ["data", "groupLineItems"]]),
+    manualTransaction: firstBooleanAtPaths(value, [["manualTransaction"], ["data", "manualTransaction"]]),
+    note: firstStringAtPaths(value, [["note"], ["data", "note"]]),
+    createdTime: firstNumberAtPaths(value, [["createdTime"], ["data", "createdTime"]]),
+    modifiedTime: firstNumberAtPaths(value, [["modifiedTime"], ["data", "modifiedTime"]])
+  };
+  return buildCloverLogSummary(summary);
+}
+
+function summarizeCloverLineItemForLogs(value: unknown): Record<string, string | number | boolean> {
+  const summary = {
+    id: firstStringAtPaths(value, [["id"], ["lineItemId"], ["lineItem", "id"], ["data", "id"]]),
+    name: firstStringAtPaths(value, [["name"], ["lineItem", "name"], ["data", "name"]]),
+    alternateName: firstStringAtPaths(value, [["alternateName"], ["lineItem", "alternateName"], ["data", "alternateName"]]),
+    note: firstStringAtPaths(value, [["note"], ["lineItem", "note"], ["data", "note"]]),
+    price: firstNumberAtPaths(value, [["price"], ["lineItem", "price"], ["data", "price"]]),
+    unitQty: firstNumberAtPaths(value, [["unitQty"], ["lineItem", "unitQty"], ["data", "unitQty"]]),
+    printed: firstBooleanAtPaths(value, [["printed"], ["lineItem", "printed"], ["data", "printed"]]),
+    exchanged: firstBooleanAtPaths(value, [["exchanged"], ["lineItem", "exchanged"], ["data", "exchanged"]])
+  };
+  return buildCloverLogSummary(summary);
 }
 
 const cloverSensitiveLogKeys = new Set([
