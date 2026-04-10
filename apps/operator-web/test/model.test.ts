@@ -401,11 +401,13 @@ describe("operator-web model", () => {
     expect(
       normalizeStoreConfigForm({
         storeName: "  LatteLink Flagship  ",
+        locationName: "  Ann Arbor, MI  ",
         hours: "  Daily · 7:00 AM - 6:00 PM  ",
         pickupInstructions: "  Pickup at the front counter.  "
       })
     ).toEqual({
       storeName: "LatteLink Flagship",
+      locationName: "Ann Arbor, MI",
       hours: "Daily · 7:00 AM - 6:00 PM",
       pickupInstructions: "Pickup at the front counter."
     });
