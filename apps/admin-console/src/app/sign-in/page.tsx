@@ -9,7 +9,7 @@ type SignInPageProps = {
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   const session = await getAdminSession();
   if (session) {
-    redirect("/clients");
+    redirect("/dashboard");
   }
 
   const params = await searchParams;
@@ -33,8 +33,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
         {error ? <p className="inline-message inline-message-error">{error}</p> : null}
         {!authStatus.configured ? (
           <p className="inline-message inline-message-warning">
-            Configure `ADMIN_CONSOLE_ALLOWED_EMAILS`, `ADMIN_CONSOLE_SHARED_PASSWORD`, and
-            `ADMIN_CONSOLE_SESSION_SECRET` before using this app.
+            Configure `INTERNAL_ADMIN_API_BASE_URL` and `ADMIN_CONSOLE_SESSION_SECRET` before using this app.
           </p>
         ) : null}
 
@@ -53,8 +52,8 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
         </form>
 
         <div className="auth-footnote">
-          <span>Allowed accounts:</span>
-          <strong>{authStatus.allowedEmails.length || 0}</strong>
+          <span>Identity-backed access</span>
+          <strong>{authStatus.configured ? "Ready" : "Missing env"}</strong>
         </div>
       </section>
     </main>

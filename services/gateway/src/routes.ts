@@ -8,6 +8,9 @@ import {
   customerDevAccessRequestSchema,
   googleOAuthStartRequestSchema,
   googleOAuthStartResponseSchema,
+  internalAdminMeResponseSchema,
+  internalAdminPasswordSignInSchema,
+  internalAdminSessionSchema,
   internalOwnerProvisionParamsSchema,
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
@@ -73,14 +76,12 @@ declare module "fastify" {
   interface FastifyRequest {
     authenticatedUserId?: string;
     authenticatedOperator?: z.output<typeof operatorMeResponseSchema>;
+    authenticatedInternalAdmin?: z.output<typeof internalAdminMeResponseSchema>;
   }
 }
 
 const authHeaderSchema = z.object({
   authorization: z.string().startsWith("Bearer ").optional()
-});
-const internalAdminHeaderSchema = z.object({
-  "x-internal-admin-token": z.string().optional()
 });
 const jwtHeaderSchema = z.object({
   alg: z.literal("HS256"),
@@ -186,33 +187,27 @@ function invalidRequest(requestId: string, message: string, details?: unknown) {
   });
 }
 
-function ensureInternalAdminToken(request: FastifyRequest, reply: FastifyReply, expectedToken: string | undefined) {
-  if (!expectedToken) {
-    reply.status(503).send(
-      internalAdminUnauthorized(
-        request.id,
-        "INTERNAL_ADMIN_API_TOKEN must be configured before accepting internal admin requests",
-        "INTERNAL_ADMIN_NOT_CONFIGURED"
-      )
-    );
-    return false;
-  }
-
-  const parsed = internalAdminHeaderSchema.safeParse(request.headers);
-  const providedToken = parsed.success ? parsed.data["x-internal-admin-token"] : undefined;
-  if (!providedToken) {
-    reply.status(401).send(internalAdminUnauthorized(request.id, "Missing internal admin token"));
-    return false;
-  }
-
-  const expectedBuffer = Buffer.from(expectedToken, "utf8");
-  const providedBuffer = Buffer.from(providedToken, "utf8");
-  if (expectedBuffer.length !== providedBuffer.length || !timingSafeEqual(expectedBuffer, providedBuffer)) {
-    reply.status(401).send(internalAdminUnauthorized(request.id, "Invalid internal admin token"));
+function ensureInternalAdminBearerAuth(request: FastifyRequest, reply: FastifyReply) {
+  const parsed = authHeaderSchema.safeParse(request.headers);
+  if (!parsed.success || !parsed.data.authorization) {
+    reply.status(401).send(internalAdminUnauthorized(request.id, "Missing or invalid internal admin auth token"));
     return false;
   }
 
   return true;
+}
+
+function forbiddenInternalAdmin(
+  requestId: string,
+  capability?: z.output<typeof internalAdminMeResponseSchema>["capabilities"][number]
+) {
+  return apiErrorSchema.parse({
+    code: "FORBIDDEN",
+    message: capability
+      ? `Internal admin is missing required capability: ${capability}`
+      : "Internal admin is not authorized to access this resource",
+    requestId
+  });
 }
 
 async function resolveOperatorAccess(params: {
@@ -319,6 +314,110 @@ async function resolveOperatorAccess(params: {
   }
 }
 
+async function resolveInternalAdminAccess(params: {
+  request: FastifyRequest;
+  reply: FastifyReply;
+  identityBaseUrl: string;
+  requiredCapability: z.output<typeof internalAdminMeResponseSchema>["capabilities"][number];
+}) {
+  const { request, reply, identityBaseUrl, requiredCapability } = params;
+  if (!ensureInternalAdminBearerAuth(request, reply)) {
+    return undefined;
+  }
+
+  if (request.authenticatedInternalAdmin) {
+    if (!request.authenticatedInternalAdmin.capabilities.includes(requiredCapability)) {
+      reply.status(403).send(forbiddenInternalAdmin(request.id, requiredCapability));
+      return undefined;
+    }
+
+    return request.authenticatedInternalAdmin;
+  }
+
+  const authorization = request.headers.authorization;
+  const timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs);
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${identityBaseUrl}/v1/internal-admin/auth/me`, {
+      method: "GET",
+      headers: {
+        authorization: String(authorization),
+        "x-request-id": request.id
+      },
+      signal: timeoutController.signal
+    });
+    const parsedPayload = parseJsonSafely(await response.text());
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        reply.status(401).send(internalAdminUnauthorized(request.id, "Missing or invalid internal admin auth token"));
+        return undefined;
+      }
+
+      const upstreamError = apiErrorSchema.safeParse(parsedPayload);
+      if (upstreamError.success) {
+        reply.status(response.status).send(upstreamError.data);
+        return undefined;
+      }
+
+      reply.status(502).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_INVALID_RESPONSE",
+          message: "Identity response did not match contract",
+          requestId: request.id
+        })
+      );
+      return undefined;
+    }
+
+    const admin = internalAdminMeResponseSchema.safeParse(parsedPayload);
+    if (!admin.success) {
+      reply.status(502).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_INVALID_RESPONSE",
+          message: "Identity response did not match contract",
+          requestId: request.id,
+          details: admin.error.flatten()
+        })
+      );
+      return undefined;
+    }
+
+    request.authenticatedInternalAdmin = admin.data;
+    if (!admin.data.capabilities.includes(requiredCapability)) {
+      reply.status(403).send(forbiddenInternalAdmin(request.id, requiredCapability));
+      return undefined;
+    }
+
+    return admin.data;
+  } catch (error) {
+    if (isAbortError(error)) {
+      reply.status(504).send(
+        apiErrorSchema.parse({
+          code: "UPSTREAM_TIMEOUT",
+          message: "Identity service timed out",
+          requestId: request.id
+        })
+      );
+      return undefined;
+    }
+
+    request.log.error({ error, requestId: request.id }, "internal admin access check failed");
+    reply.status(502).send(
+      apiErrorSchema.parse({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Identity service is unavailable",
+        requestId: request.id
+      })
+    );
+    return undefined;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 function trimToUndefined(value: string | undefined) {
   const next = value?.trim();
   return next && next.length > 0 ? next : undefined;
@@ -406,6 +505,7 @@ function userScopedRateLimitKey(request: FastifyRequest) {
   const userId =
     trimToUndefined(request.authenticatedUserId) ??
     trimToUndefined(request.authenticatedOperator?.operatorUserId) ??
+    trimToUndefined(request.authenticatedInternalAdmin?.internalAdminUserId) ??
     trimToUndefined(toHeaderValue(request.headers["x-user-id"]));
   if (userId) {
     return `user:${userId.toLowerCase()}`;
@@ -996,7 +1096,6 @@ export async function registerRoutes(app: FastifyInstance) {
     fallbackUrl: "http://127.0.0.1:3005"
   });
   const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
-  const internalAdminApiToken = trimToUndefined(process.env.INTERNAL_ADMIN_API_TOKEN);
   const jwtSecret = trimToUndefined(process.env.JWT_SECRET);
   const rateLimitWindowMs = toPositiveInteger(process.env.GATEWAY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const authWriteRateLimit = {
@@ -1081,6 +1180,16 @@ export async function registerRoutes(app: FastifyInstance) {
         identityBaseUrl,
         requiredCapability: capability
       });
+  const requireInternalAdminCapability = (
+    capability: z.output<typeof internalAdminMeResponseSchema>["capabilities"][number]
+  ) =>
+    async (request: FastifyRequest, reply: FastifyReply) =>
+      resolveInternalAdminAccess({
+        request,
+        reply,
+        identityBaseUrl,
+        requiredCapability: capability
+      });
 
   app.get("/health", async () => ({ status: "ok", service: "gateway" }));
   app.get("/ready", async () => ({ status: "ready", service: "gateway" }));
@@ -1088,6 +1197,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get("/v1/meta/contracts", async () => ({
     auth: authContract.basePath,
     operatorAuth: operatorAuthContract.basePath,
+    internalAdminAuth: "/internal-admin/auth",
     catalog: catalogContract.basePath,
     orders: ordersContract.basePath,
     loyalty: loyaltyContract.basePath,
@@ -1655,6 +1765,86 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "GET",
         path: "/v1/operator/auth/me",
         responseSchema: operatorMeResponseSchema
+      })
+  );
+
+  app.post(
+    "/v1/internal-admin/auth/sign-in",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = internalAdminPasswordSignInSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/internal-admin/auth/sign-in",
+        body: input,
+        responseSchema: internalAdminSessionSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/internal-admin/auth/refresh",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = refreshRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/internal-admin/auth/refresh",
+        body: input,
+        responseSchema: internalAdminSessionSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/internal-admin/auth/logout",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = logoutRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "POST",
+        path: "/v1/internal-admin/auth/logout",
+        body: input,
+        responseSchema: authSuccessSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/internal-admin/auth/me",
+    {
+      preHandler: [app.rateLimit(authReadRateLimit), requireBearerAuth]
+    },
+    async (request, reply) =>
+      proxyUpstream({
+        request,
+        reply,
+        baseUrl: identityBaseUrl,
+        serviceLabel: "Identity",
+        method: "GET",
+        path: "/v1/internal-admin/auth/me",
+        responseSchema: internalAdminMeResponseSchema
       })
   );
 
@@ -2482,13 +2672,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post(
     "/v1/internal/locations/bootstrap",
     {
-      preHandler: async (request, reply) => {
-        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
-          return reply;
-        }
-
-        return undefined;
-      }
+      preHandler: [app.rateLimit(authWriteRateLimit), requireInternalAdminCapability("clients:write")]
     },
     async (request, reply) => {
       const input = internalLocationBootstrapSchema.parse(request.body);
@@ -2513,13 +2697,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get(
     "/v1/internal/locations",
     {
-      preHandler: async (request, reply) => {
-        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
-          return reply;
-        }
-
-        return undefined;
-      }
+      preHandler: [app.rateLimit(authReadRateLimit), requireInternalAdminCapability("clients:read")]
     },
     async (request, reply) => {
       return proxyUpstream({
@@ -2541,13 +2719,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get(
     "/v1/internal/locations/:locationId",
     {
-      preHandler: async (request, reply) => {
-        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
-          return reply;
-        }
-
-        return undefined;
-      }
+      preHandler: [app.rateLimit(authReadRateLimit), requireInternalAdminCapability("clients:read")]
     },
     async (request, reply) => {
       const { locationId } = internalLocationParamsSchema.parse(request.params);
@@ -2571,13 +2743,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get(
     "/v1/internal/locations/:locationId/owner",
     {
-      preHandler: async (request, reply) => {
-        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
-          return reply;
-        }
-
-        return undefined;
-      }
+      preHandler: [app.rateLimit(authReadRateLimit), requireInternalAdminCapability("owners:read")]
     },
     async (request, reply) => {
       const { locationId } = internalLocationParamsSchema.parse(request.params);
@@ -2601,13 +2767,7 @@ export async function registerRoutes(app: FastifyInstance) {
   app.post(
     "/v1/internal/locations/:locationId/owner/provision",
     {
-      preHandler: async (request, reply) => {
-        if (!ensureInternalAdminToken(request, reply, internalAdminApiToken)) {
-          return reply;
-        }
-
-        return undefined;
-      }
+      preHandler: [app.rateLimit(authWriteRateLimit), requireInternalAdminCapability("owners:write")]
     },
     async (request, reply) => {
       const { locationId } = internalOwnerProvisionParamsSchema.parse(request.params);

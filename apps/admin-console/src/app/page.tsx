@@ -3,5 +3,5 @@ import { getAdminSession } from "@/lib/auth";
 
 export default async function HomePage() {
   const session = await getAdminSession();
-  redirect(session ? "/clients" : "/sign-in");
+  redirect(session ? "/dashboard" : "/sign-in");
 }

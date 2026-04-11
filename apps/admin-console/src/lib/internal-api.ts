@@ -1,10 +1,17 @@
-import type { InternalOwnerProvisionRequest, InternalOwnerProvisionResponse, InternalOwnerSummary } from "@gazelle/contracts-auth";
+import type {
+  InternalOwnerProvisionRequest,
+  InternalOwnerProvisionResponse,
+  InternalOwnerSummary
+} from "@gazelle/contracts-auth";
 import type {
   AppConfigStoreCapabilities,
   InternalLocationBootstrap,
   InternalLocationListResponse,
   InternalLocationSummary
 } from "@gazelle/contracts-catalog";
+import { redirect } from "next/navigation";
+import { requireAdminSession } from "@/lib/auth";
+import { getInternalAdminApiBaseUrl, getOptionalClientDashboardUrl, hasInternalAdminApiBaseUrl } from "@/lib/config";
 
 type InternalApiErrorBody = {
   code?: string;
@@ -23,39 +30,21 @@ export class InternalApiError extends Error {
   }
 }
 
-function trimToUndefined(value: string | undefined) {
-  const next = value?.trim();
-  return next && next.length > 0 ? next : undefined;
-}
-
-function getBaseUrl() {
-  const baseUrl = trimToUndefined(process.env.INTERNAL_ADMIN_API_BASE_URL);
-  if (!baseUrl) {
-    throw new Error("INTERNAL_ADMIN_API_BASE_URL must be configured.");
-  }
-
-  return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-}
-
-function getApiToken() {
-  const token = trimToUndefined(process.env.INTERNAL_ADMIN_API_TOKEN);
-  if (!token) {
-    throw new Error("INTERNAL_ADMIN_API_TOKEN must be configured.");
-  }
-
-  return token;
-}
-
 async function requestInternalApi<TResponse>(path: string, init?: RequestInit): Promise<TResponse> {
-  const response = await fetch(`${getBaseUrl()}${path}`, {
+  const session = await requireAdminSession();
+  const response = await fetch(`${getInternalAdminApiBaseUrl()}${path}`, {
     ...init,
     cache: "no-store",
     headers: {
       "content-type": "application/json",
-      "x-internal-admin-token": getApiToken(),
+      authorization: `Bearer ${session.accessToken}`,
       ...(init?.headers ?? {})
     }
   });
+
+  if (response.status === 401) {
+    redirect("/sign-in?error=Your session expired. Please sign in again.");
+  }
 
   if (!response.ok) {
     let errorBody: InternalApiErrorBody | undefined;
@@ -77,10 +66,9 @@ async function requestInternalApi<TResponse>(path: string, init?: RequestInit): 
 
 export function getInternalApiStatus() {
   return {
-    hasBaseUrl: Boolean(trimToUndefined(process.env.INTERNAL_ADMIN_API_BASE_URL)),
-    hasToken: Boolean(trimToUndefined(process.env.INTERNAL_ADMIN_API_TOKEN)),
-    baseUrl: trimToUndefined(process.env.INTERNAL_ADMIN_API_BASE_URL) ?? null,
-    clientDashboardUrl: trimToUndefined(process.env.ADMIN_CONSOLE_CLIENT_DASHBOARD_URL) ?? null
+    hasBaseUrl: hasInternalAdminApiBaseUrl(),
+    baseUrl: hasInternalAdminApiBaseUrl() ? getInternalAdminApiBaseUrl() : null,
+    clientDashboardUrl: getOptionalClientDashboardUrl() ?? null
   };
 }
 

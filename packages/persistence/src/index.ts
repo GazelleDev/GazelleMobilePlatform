@@ -209,6 +209,29 @@ export interface OperatorSessionTable {
   updated_at: Generated<string>;
 }
 
+export interface InternalAdminUserTable {
+  internal_admin_user_id: string;
+  email: string;
+  display_name: string;
+  password_hash: string;
+  role: "platform_owner" | "platform_operator" | "support_readonly";
+  active: boolean;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface InternalAdminSessionTable {
+  access_token: string;
+  refresh_token: string;
+  internal_admin_user_id: string;
+  access_expires_at: string | null;
+  expires_at: string;
+  revoked_at: string | null;
+  auth_method: "password" | "refresh";
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface NotificationsPushTokenTable {
   user_id: string;
   device_id: string;
@@ -324,6 +347,8 @@ export interface PersistenceDatabase {
   operator_users: OperatorUserTable;
   operator_magic_links: OperatorMagicLinkTable;
   operator_sessions: OperatorSessionTable;
+  internal_admin_users: InternalAdminUserTable;
+  internal_admin_sessions: InternalAdminSessionTable;
   notifications_push_tokens: NotificationsPushTokenTable;
   notifications_order_state_dispatches: NotificationsOrderStateDispatchTable;
   notifications_outbox: NotificationsOutboxTable;

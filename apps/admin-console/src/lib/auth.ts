@@ -1,30 +1,38 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  internalAdminSessionSchema,
+  type InternalAdminCapability,
+  type InternalAdminRole,
+  type InternalAdminSession
+} from "@gazelle/contracts-auth";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import {
+  getInternalAdminApiBaseUrl,
+  hasAdminConsoleSessionSecret,
+  hasInternalAdminApiBaseUrl,
+  readAdminConsoleSessionSecret
+} from "@/lib/config";
+import { adminConsoleSessionCookieName, adminConsoleSessionMaxAgeSeconds } from "@/lib/session-constants";
 
-export type AdminConsoleRole = "platform_owner" | "platform_operator";
+export type AdminConsoleRole = InternalAdminRole;
+export type AdminConsoleSession = InternalAdminSession;
 
-export type AdminConsoleSession = {
-  email: string;
-  role: AdminConsoleRole;
-  expiresAt: string;
+type AdminAuthApiErrorBody = {
+  code?: string;
+  message?: string;
 };
 
-const sessionCookieName = "admin_console_session";
-const sessionMaxAgeSeconds = 60 * 60 * 12;
+export class AdminAuthError extends Error {
+  statusCode: number;
+  code?: string;
 
-function trimToUndefined(value: string | undefined) {
-  const next = value?.trim();
-  return next && next.length > 0 ? next : undefined;
-}
-
-function splitEnvList(value: string | undefined) {
-  return new Set(
-    (value ?? "")
-      .split(/[\n,]/)
-      .map((entry) => entry.trim().toLowerCase())
-      .filter((entry) => entry.length > 0)
-  );
+  constructor(message: string, statusCode: number, code?: string) {
+    super(message);
+    this.name = "AdminAuthError";
+    this.statusCode = statusCode;
+    this.code = code;
+  }
 }
 
 function encodeBase64Url(value: string) {
@@ -45,31 +53,8 @@ function safeEquals(left: string, right: string) {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function getAuthConfig() {
-  const allowedEmails = splitEnvList(process.env.ADMIN_CONSOLE_ALLOWED_EMAILS);
-  const ownerEmails = splitEnvList(process.env.ADMIN_CONSOLE_OWNER_EMAILS);
-  const sharedPassword = trimToUndefined(process.env.ADMIN_CONSOLE_SHARED_PASSWORD);
-  const sessionSecret = trimToUndefined(process.env.ADMIN_CONSOLE_SESSION_SECRET);
-
-  return {
-    allowedEmails,
-    ownerEmails,
-    sharedPassword,
-    sessionSecret
-  };
-}
-
-function getRequiredSessionSecret() {
-  const { sessionSecret } = getAuthConfig();
-  if (!sessionSecret) {
-    throw new Error("ADMIN_CONSOLE_SESSION_SECRET must be configured.");
-  }
-
-  return sessionSecret;
-}
-
 function signPayload(payload: string) {
-  return createHmac("sha256", getRequiredSessionSecret()).update(payload).digest("base64url");
+  return createHmac("sha256", readAdminConsoleSessionSecret()).update(payload).digest("base64url");
 }
 
 function createSessionToken(session: AdminConsoleSession) {
@@ -88,11 +73,7 @@ function parseSessionToken(token: string | undefined) {
   }
 
   try {
-    const parsed = JSON.parse(decodeBase64Url(payload)) as AdminConsoleSession;
-    if (!parsed.email || !parsed.role || !parsed.expiresAt) {
-      return null;
-    }
-
+    const parsed = internalAdminSessionSchema.parse(JSON.parse(decodeBase64Url(payload)));
     if (Date.parse(parsed.expiresAt) <= Date.now()) {
       return null;
     }
@@ -103,30 +84,67 @@ function parseSessionToken(token: string | undefined) {
   }
 }
 
-function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
-}
+async function requestAdminAuthApi<TResponse>(path: string, init?: RequestInit): Promise<TResponse> {
+  const response = await fetch(`${getInternalAdminApiBaseUrl()}${path}`, {
+    ...init,
+    cache: "no-store",
+    headers: {
+      "content-type": "application/json",
+      ...(init?.headers ?? {})
+    }
+  });
 
-function resolveRole(email: string): AdminConsoleRole {
-  const { ownerEmails } = getAuthConfig();
-  return ownerEmails.has(normalizeEmail(email)) ? "platform_owner" : "platform_operator";
+  if (!response.ok) {
+    let errorBody: AdminAuthApiErrorBody | undefined;
+    try {
+      errorBody = (await response.json()) as AdminAuthApiErrorBody;
+    } catch {
+      errorBody = undefined;
+    }
+
+    throw new AdminAuthError(
+      errorBody?.message ?? `Admin auth request failed with status ${response.status}.`,
+      response.status,
+      errorBody?.code
+    );
+  }
+
+  return (await response.json()) as TResponse;
 }
 
 export function getAdminConsoleAuthStatus() {
-  const { allowedEmails, ownerEmails, sharedPassword, sessionSecret } = getAuthConfig();
+  const hasSessionSecret = hasAdminConsoleSessionSecret();
+  const hasBaseUrl = hasInternalAdminApiBaseUrl();
 
   return {
-    configured: allowedEmails.size > 0 && Boolean(sharedPassword) && Boolean(sessionSecret),
-    allowedEmails: Array.from(allowedEmails),
-    ownerEmails: Array.from(ownerEmails),
-    hasSharedPassword: Boolean(sharedPassword),
-    hasSessionSecret: Boolean(sessionSecret)
+    configured: hasSessionSecret && hasBaseUrl,
+    hasSessionSecret,
+    hasBaseUrl
   };
+}
+
+export async function signInInternalAdmin(input: { email: string; password: string }) {
+  return requestAdminAuthApi<AdminConsoleSession>("/v1/internal-admin/auth/sign-in", {
+    method: "POST",
+    body: JSON.stringify({
+      email: input.email.trim(),
+      password: input.password
+    })
+  });
+}
+
+export async function revokeAdminSession(session: AdminConsoleSession) {
+  await requestAdminAuthApi<{ success: true }>("/v1/internal-admin/auth/logout", {
+    method: "POST",
+    body: JSON.stringify({
+      refreshToken: session.refreshToken
+    })
+  });
 }
 
 export async function getAdminSession() {
   const cookieStore = await cookies();
-  return parseSessionToken(cookieStore.get(sessionCookieName)?.value);
+  return parseSessionToken(cookieStore.get(adminConsoleSessionCookieName)?.value);
 }
 
 export async function requireAdminSession() {
@@ -138,47 +156,27 @@ export async function requireAdminSession() {
   return session;
 }
 
+export async function requireAdminCapability(capability: InternalAdminCapability) {
+  const session = await requireAdminSession();
+  if (!session.admin.capabilities.includes(capability)) {
+    throw new Error(`Admin is missing required capability: ${capability}`);
+  }
+
+  return session;
+}
+
 export async function setAdminSession(session: AdminConsoleSession) {
   const cookieStore = await cookies();
-  cookieStore.set(sessionCookieName, createSessionToken(session), {
+  cookieStore.set(adminConsoleSessionCookieName, createSessionToken(session), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: sessionMaxAgeSeconds
+    maxAge: adminConsoleSessionMaxAgeSeconds
   });
 }
 
 export async function clearAdminSession() {
   const cookieStore = await cookies();
-  cookieStore.delete(sessionCookieName);
-}
-
-export function validateAdminCredentials(input: { email: string; password: string }) {
-  const { allowedEmails, sharedPassword, sessionSecret } = getAuthConfig();
-  const email = normalizeEmail(input.email);
-  const password = input.password;
-
-  if (!sessionSecret || !sharedPassword || allowedEmails.size === 0) {
-    return {
-      ok: false as const,
-      message: "Admin console auth is not configured yet."
-    };
-  }
-
-  if (!allowedEmails.has(email) || !safeEquals(sharedPassword, password)) {
-    return {
-      ok: false as const,
-      message: "Email or password is invalid."
-    };
-  }
-
-  return {
-    ok: true as const,
-    session: {
-      email,
-      role: resolveRole(email),
-      expiresAt: new Date(Date.now() + sessionMaxAgeSeconds * 1000).toISOString()
-    }
-  };
+  cookieStore.delete(adminConsoleSessionCookieName);
 }

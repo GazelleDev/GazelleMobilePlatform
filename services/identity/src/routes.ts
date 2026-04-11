@@ -12,6 +12,9 @@ import {
   customerDevAccessRequestSchema,
   googleOAuthStartRequestSchema,
   googleOAuthStartResponseSchema,
+  internalAdminMeResponseSchema,
+  internalAdminPasswordSignInSchema,
+  internalAdminSessionSchema,
   internalOwnerProvisionParamsSchema,
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
@@ -82,6 +85,7 @@ const defaultAuthReadRateLimitMax = 120;
 const defaultPasskeyVerifyRateLimitMax = 12;
 const defaultPasskeyChallengeRateLimitMax = 24;
 const defaultAccessTokenTtlMs = 30 * 60 * 1000;
+const defaultInternalAdminAccessTokenTtlMs = 12 * 60 * 60 * 1000;
 const defaultOperatorLocationId = "flagship-01";
 const defaultGoogleOAuthStateTtlMs = 10 * 60 * 1000;
 // Successful refresh rotation extends the session's idle lifetime by issuing a new refresh token.
@@ -402,6 +406,20 @@ function buildStoredOperatorSession(seed: string, operatorUserId: string) {
   };
 }
 
+function buildStoredInternalAdminSession(seed: string, internalAdminUserId: string) {
+  const tokenSuffix = `${seed}-${randomUUID()}`;
+  const accessExpiresAt = new Date(Date.now() + defaultInternalAdminAccessTokenTtlMs).toISOString();
+  const refreshExpiresAt = new Date(Date.now() + defaultRefreshSessionTtlMs).toISOString();
+
+  return {
+    accessToken: `internal-admin-access-${tokenSuffix}`,
+    refreshToken: `internal-admin-refresh-${tokenSuffix}`,
+    internalAdminUserId,
+    expiresAt: accessExpiresAt,
+    refreshExpiresAt
+  };
+}
+
 function extractChallengeFromClientData(clientDataJSON: string) {
   try {
     const decodedClientData = Buffer.from(clientDataJSON, "base64url").toString("utf8");
@@ -457,6 +475,27 @@ async function issueOperatorSession(params: {
     refreshToken: session.refreshToken,
     expiresAt: session.expiresAt,
     operator
+  });
+}
+
+async function issueInternalAdminSession(params: {
+  repository: IdentityRepository;
+  seed: string;
+  internalAdminUserId: string;
+  authMethod: "password" | "refresh";
+}) {
+  const session = buildStoredInternalAdminSession(params.seed, params.internalAdminUserId);
+  await params.repository.saveInternalAdminSession(session, params.authMethod);
+  const admin = await params.repository.getInternalAdminUserById(params.internalAdminUserId);
+  if (!admin || !admin.active) {
+    throw new Error("Internal admin user is not active");
+  }
+
+  return internalAdminSessionSchema.parse({
+    accessToken: session.accessToken,
+    refreshToken: session.refreshToken,
+    expiresAt: session.expiresAt,
+    admin
   });
 }
 
@@ -549,6 +588,28 @@ async function resolveOperatorFromBearer(params: {
   }
 
   return operator;
+}
+
+async function resolveInternalAdminFromBearer(params: {
+  repository: IdentityRepository;
+  authorizationHeader: string | undefined;
+}) {
+  if (!params.authorizationHeader?.startsWith("Bearer ")) {
+    return undefined;
+  }
+
+  const accessToken = params.authorizationHeader.slice("Bearer ".length);
+  const session = await params.repository.getInternalAdminSessionByAccessToken(accessToken);
+  if (!session) {
+    return undefined;
+  }
+
+  const admin = await params.repository.getInternalAdminUserById(session.internalAdminUserId);
+  if (!admin || !admin.active) {
+    return undefined;
+  }
+
+  return admin;
 }
 
 export type RegisterRoutesOptions = {
@@ -1682,6 +1743,111 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
       }
 
       return operatorMeResponseSchema.parse(operator);
+    }
+  );
+
+  app.post(
+    "/v1/internal-admin/auth/sign-in",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = internalAdminPasswordSignInSchema.parse(request.body);
+      const admin = await repository.verifyInternalAdminPassword(input.email, input.password);
+
+      if (!admin) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_INTERNAL_ADMIN_CREDENTIALS", "Email or password is incorrect"));
+      }
+
+      const session = await issueInternalAdminSession({
+        repository,
+        seed: `password:${admin.internalAdminUserId}:${Date.now()}`,
+        internalAdminUserId: admin.internalAdminUserId,
+        authMethod: "password"
+      });
+      logIdentityMutation(request, "internal admin session issued", {
+        internalAdminUserId: session.admin.internalAdminUserId,
+        email: session.admin.email,
+        role: session.admin.role,
+        authMethod: "password"
+      });
+      return session;
+    }
+  );
+
+  app.post(
+    "/v1/internal-admin/auth/refresh",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request, reply) => {
+      const input = refreshRequestSchema.parse(request.body);
+      const rotatedSession = await repository.rotateInternalAdminRefreshSession(
+        input.refreshToken,
+        (internalAdminUserId) => buildStoredInternalAdminSession(input.refreshToken, internalAdminUserId),
+        "refresh"
+      );
+
+      if (!rotatedSession) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired"));
+      }
+
+      const admin = await repository.getInternalAdminUserById(rotatedSession.internalAdminUserId);
+      if (!admin || !admin.active) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INTERNAL_ADMIN_ACCESS_NOT_GRANTED", "Internal admin access is not active"));
+      }
+
+      const session = internalAdminSessionSchema.parse({
+        accessToken: rotatedSession.accessToken,
+        refreshToken: rotatedSession.refreshToken,
+        expiresAt: rotatedSession.expiresAt,
+        admin
+      });
+      logIdentityMutation(request, "internal admin session rotated", {
+        internalAdminUserId: session.admin.internalAdminUserId,
+        email: session.admin.email,
+        role: session.admin.role
+      });
+      return session;
+    }
+  );
+
+  app.post(
+    "/v1/internal-admin/auth/logout",
+    {
+      preHandler: app.rateLimit(authWriteRateLimit)
+    },
+    async (request) => {
+      const input = logoutRequestSchema.parse(request.body);
+      await repository.revokeInternalAdminByRefreshToken(input.refreshToken);
+      logIdentityMutation(request, "internal admin session revoked", {});
+      return { success: true as const };
+    }
+  );
+
+  app.get(
+    "/v1/internal-admin/auth/me",
+    {
+      preHandler: app.rateLimit(authReadRateLimit)
+    },
+    async (request, reply) => {
+      const parsed = authHeaderSchema.safeParse(request.headers);
+      const admin = await resolveInternalAdminFromBearer({
+        repository,
+        authorizationHeader: parsed.success ? parsed.data.authorization : undefined
+      });
+
+      if (!admin) {
+        return reply.status(401).send(buildApiError(request.id, "UNAUTHORIZED", "Missing or invalid auth token"));
+      }
+
+      return internalAdminMeResponseSchema.parse(admin);
     }
   );
 

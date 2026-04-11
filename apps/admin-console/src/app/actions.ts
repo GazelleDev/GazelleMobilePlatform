@@ -2,7 +2,15 @@
 
 import type { AppConfigStoreCapabilities } from "@gazelle/contracts-catalog";
 import { redirect } from "next/navigation";
-import { clearAdminSession, requireAdminSession, setAdminSession, validateAdminCredentials } from "@/lib/auth";
+import {
+  AdminAuthError,
+  clearAdminSession,
+  getAdminSession,
+  requireAdminCapability,
+  revokeAdminSession,
+  setAdminSession,
+  signInInternalAdmin
+} from "@/lib/auth";
 import { bootstrapInternalLocation, buildCapabilities, provisionLocationOwner } from "@/lib/internal-api";
 
 function readString(formData: FormData, key: string) {
@@ -46,28 +54,38 @@ function readCapabilities(formData: FormData): AppConfigStoreCapabilities {
 }
 
 export async function signInAction(formData: FormData) {
-  const result = validateAdminCredentials({
-    email: readString(formData, "email"),
-    password: readString(formData, "password")
-  });
+  try {
+    const session = await signInInternalAdmin({
+      email: readString(formData, "email"),
+      password: readString(formData, "password")
+    });
 
-  if (!result.ok) {
-    redirect(`/sign-in?error=${encodeURIComponent(result.message)}`);
+    await setAdminSession(session);
+    redirect("/dashboard");
+  } catch (error) {
+    const message =
+      error instanceof AdminAuthError ? error.message : "Unable to sign in right now. Please try again.";
+    redirect(`/sign-in?error=${encodeURIComponent(message)}`);
   }
-
-  await setAdminSession(result.session);
-  redirect("/clients");
 }
 
 export async function signOutAction() {
+  const session = await getAdminSession();
+  if (session) {
+    try {
+      await revokeAdminSession(session);
+    } catch {
+      // Best effort logout; always clear the local session cookie.
+    }
+  }
+
   await clearAdminSession();
   redirect("/sign-in");
 }
 
 export async function createClientAction(formData: FormData) {
-  await requireAdminSession();
-
   try {
+    await requireAdminCapability("clients:write");
     const clientName = readString(formData, "clientName");
     const locationName = readString(formData, "locationName");
     const marketLabel = readString(formData, "marketLabel");
@@ -107,14 +125,13 @@ export async function createClientAction(formData: FormData) {
 }
 
 export async function updateClientCapabilitiesAction(formData: FormData) {
-  await requireAdminSession();
-
   const locationId = readString(formData, "locationId");
   if (!locationId) {
     redirect("/clients?error=Location ID is required.");
   }
 
   try {
+    await requireAdminCapability("clients:write");
     await bootstrapInternalLocation({
       brandId: readString(formData, "brandId"),
       brandName: readString(formData, "brandName"),
@@ -134,14 +151,13 @@ export async function updateClientCapabilitiesAction(formData: FormData) {
 }
 
 export async function reprovisionOwnerAction(formData: FormData) {
-  await requireAdminSession();
-
   const locationId = readString(formData, "locationId");
   if (!locationId) {
     redirect("/clients?error=Location ID is required.");
   }
 
   try {
+    await requireAdminCapability("owners:write");
     await provisionLocationOwner(locationId, {
       displayName: readString(formData, "displayName"),
       email: readString(formData, "email"),

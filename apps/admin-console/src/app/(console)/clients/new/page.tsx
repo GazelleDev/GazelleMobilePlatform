@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createClientAction } from "@/app/actions";
 
 type NewClientPageProps = {
@@ -16,16 +17,39 @@ export default async function NewClientPage({ searchParams }: NewClientPageProps
           <h3>Create a client</h3>
           <p>Set up the location, launch capabilities, and owner access in one flow.</p>
         </div>
+        <Link href="/clients" className="secondary-button">
+          Back to Clients
+        </Link>
       </div>
 
-      <section className="panel">
-        {error ? <p className="inline-message inline-message-error">{error}</p> : null}
+      <form action={createClientAction} className="split-layout split-layout--wide">
+        <section className="panel stack-form">
+          <div className="wizard-steps" aria-label="Create client steps">
+            <div className="wizard-step is-active">
+              <span className="wizard-step-index">1</span>
+              Client identity
+            </div>
+            <div className="wizard-step is-active">
+              <span className="wizard-step-index">2</span>
+              Location
+            </div>
+            <div className="wizard-step is-active">
+              <span className="wizard-step-index">3</span>
+              Capabilities
+            </div>
+            <div className="wizard-step is-active">
+              <span className="wizard-step-index">4</span>
+              Owner handoff
+            </div>
+          </div>
 
-        <form action={createClientAction} className="stack-form">
-          <div className="form-section">
-            <div className="section-heading">
+          {error ? <p className="inline-message inline-message-error">{error}</p> : null}
+
+          <div className="form-card">
+            <div className="section-copy">
               <span className="eyebrow">Step 1</span>
-              <h4>Client Identity</h4>
+              <h4>Client identity</h4>
+              <p>Define the business identity that shows up across the internal console, mobile app configuration, and dashboard handoff.</p>
             </div>
             <div className="field-grid">
               <label className="field">
@@ -47,10 +71,11 @@ export default async function NewClientPage({ searchParams }: NewClientPageProps
             </div>
           </div>
 
-          <div className="form-section">
-            <div className="section-heading">
+          <div className="form-card">
+            <div className="section-copy">
               <span className="eyebrow">Step 2</span>
-              <h4>Location</h4>
+              <h4>Location setup</h4>
+              <p>Capture the first store, its operational label, and the pickup information the product surfaces will share.</p>
             </div>
             <div className="field-grid">
               <label className="field">
@@ -72,10 +97,11 @@ export default async function NewClientPage({ searchParams }: NewClientPageProps
             </div>
           </div>
 
-          <div className="form-section">
-            <div className="section-heading">
+          <div className="form-card">
+            <div className="section-copy">
               <span className="eyebrow">Step 3</span>
-              <h4>Capabilities</h4>
+              <h4>Capability baseline</h4>
+              <p>Choose the operational defaults that determine what the client dashboard and customer app can actually do on day one.</p>
             </div>
             <div className="field-grid">
               <label className="field">
@@ -107,10 +133,11 @@ export default async function NewClientPage({ searchParams }: NewClientPageProps
             </div>
           </div>
 
-          <div className="form-section">
-            <div className="section-heading">
+          <div className="form-card">
+            <div className="section-copy">
               <span className="eyebrow">Step 4</span>
-              <h4>Owner Access</h4>
+              <h4>Owner access</h4>
+              <p>Create the first dashboard owner so the launch handoff does not depend on shell access or ad hoc credential creation.</p>
             </div>
             <div className="field-grid">
               <label className="field">
@@ -133,12 +160,65 @@ export default async function NewClientPage({ searchParams }: NewClientPageProps
           </div>
 
           <div className="form-actions">
+            <Link href="/clients" className="secondary-button">
+              Cancel
+            </Link>
             <button type="submit" className="primary-button">
               Create Client
             </button>
           </div>
-        </form>
-      </section>
+        </section>
+
+        <aside className="sidebar-stack sticky-sidebar">
+          <section className="panel">
+            <div className="section-copy">
+              <span className="eyebrow">What This Does</span>
+              <h4>Provision the first client lane</h4>
+              <p>This flow creates the location record, applies the initial capabilities, and provisions the first dashboard owner.</p>
+            </div>
+            <div className="step-list">
+              <div className="step-item">
+                <span className="step-item-index">1</span>
+                <div className="step-item-copy">
+                  <strong>Bootstrap the location</strong>
+                  <p>Create or update the internal location record that anchors the tenant.</p>
+                </div>
+              </div>
+              <div className="step-item">
+                <span className="step-item-index">2</span>
+                <div className="step-item-copy">
+                  <strong>Set launch defaults</strong>
+                  <p>Establish dashboard, loyalty, menu source, and fulfillment behavior.</p>
+                </div>
+              </div>
+              <div className="step-item">
+                <span className="step-item-index">3</span>
+                <div className="step-item-copy">
+                  <strong>Create owner access</strong>
+                  <p>Issue the first client dashboard credentials without leaving the console.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-copy">
+              <span className="eyebrow">Launch Baseline</span>
+              <h4>Recommended defaults</h4>
+            </div>
+            <div className="tag-list">
+              <span className="tag is-success">Platform-managed menu</span>
+              <span className="tag is-success">Client dashboard enabled</span>
+              <span className="tag is-success">Live tracking enabled</span>
+              <span className="tag">Loyalty visible</span>
+            </div>
+            <div className="callout is-warning">
+              <strong>External menu sync changes the handoff</strong>
+              <p>If the menu source is external, dashboard menu editing stays limited until the integration is switched back to platform managed.</p>
+            </div>
+          </section>
+        </aside>
+      </form>
     </section>
   );
 }

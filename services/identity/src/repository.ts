@@ -2,7 +2,10 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypt
 import type { FastifyBaseLogger } from "fastify";
 import { authSessionSchema } from "@gazelle/contracts-core";
 import {
+  resolveInternalAdminCapabilities,
   resolveOperatorCapabilities,
+  type InternalAdminRole,
+  type InternalAdminUser,
   type OperatorRole,
   type OperatorUser
 } from "@gazelle/contracts-auth";
@@ -50,6 +53,14 @@ type StoredOperatorSession = {
   accessToken: string;
   refreshToken: string;
   operatorUserId: string;
+  expiresAt: string;
+  refreshExpiresAt: string;
+};
+
+type StoredInternalAdminSession = {
+  accessToken: string;
+  refreshToken: string;
+  internalAdminUserId: string;
   expiresAt: string;
   refreshExpiresAt: string;
 };
@@ -113,6 +124,26 @@ type PersistedOperatorSessionRow = {
   revoked_at: string | Date | null;
 };
 
+type PersistedInternalAdminUserRow = {
+  internal_admin_user_id: string;
+  email: string;
+  display_name: string;
+  password_hash: string;
+  role: InternalAdminRole;
+  active: boolean;
+  created_at: string | Date;
+  updated_at: string | Date;
+};
+
+type PersistedInternalAdminSessionRow = {
+  access_token: string;
+  refresh_token: string;
+  internal_admin_user_id: string;
+  access_expires_at: string | Date | null;
+  expires_at: string | Date;
+  revoked_at: string | Date | null;
+};
+
 export type PasskeyChallengeRecord = {
   challenge: string;
   flow: "register" | "auth";
@@ -164,6 +195,7 @@ export type MagicLinkRecord = {
 };
 
 export type OperatorUserRecord = OperatorUser;
+export type InternalAdminUserRecord = InternalAdminUser;
 
 export type OperatorMagicLinkRecord = {
   token: string;
@@ -245,6 +277,21 @@ export type IdentityRepository = {
   getOperatorSessionByAccessToken(accessToken: string): Promise<StoredOperatorSession | undefined>;
   getOperatorSessionByRefreshToken(refreshToken: string): Promise<StoredOperatorSession | undefined>;
   revokeOperatorByRefreshToken(refreshToken: string): Promise<void>;
+  getInternalAdminUserById(internalAdminUserId: string): Promise<InternalAdminUserRecord | undefined>;
+  getInternalAdminUserByEmail(email: string): Promise<InternalAdminUserRecord | undefined>;
+  verifyInternalAdminPassword(email: string, password: string): Promise<InternalAdminUserRecord | undefined>;
+  saveInternalAdminSession(
+    session: StoredInternalAdminSession,
+    authMethod: "password" | "refresh"
+  ): Promise<void>;
+  rotateInternalAdminRefreshSession(
+    refreshToken: string,
+    createNextSession: (internalAdminUserId: string) => StoredInternalAdminSession,
+    authMethod: "refresh"
+  ): Promise<StoredInternalAdminSession | undefined>;
+  getInternalAdminSessionByAccessToken(accessToken: string): Promise<StoredInternalAdminSession | undefined>;
+  getInternalAdminSessionByRefreshToken(refreshToken: string): Promise<StoredInternalAdminSession | undefined>;
+  revokeInternalAdminByRefreshToken(refreshToken: string): Promise<void>;
   pingDb(): Promise<void>;
   close(): Promise<void>;
 };
@@ -452,6 +499,46 @@ function getDefaultOperatorSeeds(): Array<{
   ];
 }
 
+function getDefaultInternalAdminSeeds(): Array<{
+  displayName: string;
+  email: string;
+  role: InternalAdminRole;
+  password: string;
+}> {
+  const seeds: Array<{
+    displayName: string;
+    email: string;
+    role: InternalAdminRole;
+    password: string;
+  }> = [
+    {
+      displayName: process.env.DEFAULT_INTERNAL_ADMIN_OWNER_NAME?.trim() || "Platform Owner",
+      email: normalizeEmail(process.env.DEFAULT_INTERNAL_ADMIN_OWNER_EMAIL?.trim() || "admin@gazellecoffee.com"),
+      role: "platform_owner",
+      password: process.env.DEFAULT_INTERNAL_ADMIN_OWNER_PASSWORD?.trim() || "GazelleAdmin123!"
+    },
+    {
+      displayName: process.env.DEFAULT_INTERNAL_ADMIN_OPERATOR_NAME?.trim() || "Platform Operator",
+      email: normalizeEmail(process.env.DEFAULT_INTERNAL_ADMIN_OPERATOR_EMAIL?.trim() || "ops@gazellecoffee.com"),
+      role: "platform_operator",
+      password: process.env.DEFAULT_INTERNAL_ADMIN_OPERATOR_PASSWORD?.trim() || "GazelleOps123!"
+    }
+  ];
+
+  const supportEmail = process.env.DEFAULT_INTERNAL_ADMIN_SUPPORT_EMAIL?.trim();
+  const supportPassword = process.env.DEFAULT_INTERNAL_ADMIN_SUPPORT_PASSWORD?.trim();
+  if (supportEmail && supportPassword) {
+    seeds.push({
+      displayName: process.env.DEFAULT_INTERNAL_ADMIN_SUPPORT_NAME?.trim() || "Support Read Only",
+      email: normalizeEmail(supportEmail),
+      role: "support_readonly",
+      password: supportPassword
+    });
+  }
+
+  return seeds;
+}
+
 function toOperatorUserRecord(row: PersistedOperatorUserRow): OperatorUserRecord {
   return {
     operatorUserId: row.operator_user_id,
@@ -461,6 +548,19 @@ function toOperatorUserRecord(row: PersistedOperatorUserRow): OperatorUserRecord
     locationId: row.location_id,
     active: row.active,
     capabilities: resolveOperatorCapabilities(row.role),
+    createdAt: parseIsoDate(row.created_at),
+    updatedAt: parseIsoDate(row.updated_at)
+  };
+}
+
+function toInternalAdminUserRecord(row: PersistedInternalAdminUserRow): InternalAdminUserRecord {
+  return {
+    internalAdminUserId: row.internal_admin_user_id,
+    displayName: row.display_name,
+    email: normalizeEmail(row.email),
+    role: row.role,
+    active: row.active,
+    capabilities: resolveInternalAdminCapabilities(row.role),
     createdAt: parseIsoDate(row.created_at),
     updatedAt: parseIsoDate(row.updated_at)
   };
@@ -486,12 +586,24 @@ function toStoredOperatorSession(row: PersistedOperatorSessionRow): StoredOperat
   };
 }
 
+function toStoredInternalAdminSession(row: PersistedInternalAdminSessionRow): StoredInternalAdminSession {
+  return {
+    accessToken: row.access_token,
+    refreshToken: row.refresh_token,
+    internalAdminUserId: row.internal_admin_user_id,
+    expiresAt: parseIsoDate(row.access_expires_at ?? row.expires_at),
+    refreshExpiresAt: parseIsoDate(row.expires_at)
+  };
+}
+
 export function createInMemoryIdentityRepository(): IdentityRepository {
   const sessionsByAccessToken = new Map<string, { session: StoredSession; revokedAt?: string }>();
   const accessTokenByRefreshToken = new Map<string, string>();
   const customerAuthMethodsByUserId = new Map<string, Set<CustomerAuthMethod>>();
   const operatorSessionsByAccessToken = new Map<string, { session: StoredOperatorSession; revokedAt?: string }>();
   const operatorAccessTokenByRefreshToken = new Map<string, string>();
+  const internalAdminSessionsByAccessToken = new Map<string, { session: StoredInternalAdminSession; revokedAt?: string }>();
+  const internalAdminAccessTokenByRefreshToken = new Map<string, string>();
   const passkeyChallengesByFlow = new Map<"register" | "auth", PasskeyChallengeRecord[]>();
   const passkeyCredentialsById = new Map<string, PasskeyCredentialRecord>();
   const usersById = new Map<string, IdentityUserRecord>();
@@ -505,6 +617,9 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
   const operatorUserIdByGoogleSub = new Map<string, string>();
   const operatorPasswordHashByUserId = new Map<string, string>();
   const operatorMagicLinksByToken = new Map<string, OperatorMagicLinkRecord>();
+  const internalAdminUsersById = new Map<string, InternalAdminUserRecord>();
+  const internalAdminUserIdByEmail = new Map<string, string>();
+  const internalAdminPasswordHashByUserId = new Map<string, string>();
 
   for (const seed of getDefaultOperatorSeeds()) {
     const now = new Date().toISOString();
@@ -523,6 +638,24 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
     operatorUsersById.set(operatorUserId, record);
     operatorUserIdByEmail.set(record.email, operatorUserId);
     operatorPasswordHashByUserId.set(operatorUserId, hashOperatorPassword(seed.password));
+  }
+
+  for (const seed of getDefaultInternalAdminSeeds()) {
+    const now = new Date().toISOString();
+    const internalAdminUserId = randomUUID();
+    const record: InternalAdminUserRecord = {
+      internalAdminUserId,
+      displayName: seed.displayName,
+      email: seed.email,
+      role: seed.role,
+      active: true,
+      capabilities: resolveInternalAdminCapabilities(seed.role),
+      createdAt: now,
+      updatedAt: now
+    };
+    internalAdminUsersById.set(internalAdminUserId, record);
+    internalAdminUserIdByEmail.set(record.email, internalAdminUserId);
+    internalAdminPasswordHashByUserId.set(internalAdminUserId, hashOperatorPassword(seed.password));
   }
 
   return {
@@ -1066,6 +1199,107 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
       });
       operatorAccessTokenByRefreshToken.delete(refreshToken);
     },
+    async getInternalAdminUserById(internalAdminUserId) {
+      const record = internalAdminUsersById.get(internalAdminUserId);
+      return record ? { ...record } : undefined;
+    },
+    async getInternalAdminUserByEmail(email) {
+      const internalAdminUserId = internalAdminUserIdByEmail.get(normalizeEmail(email));
+      if (!internalAdminUserId) {
+        return undefined;
+      }
+
+      const record = internalAdminUsersById.get(internalAdminUserId);
+      return record ? { ...record } : undefined;
+    },
+    async verifyInternalAdminPassword(email, password) {
+      const internalAdminUserId = internalAdminUserIdByEmail.get(normalizeEmail(email));
+      if (!internalAdminUserId) {
+        return undefined;
+      }
+
+      const record = internalAdminUsersById.get(internalAdminUserId);
+      const passwordHash = internalAdminPasswordHashByUserId.get(internalAdminUserId);
+      if (!record || !record.active || !verifyOperatorPasswordHash(password, passwordHash)) {
+        return undefined;
+      }
+
+      return { ...record };
+    },
+    async saveInternalAdminSession(session) {
+      internalAdminSessionsByAccessToken.set(session.accessToken, { session });
+      internalAdminAccessTokenByRefreshToken.set(session.refreshToken, session.accessToken);
+    },
+    async rotateInternalAdminRefreshSession(refreshToken, createNextSession) {
+      const accessToken = internalAdminAccessTokenByRefreshToken.get(refreshToken);
+      if (!accessToken) {
+        return undefined;
+      }
+
+      const entry = internalAdminSessionsByAccessToken.get(accessToken);
+      if (!entry || !isRefreshSessionActive(entry.session.refreshExpiresAt, entry.revokedAt)) {
+        return undefined;
+      }
+
+      internalAdminSessionsByAccessToken.set(accessToken, {
+        ...entry,
+        revokedAt: new Date().toISOString()
+      });
+      internalAdminAccessTokenByRefreshToken.delete(refreshToken);
+
+      const nextSession = createNextSession(entry.session.internalAdminUserId);
+      internalAdminSessionsByAccessToken.set(nextSession.accessToken, { session: nextSession });
+      internalAdminAccessTokenByRefreshToken.set(nextSession.refreshToken, nextSession.accessToken);
+      return nextSession;
+    },
+    async getInternalAdminSessionByAccessToken(accessToken) {
+      const entry = internalAdminSessionsByAccessToken.get(accessToken);
+      if (!entry) {
+        return undefined;
+      }
+
+      const candidate = {
+        accessToken: entry.session.accessToken,
+        refreshToken: entry.session.refreshToken,
+        expiresAt: entry.session.expiresAt,
+        userId: entry.session.internalAdminUserId
+      };
+      if (!isAccessSessionActive(authSessionSchema.parse(candidate), entry.revokedAt)) {
+        return undefined;
+      }
+
+      return entry.session;
+    },
+    async getInternalAdminSessionByRefreshToken(refreshToken) {
+      const accessToken = internalAdminAccessTokenByRefreshToken.get(refreshToken);
+      if (!accessToken) {
+        return undefined;
+      }
+
+      const entry = internalAdminSessionsByAccessToken.get(accessToken);
+      if (!entry || !isRefreshSessionActive(entry.session.refreshExpiresAt, entry.revokedAt)) {
+        return undefined;
+      }
+
+      return entry.session;
+    },
+    async revokeInternalAdminByRefreshToken(refreshToken) {
+      const accessToken = internalAdminAccessTokenByRefreshToken.get(refreshToken);
+      if (!accessToken) {
+        return;
+      }
+
+      const entry = internalAdminSessionsByAccessToken.get(accessToken);
+      if (!entry) {
+        return;
+      }
+
+      internalAdminSessionsByAccessToken.set(accessToken, {
+        ...entry,
+        revokedAt: new Date().toISOString()
+      });
+      internalAdminAccessTokenByRefreshToken.delete(refreshToken);
+    },
     async pingDb() {
       // no-op for in-memory
     },
@@ -1111,10 +1345,35 @@ async function ensureDefaultOperatorUsers(db: ReturnType<typeof createPostgresDb
   }
 }
 
+async function ensureDefaultInternalAdminUsers(db: ReturnType<typeof createPostgresDb>) {
+  for (const seed of getDefaultInternalAdminSeeds()) {
+    await db
+      .insertInto("internal_admin_users")
+      .values({
+        internal_admin_user_id: randomUUID(),
+        email: seed.email,
+        display_name: seed.displayName,
+        password_hash: hashOperatorPassword(seed.password),
+        role: seed.role,
+        active: true
+      })
+      .onConflict((oc) =>
+        oc.column("email").doUpdateSet({
+          display_name: seed.displayName,
+          role: seed.role,
+          active: true,
+          updated_at: new Date().toISOString()
+        })
+      )
+      .execute();
+  }
+}
+
 async function createPostgresRepository(connectionString: string): Promise<IdentityRepository> {
   const db = createPostgresDb(connectionString);
   await runMigrations(db);
   await ensureDefaultOperatorUsers(db);
+  await ensureDefaultInternalAdminUsers(db);
 
   return {
     backend: "postgres",
@@ -2187,6 +2446,180 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
     async revokeOperatorByRefreshToken(refreshToken) {
       await db
         .updateTable("operator_sessions")
+        .set({
+          revoked_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .where("refresh_token", "=", refreshToken)
+        .execute();
+    },
+    async getInternalAdminUserById(internalAdminUserId) {
+      const row = await db
+        .selectFrom("internal_admin_users")
+        .selectAll()
+        .where("internal_admin_user_id", "=", internalAdminUserId)
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      return toInternalAdminUserRecord(row as PersistedInternalAdminUserRow);
+    },
+    async getInternalAdminUserByEmail(email) {
+      const row = await db
+        .selectFrom("internal_admin_users")
+        .selectAll()
+        .where("email", "=", normalizeEmail(email))
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      return toInternalAdminUserRecord(row as PersistedInternalAdminUserRow);
+    },
+    async verifyInternalAdminPassword(email, password) {
+      const row = await db
+        .selectFrom("internal_admin_users")
+        .selectAll()
+        .where("email", "=", normalizeEmail(email))
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      const persisted = row as PersistedInternalAdminUserRow;
+      if (!persisted.active || !verifyOperatorPasswordHash(password, persisted.password_hash)) {
+        return undefined;
+      }
+
+      return toInternalAdminUserRecord(persisted);
+    },
+    async saveInternalAdminSession(session, authMethod) {
+      try {
+        await db
+          .insertInto("internal_admin_sessions")
+          .values({
+            access_token: session.accessToken,
+            refresh_token: session.refreshToken,
+            internal_admin_user_id: session.internalAdminUserId,
+            access_expires_at: session.expiresAt,
+            expires_at: session.refreshExpiresAt,
+            revoked_at: null,
+            auth_method: authMethod
+          })
+          .execute();
+        return;
+      } catch {
+        await db
+          .updateTable("internal_admin_sessions")
+          .set({
+            refresh_token: session.refreshToken,
+            internal_admin_user_id: session.internalAdminUserId,
+            access_expires_at: session.expiresAt,
+            expires_at: session.refreshExpiresAt,
+            revoked_at: null,
+            auth_method: authMethod,
+            updated_at: new Date().toISOString()
+          })
+          .where("access_token", "=", session.accessToken)
+          .execute();
+      }
+    },
+    async rotateInternalAdminRefreshSession(refreshToken, createNextSession, authMethod) {
+      return db.transaction().execute(async (trx) => {
+        const row = await trx
+          .selectFrom("internal_admin_sessions")
+          .selectAll()
+          .where("refresh_token", "=", refreshToken)
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (!row) {
+          return undefined;
+        }
+
+        const persisted = row as unknown as PersistedInternalAdminSessionRow;
+        const revokedAt = persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined;
+        if (!isRefreshSessionActive(parseIsoDate(persisted.expires_at), revokedAt)) {
+          return undefined;
+        }
+
+        await trx
+          .updateTable("internal_admin_sessions")
+          .set({
+            revoked_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .where("access_token", "=", persisted.access_token)
+          .execute();
+
+        const nextSession = createNextSession(persisted.internal_admin_user_id);
+        await trx
+          .insertInto("internal_admin_sessions")
+          .values({
+            access_token: nextSession.accessToken,
+            refresh_token: nextSession.refreshToken,
+            internal_admin_user_id: nextSession.internalAdminUserId,
+            access_expires_at: nextSession.expiresAt,
+            expires_at: nextSession.refreshExpiresAt,
+            revoked_at: null,
+            auth_method: authMethod
+          })
+          .execute();
+
+        return nextSession;
+      });
+    },
+    async getInternalAdminSessionByAccessToken(accessToken) {
+      const row = await db
+        .selectFrom("internal_admin_sessions")
+        .selectAll()
+        .where("access_token", "=", accessToken)
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      const persisted = row as unknown as PersistedInternalAdminSessionRow;
+      const session = toStoredInternalAdminSession(persisted);
+      const accessSession = authSessionSchema.parse({
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+        expiresAt: session.expiresAt,
+        userId: session.internalAdminUserId
+      });
+
+      if (!isAccessSessionActive(accessSession, persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined)) {
+        return undefined;
+      }
+
+      return session;
+    },
+    async getInternalAdminSessionByRefreshToken(refreshToken) {
+      const row = await db
+        .selectFrom("internal_admin_sessions")
+        .selectAll()
+        .where("refresh_token", "=", refreshToken)
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      const persisted = row as unknown as PersistedInternalAdminSessionRow;
+      if (!isRefreshSessionActive(parseIsoDate(persisted.expires_at), persisted.revoked_at ? parseIsoDate(persisted.revoked_at) : undefined)) {
+        return undefined;
+      }
+
+      return toStoredInternalAdminSession(persisted);
+    },
+    async revokeInternalAdminByRefreshToken(refreshToken) {
+      await db
+        .updateTable("internal_admin_sessions")
         .set({
           revoked_at: new Date().toISOString(),
           updated_at: new Date().toISOString()

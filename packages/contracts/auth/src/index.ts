@@ -155,6 +155,36 @@ export function resolveOperatorCapabilities(role: z.infer<typeof operatorRoleSch
   return [...operatorCapabilitiesByRole[role]];
 }
 
+export const internalAdminRoleSchema = z.enum(["platform_owner", "platform_operator", "support_readonly"]);
+export const internalAdminCapabilitySchema = z.enum([
+  "clients:read",
+  "clients:write",
+  "owners:read",
+  "owners:write",
+  "internal-admin-users:read",
+  "internal-admin-users:write"
+]);
+
+export const internalAdminCapabilitiesByRole = {
+  platform_owner: [
+    "clients:read",
+    "clients:write",
+    "owners:read",
+    "owners:write",
+    "internal-admin-users:read",
+    "internal-admin-users:write"
+  ],
+  platform_operator: ["clients:read", "clients:write", "owners:read", "owners:write"],
+  support_readonly: ["clients:read", "owners:read", "internal-admin-users:read"]
+} as const satisfies Record<
+  z.infer<typeof internalAdminRoleSchema>,
+  readonly z.infer<typeof internalAdminCapabilitySchema>[]
+>;
+
+export function resolveInternalAdminCapabilities(role: z.infer<typeof internalAdminRoleSchema>) {
+  return [...internalAdminCapabilitiesByRole[role]];
+}
+
 export const operatorUserSchema = z.object({
   operatorUserId: z.string().uuid(),
   displayName: z.string().min(1),
@@ -174,7 +204,26 @@ export const operatorSessionSchema = z.object({
   operator: operatorUserSchema
 });
 
+export const internalAdminUserSchema = z.object({
+  internalAdminUserId: z.string().uuid(),
+  displayName: z.string().min(1),
+  email: z.string().trim().email(),
+  role: internalAdminRoleSchema,
+  active: z.boolean(),
+  capabilities: z.array(internalAdminCapabilitySchema),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const internalAdminSessionSchema = z.object({
+  accessToken: z.string().min(1),
+  refreshToken: z.string().min(1),
+  expiresAt: z.string().datetime(),
+  admin: internalAdminUserSchema
+});
+
 export const operatorMeResponseSchema = operatorUserSchema;
+export const internalAdminMeResponseSchema = internalAdminUserSchema;
 
 export const operatorUserListResponseSchema = z.object({
   users: z.array(operatorUserSchema)
@@ -228,6 +277,11 @@ export const internalOwnerSummarySchema = z.object({
 });
 
 export const operatorPasswordSignInSchema = z.object({
+  email: z.string().trim().email(),
+  password: operatorPasswordSchema
+});
+
+export const internalAdminPasswordSignInSchema = z.object({
   email: z.string().trim().email(),
   password: operatorPasswordSchema
 });
@@ -386,9 +440,43 @@ export const operatorAuthContract = {
   }
 } as const;
 
+export const internalAdminAuthContract = {
+  basePath: "/internal-admin/auth",
+  routes: {
+    signIn: {
+      method: "POST",
+      path: "/sign-in",
+      request: internalAdminPasswordSignInSchema,
+      response: internalAdminSessionSchema
+    },
+    refresh: {
+      method: "POST",
+      path: "/refresh",
+      request: refreshRequestSchema,
+      response: internalAdminSessionSchema
+    },
+    logout: {
+      method: "POST",
+      path: "/logout",
+      request: logoutRequestSchema,
+      response: z.object({ success: z.literal(true) })
+    },
+    me: {
+      method: "GET",
+      path: "/me",
+      request: z.undefined(),
+      response: internalAdminMeResponseSchema
+    }
+  }
+} as const;
+
 export type OperatorRole = z.output<typeof operatorRoleSchema>;
 export type OperatorCapability = z.output<typeof operatorCapabilitySchema>;
 export type OperatorUser = z.output<typeof operatorUserSchema>;
+export type InternalAdminRole = z.output<typeof internalAdminRoleSchema>;
+export type InternalAdminCapability = z.output<typeof internalAdminCapabilitySchema>;
+export type InternalAdminUser = z.output<typeof internalAdminUserSchema>;
+export type InternalAdminSession = z.output<typeof internalAdminSessionSchema>;
 export type InternalOwnerProvisionRequest = z.output<typeof internalOwnerProvisionRequestSchema>;
 export type InternalOwnerProvisionResponse = z.output<typeof internalOwnerProvisionResponseSchema>;
 export type InternalOwnerSummary = z.output<typeof internalOwnerSummarySchema>;

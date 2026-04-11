@@ -6,6 +6,8 @@ describe("gateway", () => {
   const authHeader = { authorization: "Bearer access-token" } as const;
   const ownerOperatorHeaders = { authorization: "Bearer operator-owner-access-token" } as const;
   const staffOperatorHeaders = { authorization: "Bearer operator-staff-access-token" } as const;
+  const ownerInternalAdminHeaders = { authorization: "Bearer internal-admin-owner-access-token" } as const;
+  const readonlyInternalAdminHeaders = { authorization: "Bearer internal-admin-readonly-access-token" } as const;
   let previousIdentityBaseUrl: string | undefined;
   let previousOrdersBaseUrl: string | undefined;
   let previousCatalogBaseUrl: string | undefined;
@@ -13,7 +15,6 @@ describe("gateway", () => {
   let previousLoyaltyBaseUrl: string | undefined;
   let previousNotificationsBaseUrl: string | undefined;
   let previousGatewayInternalToken: string | undefined;
-  let previousInternalAdminToken: string | undefined;
   let previousOrdersInternalToken: string | undefined;
   let previousGatewayOrderStreamPollMs: string | undefined;
   let previousNodeEnv: string | undefined;
@@ -80,7 +81,6 @@ describe("gateway", () => {
     previousLoyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL;
     previousNotificationsBaseUrl = process.env.NOTIFICATIONS_SERVICE_BASE_URL;
     previousGatewayInternalToken = process.env.GATEWAY_INTERNAL_API_TOKEN;
-    previousInternalAdminToken = process.env.INTERNAL_ADMIN_API_TOKEN;
     previousOrdersInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
     previousGatewayOrderStreamPollMs = process.env.GATEWAY_ORDER_STREAM_POLL_MS;
     previousNodeEnv = process.env.NODE_ENV;
@@ -92,7 +92,6 @@ describe("gateway", () => {
     process.env.LOYALTY_SERVICE_BASE_URL = "http://loyalty.internal";
     process.env.NOTIFICATIONS_SERVICE_BASE_URL = "http://notifications.internal";
     process.env.GATEWAY_INTERNAL_API_TOKEN = "gateway-test-token";
-    process.env.INTERNAL_ADMIN_API_TOKEN = "internal-admin-token";
     process.env.ORDERS_INTERNAL_API_TOKEN = "orders-internal-token";
     vi.stubGlobal("fetch", fetchMock);
 
@@ -392,6 +391,112 @@ describe("gateway", () => {
         }
 
         return new Response(JSON.stringify(operator), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/v1/internal-admin/auth/sign-in") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { email?: string };
+        return new Response(
+          JSON.stringify({
+            accessToken: "internal-admin-owner-access-token",
+            refreshToken: "internal-admin-owner-refresh-token",
+            expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+            admin: {
+              internalAdminUserId: "223e4567-e89b-12d3-a456-426614174999",
+              displayName: "Platform Owner",
+              email: body.email ?? "admin@gazellecoffee.com",
+              role: "platform_owner",
+              active: true,
+              capabilities: [
+                "clients:read",
+                "clients:write",
+                "owners:read",
+                "owners:write",
+                "internal-admin-users:read",
+                "internal-admin-users:write"
+              ],
+              createdAt: "2026-03-20T00:00:00.000Z",
+              updatedAt: "2026-03-20T00:00:00.000Z"
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/v1/internal-admin/auth/logout") && method === "POST") {
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url.endsWith("/v1/internal-admin/auth/me") && method === "GET") {
+        if (!authHeader) {
+          return new Response(
+            JSON.stringify({
+              code: "UNAUTHORIZED",
+              message: "Missing or invalid auth token",
+              requestId: "identity-stub"
+            }),
+            { status: 401, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        const adminByToken: Record<string, Record<string, unknown>> = {
+          "Bearer internal-admin-owner-access-token": {
+            internalAdminUserId: "223e4567-e89b-12d3-a456-426614174999",
+            displayName: "Platform Owner",
+            email: "admin@gazellecoffee.com",
+            role: "platform_owner",
+            active: true,
+            capabilities: [
+              "clients:read",
+              "clients:write",
+              "owners:read",
+              "owners:write",
+              "internal-admin-users:read",
+              "internal-admin-users:write"
+            ],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z"
+          },
+          "Bearer internal-admin-operator-access-token": {
+            internalAdminUserId: "223e4567-e89b-12d3-a456-426614174998",
+            displayName: "Platform Operator",
+            email: "ops@gazellecoffee.com",
+            role: "platform_operator",
+            active: true,
+            capabilities: ["clients:read", "clients:write", "owners:read", "owners:write"],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z"
+          },
+          "Bearer internal-admin-readonly-access-token": {
+            internalAdminUserId: "223e4567-e89b-12d3-a456-426614174997",
+            displayName: "Support Read Only",
+            email: "support@gazellecoffee.com",
+            role: "support_readonly",
+            active: true,
+            capabilities: ["clients:read", "owners:read", "internal-admin-users:read"],
+            createdAt: "2026-03-20T00:00:00.000Z",
+            updatedAt: "2026-03-20T00:00:00.000Z"
+          }
+        };
+
+        const admin = adminByToken[authHeader];
+        if (!admin) {
+          return new Response(
+            JSON.stringify({
+              code: "UNAUTHORIZED",
+              message: "Missing or invalid auth token",
+              requestId: "identity-stub"
+            }),
+            { status: 401, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        return new Response(JSON.stringify(admin), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -1313,12 +1418,6 @@ describe("gateway", () => {
       process.env.GATEWAY_INTERNAL_API_TOKEN = previousGatewayInternalToken;
     }
 
-    if (previousInternalAdminToken === undefined) {
-      delete process.env.INTERNAL_ADMIN_API_TOKEN;
-    } else {
-      process.env.INTERNAL_ADMIN_API_TOKEN = previousInternalAdminToken;
-    }
-
     if (previousOrdersInternalToken === undefined) {
       delete process.env.ORDERS_INTERNAL_API_TOKEN;
     } else {
@@ -2210,15 +2309,13 @@ describe("gateway", () => {
     await app.close();
   });
 
-  it("forwards internal pilot bootstrap routes with the internal admin token", async () => {
+  it("forwards internal pilot bootstrap routes for authenticated internal admins", async () => {
     const app = await buildApp();
 
     const bootstrapResponse = await app.inject({
       method: "POST",
       url: "/v1/internal/locations/bootstrap",
-      headers: {
-        "x-internal-admin-token": "internal-admin-token"
-      },
+      headers: ownerInternalAdminHeaders,
       payload: {
         brandId: "northside-coffee",
         brandName: "Northside Coffee",
@@ -2237,9 +2334,7 @@ describe("gateway", () => {
     const listResponse = await app.inject({
       method: "GET",
       url: "/v1/internal/locations",
-      headers: {
-        "x-internal-admin-token": "internal-admin-token"
-      }
+      headers: ownerInternalAdminHeaders
     });
     expect(listResponse.statusCode).toBe(200);
     expect(listResponse.json()).toMatchObject({
@@ -2254,9 +2349,7 @@ describe("gateway", () => {
     const ownerResponse = await app.inject({
       method: "POST",
       url: "/v1/internal/locations/northside-01/owner/provision",
-      headers: {
-        "x-internal-admin-token": "internal-admin-token"
-      },
+      headers: ownerInternalAdminHeaders,
       payload: {
         displayName: "Pilot Owner",
         email: "owner@northside.com"
@@ -2275,9 +2368,7 @@ describe("gateway", () => {
     const ownerSummaryResponse = await app.inject({
       method: "GET",
       url: "/v1/internal/locations/northside-01/owner",
-      headers: {
-        "x-internal-admin-token": "internal-admin-token"
-      }
+      headers: ownerInternalAdminHeaders
     });
     expect(ownerSummaryResponse.statusCode).toBe(200);
     expect(ownerSummaryResponse.json()).toMatchObject({
@@ -2291,9 +2382,7 @@ describe("gateway", () => {
     const summaryResponse = await app.inject({
       method: "GET",
       url: "/v1/internal/locations/northside-01",
-      headers: {
-        "x-internal-admin-token": "internal-admin-token"
-      }
+      headers: ownerInternalAdminHeaders
     });
     expect(summaryResponse.statusCode).toBe(200);
     expect(summaryResponse.json()).toMatchObject({
@@ -2315,7 +2404,7 @@ describe("gateway", () => {
     await app.close();
   });
 
-  it("rejects internal pilot routes without the internal admin token", async () => {
+  it("rejects internal pilot routes without internal admin auth", async () => {
     const app = await buildApp();
 
     const response = await app.inject({
@@ -2333,6 +2422,34 @@ describe("gateway", () => {
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({
       code: "UNAUTHORIZED_INTERNAL_ADMIN"
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "http://catalog.internal/v1/catalog/internal/locations/bootstrap",
+      expect.anything()
+    );
+
+    await app.close();
+  });
+
+  it("rejects internal admin mutations without the required capability", async () => {
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/internal/locations/bootstrap",
+      headers: readonlyInternalAdminHeaders,
+      payload: {
+        brandId: "northside-coffee",
+        brandName: "Northside Coffee",
+        locationId: "northside-01",
+        locationName: "Northside Flagship",
+        marketLabel: "Detroit, MI"
+      }
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({
+      code: "FORBIDDEN"
     });
     expect(fetchMock).not.toHaveBeenCalledWith(
       "http://catalog.internal/v1/catalog/internal/locations/bootstrap",
