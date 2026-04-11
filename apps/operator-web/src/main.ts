@@ -98,12 +98,21 @@ type AppState = {
   busyTeamUserId: string | null;
   savingStore: boolean;
   creatingMenuItem: boolean;
+  menuCreateWizardOpen: boolean;
+  menuCreateWizardStep: 1 | 2 | 3;
   creatingNewsCard: boolean;
   creatingTeamUser: boolean;
   lastRefreshedAt: number | null;
   autoRefreshHandle: ReturnType<typeof setInterval> | null;
   pendingCancelOrderId: string | null;
   pendingCancelTimeoutHandle: ReturnType<typeof setTimeout> | null;
+  menuCreateDraft: {
+    categoryId: string;
+    name: string;
+    description: string;
+    priceCents: string;
+    visible: boolean;
+  };
 };
 
 const ordersRefreshIntervalMs = 30_000;
@@ -148,13 +157,120 @@ const state: AppState = {
   busyTeamUserId: null,
   savingStore: false,
   creatingMenuItem: false,
+  menuCreateWizardOpen: false,
+  menuCreateWizardStep: 1,
   creatingNewsCard: false,
   creatingTeamUser: false,
   lastRefreshedAt: null,
   autoRefreshHandle: null,
   pendingCancelOrderId: null,
-  pendingCancelTimeoutHandle: null
+  pendingCancelTimeoutHandle: null,
+  menuCreateDraft: {
+    categoryId: "",
+    name: "",
+    description: "",
+    priceCents: "675",
+    visible: true
+  }
 };
+
+function getDefaultMenuCreateDraft() {
+  return {
+    categoryId: state.menuCategories[0]?.categoryId ?? "",
+    name: "",
+    description: "",
+    priceCents: "675",
+    visible: true
+  };
+}
+
+function resetMenuCreateWizard() {
+  state.menuCreateWizardOpen = false;
+  state.menuCreateWizardStep = 1;
+  state.menuCreateDraft = getDefaultMenuCreateDraft();
+}
+
+function openMenuCreateWizard() {
+  state.menuCreateWizardOpen = true;
+  state.menuCreateWizardStep = 1;
+  state.menuCreateDraft = getDefaultMenuCreateDraft();
+}
+
+function reconcileMenuCreateDraft() {
+  const fallbackCategoryId = state.menuCategories[0]?.categoryId ?? "";
+  if (!state.menuCategories.some((category) => category.categoryId === state.menuCreateDraft.categoryId)) {
+    state.menuCreateDraft.categoryId = fallbackCategoryId;
+  }
+
+  if (state.menuCategories.length === 0) {
+    state.menuCreateWizardOpen = false;
+    state.menuCreateWizardStep = 1;
+  }
+}
+
+function syncMenuCreateDraft(target: EventTarget | null) {
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  const form = target.closest<HTMLFormElement>('form[data-form="menu-create"]');
+  if (!form) {
+    return;
+  }
+
+  if (target.name === "visible" && target instanceof HTMLInputElement) {
+    state.menuCreateDraft.visible = target.checked;
+    return;
+  }
+
+  if (target.name === "categoryId") {
+    state.menuCreateDraft.categoryId = target.value;
+    return;
+  }
+
+  if (target.name === "name") {
+    state.menuCreateDraft.name = target.value;
+    return;
+  }
+
+  if (target.name === "description") {
+    state.menuCreateDraft.description = target.value;
+    return;
+  }
+
+  if (target.name === "priceCents") {
+    state.menuCreateDraft.priceCents = target.value;
+  }
+}
+
+function advanceMenuCreateWizard() {
+  if (state.menuCreateWizardStep === 1) {
+    if (!state.menuCreateDraft.categoryId) {
+      setError("Choose a menu category before continuing.");
+      render();
+      return;
+    }
+    state.menuCreateWizardStep = 2;
+  } else if (state.menuCreateWizardStep === 2) {
+    if (!state.menuCreateDraft.name.trim()) {
+      setError("Add an item name before continuing.");
+      render();
+      return;
+    }
+    state.menuCreateWizardStep = 3;
+  }
+
+  setError(null);
+  render();
+}
+
+function retreatMenuCreateWizard() {
+  if (state.menuCreateWizardStep > 1) {
+    state.menuCreateWizardStep = (state.menuCreateWizardStep - 1) as 1 | 2 | 3;
+    setError(null);
+    render();
+  }
+}
 
 function escapeHtml(value: string | undefined | null) {
   return String(value ?? "")
@@ -739,6 +855,7 @@ function resetDashboardData() {
   state.busyTeamUserId = null;
   state.savingStore = false;
   state.creatingMenuItem = false;
+  resetMenuCreateWizard();
   state.creatingNewsCard = false;
   state.creatingTeamUser = false;
 }
@@ -805,6 +922,7 @@ async function loadDashboard() {
     state.appConfig = snapshot.appConfig;
     state.orders = snapshot.orders;
     state.menuCategories = snapshot.menu.categories;
+    reconcileMenuCreateDraft();
     state.menuCustomizationDrafts = snapshotCustomizationDrafts(snapshot.menu.categories);
     state.newsCards = snapshot.cards;
     state.storeConfig = snapshot.storeConfig;
@@ -1690,38 +1808,14 @@ function renderMenuSection() {
           <div class="dash-surface-head">
             <div>
               <div class="dash-panel-title">Create item</div>
-              <h3 class="dash-surface-title">Add to the synced menu</h3>
+              <h3 class="dash-surface-title">Add menu items with a guided flow</h3>
+              <p class="muted-copy">Pick a category, fill in the item details, then review pricing before you save.</p>
             </div>
-          </div>
-          <form class="dash-inline-form dash-inline-form--menu" data-form="menu-create">
-            <label class="field dash-field-inline">
-              <span>Category</span>
-              <select name="categoryId">
-                ${state.menuCategories
-                  .map((category) => `<option value="${escapeHtml(category.categoryId)}">${escapeHtml(category.title)}</option>`)
-                  .join("")}
-              </select>
-            </label>
-            <label class="field dash-field-inline">
-              <span>Name</span>
-              <input name="name" placeholder="Seasonal latte" required />
-            </label>
-            <label class="field dash-field-inline">
-              <span>Description</span>
-              <input name="description" placeholder="Short item description" />
-            </label>
-            <label class="field dash-field-inline">
-              <span>Price (cents)</span>
-              <input name="priceCents" type="number" min="0" step="1" value="675" required />
-            </label>
-            <label class="toggle dash-toggle-inline">
-              <input type="checkbox" name="visible" checked />
-              <span>Visible</span>
-            </label>
-            <button class="button button--primary" type="submit" ${state.creatingMenuItem ? "disabled" : ""}>
-              ${state.creatingMenuItem ? "Creating…" : "Create item"}
+            <button class="button button--primary" type="button" data-action="open-menu-create-wizard">
+              Add menu item
             </button>
-          </form>
+          </div>
+          <div class="dash-empty-copy">The wizard opens in a popup so longer fields and pricing controls have enough space.</div>
         </article>
       `
     : canWrite
@@ -1749,6 +1843,141 @@ function renderMenuSection() {
         }
       </article>
     </section>
+  `;
+}
+
+function renderMenuCreateWizard() {
+  if (!state.menuCreateWizardOpen) {
+    return "";
+  }
+
+  const selectedCategoryTitle =
+    state.menuCategories.find((category) => category.categoryId === state.menuCreateDraft.categoryId)?.title ?? "Unassigned";
+  const step = state.menuCreateWizardStep;
+  const canGoBack = step > 1;
+
+  return `
+    <div class="dash-modal" role="presentation">
+      <button
+        class="dash-modal__backdrop"
+        type="button"
+        data-action="close-menu-create-wizard"
+        aria-label="Close add menu item wizard"
+        ${state.creatingMenuItem ? "disabled" : ""}
+      ></button>
+      <div class="dash-modal__dialog dash-modal__dialog--wizard" role="dialog" aria-modal="true" aria-labelledby="menu-create-wizard-title">
+        <div class="dash-modal__header">
+          <div>
+            <div class="dash-panel-title">Add menu item</div>
+            <h3 class="dash-surface-title" id="menu-create-wizard-title">Create a new menu item</h3>
+          </div>
+          <button class="button button--ghost" type="button" data-action="close-menu-create-wizard" ${state.creatingMenuItem ? "disabled" : ""}>
+            Close
+          </button>
+        </div>
+        <div class="dash-wizard-steps" aria-label="Wizard progress">
+          <div class="dash-wizard-step ${step === 1 ? "dash-wizard-step--active" : step > 1 ? "dash-wizard-step--complete" : ""}">
+            <span>1</span>
+            <strong>Placement</strong>
+          </div>
+          <div class="dash-wizard-step ${step === 2 ? "dash-wizard-step--active" : step > 2 ? "dash-wizard-step--complete" : ""}">
+            <span>2</span>
+            <strong>Details</strong>
+          </div>
+          <div class="dash-wizard-step ${step === 3 ? "dash-wizard-step--active" : ""}">
+            <span>3</span>
+            <strong>Pricing</strong>
+          </div>
+        </div>
+        <form class="dash-wizard-form" data-form="menu-create">
+          ${
+            step === 1
+              ? `
+                  <div class="dash-wizard-body">
+                    <label class="field">
+                      <span>Category</span>
+                      <select name="categoryId" required>
+                        ${state.menuCategories
+                          .map(
+                            (category) =>
+                              `<option value="${escapeHtml(category.categoryId)}" ${
+                                category.categoryId === state.menuCreateDraft.categoryId ? "selected" : ""
+                              }>${escapeHtml(category.title)}</option>`
+                          )
+                          .join("")}
+                      </select>
+                    </label>
+                    <label class="toggle dash-toggle-inline dash-toggle-inline--wizard">
+                      <input type="checkbox" name="visible" ${state.menuCreateDraft.visible ? "checked" : ""} />
+                      <span>Make this item visible as soon as it is created</span>
+                    </label>
+                    <div class="dash-wizard-note">
+                      The item will be created inside <strong>${escapeHtml(selectedCategoryTitle)}</strong>.
+                    </div>
+                  </div>
+                `
+              : ""
+          }
+          ${
+            step === 2
+              ? `
+                  <div class="dash-wizard-body dash-wizard-body--stacked">
+                    <label class="field">
+                      <span>Name</span>
+                      <input name="name" placeholder="Honey Cardamom Cold Brew" value="${escapeHtml(state.menuCreateDraft.name)}" required />
+                    </label>
+                    <label class="field">
+                      <span>Description</span>
+                      <textarea name="description" rows="4" placeholder="Short item description for the customer menu.">${escapeHtml(state.menuCreateDraft.description)}</textarea>
+                    </label>
+                  </div>
+                `
+              : ""
+          }
+          ${
+            step === 3
+              ? `
+                  <div class="dash-wizard-review">
+                    <div class="dash-wizard-body dash-wizard-body--split">
+                      <label class="field">
+                        <span>Price (cents)</span>
+                        <input name="priceCents" type="number" min="0" step="1" value="${escapeHtml(state.menuCreateDraft.priceCents)}" required />
+                      </label>
+                      <div class="dash-wizard-summary">
+                        <div class="dash-panel-title">Review</div>
+                        <dl class="dash-wizard-summary-list">
+                          <div><dt>Category</dt><dd>${escapeHtml(selectedCategoryTitle)}</dd></div>
+                          <div><dt>Name</dt><dd>${escapeHtml(state.menuCreateDraft.name || "Not provided")}</dd></div>
+                          <div><dt>Description</dt><dd>${escapeHtml(state.menuCreateDraft.description || "No description")}</dd></div>
+                          <div><dt>Price</dt><dd>${escapeHtml(state.menuCreateDraft.priceCents || "0")} cents</dd></div>
+                          <div><dt>Visibility</dt><dd>${state.menuCreateDraft.visible ? "Visible" : "Hidden"}</dd></div>
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                `
+              : ""
+          }
+          <div class="dash-wizard-actions">
+            <button class="button button--ghost" type="button" data-action="close-menu-create-wizard" ${state.creatingMenuItem ? "disabled" : ""}>
+              Cancel
+            </button>
+            <div class="dash-wizard-actions__group">
+              ${
+                canGoBack
+                  ? `<button class="button button--secondary" type="button" data-action="menu-create-prev" ${state.creatingMenuItem ? "disabled" : ""}>Back</button>`
+                  : ""
+              }
+              ${
+                step < 3
+                  ? `<button class="button button--primary" type="button" data-action="menu-create-next" ${state.creatingMenuItem ? "disabled" : ""}>Continue</button>`
+                  : `<button class="button button--primary" type="submit" ${state.creatingMenuItem ? "disabled" : ""}>${state.creatingMenuItem ? "Creating…" : "Create item"}</button>`
+              }
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
   `;
 }
 
@@ -2077,6 +2306,7 @@ function renderDashboardContent() {
 
 function renderDashboard() {
   ensureSectionIsAvailable();
+  reconcileMenuCreateDraft();
   const locationLabel = state.appConfig?.brand.locationName ?? state.storeConfig?.storeName ?? "Client dashboard";
   const marketLabel = state.appConfig?.brand.marketLabel ?? "Store operations";
   const liveEnabled = isStaffDashboardEnabled(state.appConfig) && isOrderTrackingEnabled(state.appConfig);
@@ -2129,6 +2359,7 @@ function renderDashboard() {
           ${renderDashboardContent()}
         </div>
       </div>
+      ${renderMenuCreateWizard()}
     </div>
   `;
 }
@@ -2253,6 +2484,7 @@ async function handleGoogleCallback() {
 }
 
 async function handleMenuCreateSubmit(form: HTMLFormElement) {
+  void form;
   if (!state.session) {
     return;
   }
@@ -2263,23 +2495,19 @@ async function handleMenuCreateSubmit(form: HTMLFormElement) {
     return;
   }
 
-  const formData = new FormData(form);
-  const visibleField = form.elements.namedItem("visible");
-  const visible = visibleField instanceof HTMLInputElement ? visibleField.checked : true;
-
   try {
     state.creatingMenuItem = true;
     setError(null);
     render();
     await createOperatorMenuItem(state.session, {
-      categoryId: formData.get("categoryId"),
-      name: formData.get("name"),
-      description: formData.get("description"),
-      priceCents: formData.get("priceCents"),
-      visible
+      categoryId: state.menuCreateDraft.categoryId,
+      name: state.menuCreateDraft.name,
+      description: state.menuCreateDraft.description,
+      priceCents: state.menuCreateDraft.priceCents,
+      visible: state.menuCreateDraft.visible
     });
     setNotice("Created menu item.");
-    form.reset();
+    resetMenuCreateWizard();
     await loadDashboard();
   } catch (error) {
     await handleOperatorActionError(error, "Unable to create menu item.");
@@ -2740,10 +2968,12 @@ root.addEventListener("submit", (event) => {
 });
 
 root.addEventListener("input", (event) => {
+  syncMenuCreateDraft(event.target);
   updateCustomizationDraftFromInput(event.target);
 });
 
 root.addEventListener("change", (event) => {
+  syncMenuCreateDraft(event.target);
   updateCustomizationDraftFromInput(event.target);
 });
 
@@ -2761,6 +2991,32 @@ root.addEventListener("click", (event) => {
   const action = actionElement.dataset.action;
   if (action === "refresh") {
     void loadDashboard();
+    return;
+  }
+
+  if (action === "open-menu-create-wizard") {
+    openMenuCreateWizard();
+    setError(null);
+    render();
+    return;
+  }
+
+  if (action === "close-menu-create-wizard") {
+    if (!state.creatingMenuItem) {
+      resetMenuCreateWizard();
+      setError(null);
+      render();
+    }
+    return;
+  }
+
+  if (action === "menu-create-next") {
+    advanceMenuCreateWizard();
+    return;
+  }
+
+  if (action === "menu-create-prev") {
+    retreatMenuCreateWizard();
     return;
   }
 
