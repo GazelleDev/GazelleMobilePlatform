@@ -50,6 +50,7 @@ export async function up(db: MigrationDb): Promise<void> {
   `.execute(db);
 }
 
-export async function down(_: MigrationDb): Promise<void> {
+export async function down(db: MigrationDb): Promise<void> {
+  void db;
   // Irreversible data cleanup.
 }
