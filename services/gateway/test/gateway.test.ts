@@ -17,6 +17,8 @@ describe("gateway", () => {
   let previousGatewayInternalToken: string | undefined;
   let previousOrdersInternalToken: string | undefined;
   let previousGatewayOrderStreamPollMs: string | undefined;
+  let previousCorsAllowedOrigins: string | undefined;
+  let previousFreeClientDashboardDomain: string | undefined;
   let previousNodeEnv: string | undefined;
   let queuedOrderStatuses: Map<string, Array<"PENDING_PAYMENT" | "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED">>;
 
@@ -83,6 +85,8 @@ describe("gateway", () => {
     previousGatewayInternalToken = process.env.GATEWAY_INTERNAL_API_TOKEN;
     previousOrdersInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
     previousGatewayOrderStreamPollMs = process.env.GATEWAY_ORDER_STREAM_POLL_MS;
+    previousCorsAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS;
+    previousFreeClientDashboardDomain = process.env.FREE_CLIENT_DASHBOARD_DOMAIN;
     previousNodeEnv = process.env.NODE_ENV;
     queuedOrderStatuses = new Map();
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
@@ -1437,6 +1441,18 @@ describe("gateway", () => {
       process.env.GATEWAY_ORDER_STREAM_POLL_MS = previousGatewayOrderStreamPollMs;
     }
 
+    if (previousCorsAllowedOrigins === undefined) {
+      delete process.env.CORS_ALLOWED_ORIGINS;
+    } else {
+      process.env.CORS_ALLOWED_ORIGINS = previousCorsAllowedOrigins;
+    }
+
+    if (previousFreeClientDashboardDomain === undefined) {
+      delete process.env.FREE_CLIENT_DASHBOARD_DOMAIN;
+    } else {
+      process.env.FREE_CLIENT_DASHBOARD_DOMAIN = previousFreeClientDashboardDomain;
+    }
+
     if (previousNodeEnv === undefined) {
       delete process.env.NODE_ENV;
     } else {
@@ -1478,6 +1494,59 @@ describe("gateway", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    await app.close();
+  });
+
+  it("allows common local dashboard origins through CORS", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: {
+        origin: "http://127.0.0.1:4173"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:4173");
+    await app.close();
+  });
+
+  it("derives the deployed dashboard origin from FREE_CLIENT_DASHBOARD_DOMAIN", async () => {
+    delete process.env.CORS_ALLOWED_ORIGINS;
+    process.env.FREE_CLIENT_DASHBOARD_DOMAIN = "client.example.com";
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: {
+        origin: "https://client.example.com"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe("https://client.example.com");
+    await app.close();
+  });
+
+  it("allows dashboard write-method preflights through CORS", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/admin/staff/123e4567-e89b-12d3-a456-426614174999",
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "PATCH",
+        "access-control-request-headers": "authorization,content-type"
+      }
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(response.headers["access-control-allow-methods"]).toContain("PATCH");
+    expect(response.headers["access-control-allow-methods"]).toContain("PUT");
+    expect(response.headers["access-control-allow-headers"]).toContain("Authorization");
+    expect(response.headers["access-control-allow-headers"]).toContain("Content-Type");
     await app.close();
   });
 

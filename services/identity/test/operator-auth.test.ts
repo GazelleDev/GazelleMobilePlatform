@@ -377,4 +377,71 @@ describe("operator auth", () => {
 
     await app.close();
   });
+
+  it("updates the current location owner through the gateway-protected internal route", async () => {
+    process.env.GATEWAY_INTERNAL_API_TOKEN = "identity-gateway-token";
+    const repository = createInMemoryIdentityRepository();
+    const { sender } = createCapturingMailSender();
+    const app = await buildApp({ repository, mailSender: sender });
+
+    const initialResponse = await app.inject({
+      method: "POST",
+      url: "/v1/identity/internal/locations/pilot-01/owner/provision",
+      headers: {
+        "x-gateway-token": "identity-gateway-token"
+      },
+      payload: {
+        displayName: "Pilot Owner",
+        email: "pilot.owner@example.com"
+      }
+    });
+
+    expect(initialResponse.statusCode).toBe(200);
+    expect(internalOwnerProvisionResponseSchema.parse(initialResponse.json())).toMatchObject({
+      action: "created",
+      operator: {
+        email: "pilot.owner@example.com",
+        locationId: "pilot-01",
+        role: "owner"
+      }
+    });
+
+    const correctedResponse = await app.inject({
+      method: "POST",
+      url: "/v1/identity/internal/locations/pilot-01/owner/provision",
+      headers: {
+        "x-gateway-token": "identity-gateway-token"
+      },
+      payload: {
+        displayName: "Pilot Owner",
+        email: "pilot.corrected@example.com"
+      }
+    });
+
+    expect(correctedResponse.statusCode).toBe(200);
+    const corrected = internalOwnerProvisionResponseSchema.parse(correctedResponse.json());
+    expect(corrected.action).toBe("updated");
+    expect(corrected.operator.email).toBe("pilot.corrected@example.com");
+    expect(corrected.operator.locationId).toBe("pilot-01");
+    expect(corrected.operator.role).toBe("owner");
+
+    const summaryResponse = await app.inject({
+      method: "GET",
+      url: "/v1/identity/internal/locations/pilot-01/owner",
+      headers: {
+        "x-gateway-token": "identity-gateway-token"
+      }
+    });
+
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(internalOwnerSummarySchema.parse(summaryResponse.json())).toMatchObject({
+      locationId: "pilot-01",
+      owner: {
+        email: "pilot.corrected@example.com",
+        role: "owner"
+      }
+    });
+
+    await app.close();
+  });
 });

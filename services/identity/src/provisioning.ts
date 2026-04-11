@@ -94,22 +94,49 @@ export async function provisionOwnerAccess(
   repository: IdentityRepository,
   input: OwnerProvisioningArgs
 ): Promise<OwnerProvisioningResult> {
-  const existing = await repository.getOperatorUserByEmail(input.email);
+  const displayName = input.displayName.trim();
+  const email = input.email.trim();
+  const locationId = input.locationId.trim();
   const temporaryPassword = input.password?.trim() || generateTemporaryOwnerPassword();
+  const existingOwner = (await repository.listOperatorUsers(locationId)).find((operator) => operator.role === "owner");
 
+  if (existingOwner && existingOwner.email !== email) {
+    const updatedOwner =
+      (await repository.updateOperatorUser(existingOwner.operatorUserId, {
+        displayName,
+        email,
+        role: "owner",
+        active: true,
+        password: temporaryPassword
+      })) ??
+      (await repository.createOperatorUser({
+        displayName,
+        email,
+        role: "owner",
+        locationId,
+        password: temporaryPassword
+      }));
+
+    return {
+      operator: updatedOwner,
+      temporaryPassword,
+      action: "updated"
+    };
+  }
+
+  const existing = await repository.getOperatorUserByEmail(email);
   const provisioned = await repository.createOperatorUser({
-    displayName: input.displayName.trim(),
-    email: input.email.trim(),
+    displayName,
+    email,
     role: "owner",
-    locationId: input.locationId.trim(),
+    locationId,
     password: temporaryPassword
   });
-
   const operator =
     existing === undefined
       ? provisioned
-      : ((await repository.updateOperatorUser(provisioned.operatorUserId, {
-          displayName: input.displayName.trim(),
+      : ((await repository.updateOperatorUser(existing.operatorUserId, {
+          displayName,
           role: "owner",
           active: true,
           password: temporaryPassword

@@ -6,8 +6,52 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { registerRoutes } from "./routes.js";
 
+const defaultCorsAllowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:4173",
+  "http://127.0.0.1:4173",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:8080",
+  "http://127.0.0.1:8080"
+];
+
+function parseOriginCandidate(value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  return trimmed
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .flatMap((entry) => {
+      const withScheme = /^https?:\/\//i.test(entry) ? entry : `https://${entry}`;
+
+      try {
+        return [new URL(withScheme).origin];
+      } catch {
+        return [];
+      }
+    });
+}
+
+function resolveAllowedCorsOrigins() {
+  return new Set([
+    ...defaultCorsAllowedOrigins,
+    ...parseOriginCandidate(process.env.CORS_ALLOWED_ORIGINS),
+    ...parseOriginCandidate(process.env.FREE_CLIENT_DASHBOARD_DOMAIN),
+    ...parseOriginCandidate(process.env.CLIENT_DASHBOARD_ORIGIN),
+    ...parseOriginCandidate(process.env.ADMIN_CONSOLE_CLIENT_DASHBOARD_URL),
+    ...parseOriginCandidate(process.env.PUBLIC_API_BASE_URL)
+  ]);
+}
+
 export async function buildApp() {
   const publicApiBaseUrl = process.env.PUBLIC_API_BASE_URL ?? "http://localhost:8080/v1";
+  const allowedCorsOrigins = resolveAllowedCorsOrigins();
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
@@ -30,16 +74,15 @@ export async function buildApp() {
 
   await app.register(cors, {
     origin: (origin, cb) => {
-      const allowed = (process.env.CORS_ALLOWED_ORIGINS ?? "http://localhost:3000,http://localhost:5173,http://localhost:8080")
-        .split(",")
-        .map((value) => value.trim());
-      if (!origin || allowed.includes(origin)) {
+      if (!origin || allowedCorsOrigins.has(origin)) {
         cb(null, true);
       } else {
         cb(new Error("Not allowed by CORS"), false);
       }
     },
     credentials: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Authorization", "Content-Type", "X-Requested-With"],
   });
 
   await app.register(rateLimit, {

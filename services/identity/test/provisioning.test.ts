@@ -81,4 +81,38 @@ describe("owner provisioning", () => {
 
     await repository.close();
   });
+
+  it("updates the existing location owner when the email is corrected", async () => {
+    const repository = createInMemoryIdentityRepository();
+
+    const initial = await provisionOwnerAccess(repository, {
+      allowInMemory: true,
+      displayName: "Rawaq Owner",
+      email: "wrong@rawaq.com",
+      locationId: "rawaqcoffee01",
+      password: "InitialPassword123!"
+    });
+
+    const corrected = await provisionOwnerAccess(repository, {
+      allowInMemory: true,
+      displayName: "Rawaq Owner",
+      email: "owner@rawaq.com",
+      locationId: "rawaqcoffee01",
+      password: "CorrectedPassword456!"
+    });
+
+    expect(initial.action).toBe("created");
+    expect(corrected.action).toBe("updated");
+    expect(corrected.operator.operatorUserId).toBe(initial.operator.operatorUserId);
+    expect(corrected.operator.email).toBe("owner@rawaq.com");
+    expect(corrected.operator.locationId).toBe("rawaqcoffee01");
+    expect((await repository.listOperatorUsers("rawaqcoffee01")).filter((operator) => operator.role === "owner")).toHaveLength(1);
+    await expect(repository.verifyOperatorPassword("wrong@rawaq.com", "InitialPassword123!")).resolves.toBeUndefined();
+    await expect(repository.verifyOperatorPassword("owner@rawaq.com", "CorrectedPassword456!")).resolves.toMatchObject({
+      email: "owner@rawaq.com",
+      role: "owner"
+    });
+
+    await repository.close();
+  });
 });
