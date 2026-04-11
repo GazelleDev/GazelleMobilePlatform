@@ -9,7 +9,6 @@ import type {
   InternalLocationListResponse,
   InternalLocationSummary
 } from "@gazelle/contracts-catalog";
-import { redirect } from "next/navigation";
 import { requireAdminSession } from "@/lib/auth";
 import { getInternalAdminApiBaseUrl, getOptionalClientDashboardUrl, hasInternalAdminApiBaseUrl } from "@/lib/config";
 
@@ -42,10 +41,6 @@ async function requestInternalApi<TResponse>(path: string, init?: RequestInit): 
     }
   });
 
-  if (response.status === 401) {
-    redirect("/sign-in?error=Your session expired. Please sign in again.");
-  }
-
   if (!response.ok) {
     let errorBody: InternalApiErrorBody | undefined;
     try {
@@ -54,11 +49,10 @@ async function requestInternalApi<TResponse>(path: string, init?: RequestInit): 
       errorBody = undefined;
     }
 
-    throw new InternalApiError(
-      errorBody?.message ?? `Internal API request failed with status ${response.status}.`,
-      response.status,
-      errorBody?.code
-    );
+    // Prefix with status code so the client error boundary can detect 401/403
+    // without relying on custom error properties (which are stripped on serialization).
+    const message = errorBody?.message ?? `Request failed with status ${response.status}.`;
+    throw new InternalApiError(`${response.status}: ${message}`, response.status, errorBody?.code);
   }
 
   return (await response.json()) as TResponse;

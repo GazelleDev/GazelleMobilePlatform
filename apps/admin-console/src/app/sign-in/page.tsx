@@ -7,13 +7,18 @@ type SignInPageProps = {
 };
 
 export default async function SignInPage({ searchParams }: SignInPageProps) {
-  const session = await getAdminSession();
-  if (session) {
-    redirect("/dashboard");
-  }
-
   const params = await searchParams;
   const error = typeof params.error === "string" ? params.error : undefined;
+
+  // Skip the redirect-to-dashboard check when an error is present. If the API rejected
+  // the session (e.g. identity service restarted in local dev), the cookie HMAC is still
+  // valid but the access token is gone from the store. Redirecting back would loop forever.
+  if (!error) {
+    const session = await getAdminSession();
+    if (session) {
+      redirect("/dashboard");
+    }
+  }
   const authStatus = getAdminConsoleAuthStatus();
 
   return (

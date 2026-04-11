@@ -61,12 +61,13 @@ export async function signInAction(formData: FormData) {
     });
 
     await setAdminSession(session);
-    redirect("/dashboard");
   } catch (error) {
     const message =
       error instanceof AdminAuthError ? error.message : "Unable to sign in right now. Please try again.";
     redirect(`/sign-in?error=${encodeURIComponent(message)}`);
   }
+
+  redirect("/dashboard");
 }
 
 export async function signOutAction() {
