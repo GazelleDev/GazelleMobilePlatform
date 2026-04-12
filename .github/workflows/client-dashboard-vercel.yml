@@ -48,9 +48,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm exec turbo run typecheck --filter=@gazelle/client-dashboard
-      - run: pnpm exec turbo run lint --filter=@gazelle/client-dashboard
-      - run: pnpm exec turbo run build --filter=@gazelle/client-dashboard
+      - run: pnpm exec turbo run typecheck --filter=@lattelink/client-dashboard
+      - run: pnpm exec turbo run lint --filter=@lattelink/client-dashboard
+      - run: pnpm exec turbo run build --filter=@lattelink/client-dashboard
 
   deploy-preview:
     if: github.event_name == 'pull_request'

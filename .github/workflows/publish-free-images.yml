@@ -38,19 +38,19 @@ jobs:
       matrix:
         include:
           - service_name: gateway
-            service_package: "@gazelle/gateway"
+            service_package: "@lattelink/gateway"
           - service_name: identity
-            service_package: "@gazelle/identity"
+            service_package: "@lattelink/identity"
           - service_name: orders
-            service_package: "@gazelle/orders"
+            service_package: "@lattelink/orders"
           - service_name: catalog
-            service_package: "@gazelle/catalog"
+            service_package: "@lattelink/catalog"
           - service_name: payments
-            service_package: "@gazelle/payments"
+            service_package: "@lattelink/payments"
           - service_name: loyalty
-            service_package: "@gazelle/loyalty"
+            service_package: "@lattelink/loyalty"
           - service_name: notifications
-            service_package: "@gazelle/notifications"
+            service_package: "@lattelink/notifications"
     steps:
       - uses: actions/checkout@v4
 
