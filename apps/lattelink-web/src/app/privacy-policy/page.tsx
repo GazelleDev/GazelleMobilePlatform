@@ -93,162 +93,144 @@ export default function PrivacyPolicyPage() {
   return (
     <>
       <Nav />
-      <main style={{ padding: "120px 0 96px", position: "relative", zIndex: 1 }}>
+      <main style={{ paddingBlock: "80px 96px" }}>
         <style>{`
           .legal-shell {
-            width: min(880px, calc(100% - 48px));
+            width: min(800px, calc(100% - 48px));
             margin: 0 auto;
           }
-          .legal-card {
-            background: linear-gradient(180deg, rgba(17,19,32,0.96), rgba(9,9,15,0.98));
-            border: 1px solid rgba(74,126,255,0.16);
-            border-radius: 32px;
-            padding: 48px;
-            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
-          }
           .legal-kicker {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            border-radius: 999px;
-            border: 1px solid rgba(74,126,255,0.2);
-            background: rgba(74,126,255,0.08);
-            color: var(--color-blue-300);
+            display: inline-block;
             font-size: 12px;
+            font-weight: 500;
             letter-spacing: 0.16em;
             text-transform: uppercase;
+            color: var(--color-text-muted);
+            margin-bottom: 20px;
           }
           .legal-title {
-            margin-top: 22px;
-            font-family: var(--font-display);
-            font-size: clamp(34px, 6vw, 60px);
-            line-height: 0.98;
-            letter-spacing: -0.04em;
-            color: var(--color-gray-100);
+            font-size: clamp(30px, 4vw, 48px);
+            font-weight: 600;
+            letter-spacing: -0.03em;
+            line-height: 1.1;
+            color: var(--color-text);
+            margin: 0 0 16px;
           }
           .legal-subtitle {
-            margin-top: 18px;
             font-size: 16px;
-            line-height: 1.8;
-            color: var(--color-gray-400);
-            max-width: 680px;
+            line-height: 1.7;
+            color: var(--color-text-muted);
+            max-width: 640px;
+            margin: 0 0 8px;
           }
           .legal-meta {
-            margin-top: 18px;
-            color: var(--color-gray-500);
             font-size: 13px;
-            letter-spacing: 0.02em;
+            color: var(--color-text-subtle);
+          }
+          .legal-divider {
+            border: none;
+            border-top: 1px solid var(--color-border);
+            margin: 40px 0;
           }
           .legal-sections {
-            margin-top: 42px;
             display: grid;
-            gap: 18px;
+            gap: 0;
           }
           .legal-section {
-            border: 1px solid var(--color-border);
-            border-radius: 24px;
-            background: rgba(17,19,32,0.72);
-            padding: 28px 28px 26px;
+            padding: 28px 0;
+            border-bottom: 1px solid var(--color-border);
+          }
+          .legal-section:first-child {
+            border-top: 1px solid var(--color-border);
           }
           .legal-section h2 {
-            font-family: var(--font-display);
-            font-size: 24px;
-            line-height: 1.15;
-            letter-spacing: -0.03em;
-            color: var(--color-gray-100);
+            font-size: 17px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--color-text);
+            margin: 0 0 12px;
           }
           .legal-section p,
           .legal-section li {
             font-size: 15px;
-            line-height: 1.8;
-            color: var(--color-gray-300);
+            line-height: 1.75;
+            color: var(--color-text-muted);
           }
           .legal-section ul {
-            margin-top: 14px;
             padding-left: 20px;
             display: grid;
-            gap: 10px;
+            gap: 8px;
           }
           .legal-section p + p {
             margin-top: 12px;
           }
           .legal-contact {
-            margin-top: 28px;
-            padding: 22px 24px;
-            border-radius: 22px;
-            border: 1px solid rgba(74,126,255,0.18);
-            background: rgba(74,126,255,0.06);
+            margin-top: 40px;
+            padding: 20px 24px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--color-border);
+            background: var(--color-bg-muted);
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--color-text-muted);
           }
           .legal-contact a,
           .legal-home-link {
-            color: var(--color-blue-300);
-            text-decoration: none;
-          }
-          .legal-home-link:hover,
-          .legal-contact a:hover {
-            color: var(--color-gray-100);
+            color: var(--color-text);
+            text-decoration: underline;
+            text-underline-offset: 3px;
           }
           @media (max-width: 720px) {
-            .legal-card {
-              padding: 32px 22px;
-              border-radius: 24px;
-            }
-            .legal-section {
-              padding: 22px 18px;
-              border-radius: 18px;
+            .legal-shell {
+              width: calc(100% - 40px);
             }
           }
         `}</style>
 
         <div className="legal-shell">
-          <div className="legal-card">
-            <div className="legal-kicker">Privacy Policy</div>
-            <h1 className="legal-title">Privacy for LatteLink-powered ordering.</h1>
-            <p className="legal-subtitle">
-              This page explains what information LatteLink may collect, how it is used, and what choices people have
-              when they use the LatteLink website or a branded mobile ordering experience powered by LatteLink.
-            </p>
-            <div className="legal-meta">Last updated {lastUpdated}</div>
+          <div className="legal-kicker">Privacy Policy</div>
+          <h1 className="legal-title">Privacy for LatteLink-powered ordering.</h1>
+          <p className="legal-subtitle">
+            This page explains what information LatteLink may collect, how it is used, and what choices people have
+            when they use the LatteLink website or a branded mobile ordering experience powered by LatteLink.
+          </p>
+          <div className="legal-meta">Last updated {lastUpdated}</div>
 
-            <div className="legal-sections">
-              {sections.map((section) => (
-                <section key={section.title} className="legal-section">
-                  <h2>{section.title}</h2>
-                  {section.body.length === 1 ? (
-                    <p style={{ marginTop: 14 }}>{section.body[0]}</p>
-                  ) : section.title === "Information we collect" ||
-                    section.title === "How we use information" ||
-                    section.title === "How information may be shared" ||
-                    section.title === "Your choices" ? (
-                    <ul>
-                      {section.body.map((entry) => (
-                        <li key={entry}>{entry}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <>
-                      {section.body.map((entry) => (
-                        <p key={entry} style={{ marginTop: 14 }}>
-                          {entry}
-                        </p>
-                      ))}
-                    </>
-                  )}
-                </section>
-              ))}
-            </div>
+          <hr className="legal-divider" />
 
-            <div className="legal-contact">
-              <p style={{ fontSize: 15, lineHeight: 1.8, color: "var(--color-gray-300)" }}>
-                Questions about this policy can be sent to{" "}
-                <a href={`mailto:${contactEmail}`}>{contactEmail}</a>. You can also return to the{" "}
-                <Link href="/" className="legal-home-link">
-                  LatteLink homepage
-                </Link>
-                .
-              </p>
-            </div>
+          <div className="legal-sections">
+            {sections.map((section) => (
+              <section key={section.title} className="legal-section">
+                <h2>{section.title}</h2>
+                {section.body.length === 1 ? (
+                  <p>{section.body[0]}</p>
+                ) : section.title === "Information we collect" ||
+                  section.title === "How we use information" ||
+                  section.title === "How information may be shared" ||
+                  section.title === "Your choices" ? (
+                  <ul>
+                    {section.body.map((entry) => (
+                      <li key={entry}>{entry}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <>
+                    {section.body.map((entry) => (
+                      <p key={entry}>{entry}</p>
+                    ))}
+                  </>
+                )}
+              </section>
+            ))}
+          </div>
+
+          <div className="legal-contact">
+            Questions about this policy can be sent to{" "}
+            <a href={`mailto:${contactEmail}`}>{contactEmail}</a>. You can also return to the{" "}
+            <Link href="/" className="legal-home-link">
+              LatteLink homepage
+            </Link>
+            .
           </div>
         </div>
       </main>

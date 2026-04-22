@@ -1,8 +1,15 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { Analytics } from "@/components/Analytics";
 import { StructuredData } from "@/components/StructuredData";
 import { siteDescription, siteName, siteTitle, siteUrl } from "@/lib/site";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: siteTitle,
@@ -17,6 +24,7 @@ export const metadata: Metadata = {
     "coffee shop mobile app",
     "coffee shop customer loyalty",
     "LatteLink",
+    "Nomly",
   ],
   category: "technology",
   referrer: "origin-when-cross-origin",
@@ -38,7 +46,7 @@ export const metadata: Metadata = {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "LatteLink branded ordering and loyalty for independent coffee shops",
+        alt: "LatteLink by Nomly — branded ordering for independent coffee shops",
       },
     ],
   },
@@ -56,7 +64,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable}>
       <body>
         <StructuredData />
         <Analytics />

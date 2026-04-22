@@ -51,7 +51,7 @@ export function LeadCapture() {
             status: "error",
             message:
               payload?.message ??
-              "Lead capture is unavailable right now. Email hello@lattelink.app and we will take it from there.",
+              `Lead capture is unavailable right now. Email ${contactEmail} and we will take it from there.`,
           });
           return;
         }
@@ -75,8 +75,7 @@ export function LeadCapture() {
         });
         setResult({
           status: "error",
-          message:
-            "Lead capture is unavailable right now. Email hello@lattelink.app and we will take it from there.",
+          message: `Lead capture is unavailable right now. Email ${contactEmail} and we will take it from there.`,
         });
       }
     });
@@ -84,23 +83,11 @@ export function LeadCapture() {
 
   return (
     <div className="lead-card">
-      <div className="lead-card__head">
-        <div className="lead-card__eyebrow">Pilot intro request</div>
-        <h3 className="lead-card__title">Tell us about the shop.</h3>
-        <p className="lead-card__copy">
-          We use this to confirm fit before we schedule the walkthrough. No
-          canned funnel, no hard sell.
-        </p>
-      </div>
-
       <form
         className="lead-form"
         onSubmit={handleSubmit}
         onFocusCapture={() => {
-          if (hasTrackedStart) {
-            return;
-          }
-
+          if (hasTrackedStart) return;
           setHasTrackedStart(true);
           trackAnalyticsEvent("lead_form_started", {
             placement: "contact_form",
@@ -108,10 +95,9 @@ export function LeadCapture() {
           });
         }}
       >
-        <label className="lead-field">
-          <span className="lead-field__label">Full name</span>
+        <Field label="Full name">
           <input
-            className="lead-field__input"
+            className="lead-input"
             type="text"
             name="fullName"
             autoComplete="name"
@@ -119,11 +105,10 @@ export function LeadCapture() {
             maxLength={80}
             required
           />
-        </label>
-        <label className="lead-field">
-          <span className="lead-field__label">Work email</span>
+        </Field>
+        <Field label="Work email">
           <input
-            className="lead-field__input"
+            className="lead-input"
             type="email"
             name="workEmail"
             autoComplete="email"
@@ -131,64 +116,70 @@ export function LeadCapture() {
             maxLength={120}
             required
           />
-        </label>
-        <label className="lead-field">
-          <span className="lead-field__label">Shop name</span>
+        </Field>
+        <Field label="Shop name">
           <input
-            className="lead-field__input"
+            className="lead-input"
             type="text"
             name="shopName"
             placeholder="Northside Coffee"
             maxLength={100}
             required
           />
-        </label>
-        <label className="lead-field">
-          <span className="lead-field__label">Locations</span>
+        </Field>
+        <Field label="Locations">
           <input
-            className="lead-field__input"
+            className="lead-input"
             type="text"
             name="locations"
             placeholder="1 flagship, 1 kiosk"
             maxLength={80}
             required
           />
-        </label>
-        <label className="lead-field lead-field--full">
-          <span className="lead-field__label">Current ordering setup</span>
+        </Field>
+        <Field label="Current ordering setup" full>
           <textarea
-            className="lead-field__input lead-field__input--textarea"
+            className="lead-input lead-textarea"
             name="orderingSetup"
-            placeholder="Clover only, Instagram DMs, third-party marketplace, no loyalty..."
+            placeholder="Clover only, Instagram DMs, third-party marketplace, no loyalty…"
             maxLength={500}
-            rows={4}
+            rows={3}
             required
           />
-        </label>
-        <label className="lead-field lead-field--full">
-          <span className="lead-field__label">What do you want LatteLink to fix first?</span>
+        </Field>
+        <Field label="What do you want LatteLink to fix first?" full>
           <textarea
-            className="lead-field__input lead-field__input--textarea"
+            className="lead-input lead-textarea"
             name="goals"
-            placeholder="Repeat ordering, customer ownership, loyalty, better operator visibility..."
+            placeholder="Repeat ordering, customer ownership, loyalty, better operator visibility…"
             maxLength={500}
-            rows={4}
+            rows={3}
             required
           />
-        </label>
-        <label className="lead-field lead-field--trap" aria-hidden="true">
-          <span className="lead-field__label">Website</span>
-          <input className="lead-field__input" type="text" name="website" tabIndex={-1} autoComplete="off" />
+        </Field>
+
+        <label className="lead-trap" aria-hidden="true">
+          <span>Website</span>
+          <input
+            type="text"
+            name="website"
+            tabIndex={-1}
+            autoComplete="off"
+          />
         </label>
 
         <button className="lead-submit" type="submit" disabled={isPending}>
-          {isPending ? "Sending..." : "Request intro"}
+          {isPending ? "Sending…" : "Request intro"}
         </button>
       </form>
 
       <div
         className={`lead-status${
-          result.status === "success" ? " lead-status--success" : result.status === "error" ? " lead-status--error" : ""
+          result.status === "success"
+            ? " lead-status--success"
+            : result.status === "error"
+              ? " lead-status--error"
+              : ""
         }`}
       >
         {result.status === "idle"
@@ -196,12 +187,15 @@ export function LeadCapture() {
           : result.message}
       </div>
 
-      <div className="lead-card__footer">
+      <div className="lead-footnote">
         Prefer direct email?{" "}
         <TrackedAnchor
           href={`mailto:${contactEmail}`}
           eventName="email_contact_click"
-          eventProperties={{ placement: "contact_form", destination: "email" }}
+          eventProperties={{
+            placement: "contact_form",
+            destination: "email",
+          }}
         >
           {contactEmail}
         </TrackedAnchor>
@@ -209,53 +203,17 @@ export function LeadCapture() {
 
       <style jsx>{`
         .lead-card {
-          background: rgba(8, 10, 18, 0.84);
-          border: 1px solid rgba(74, 126, 255, 0.2);
-          border-radius: 24px;
-          padding: 30px;
-          text-align: left;
-          backdrop-filter: blur(18px);
-        }
-        .lead-card__head {
-          margin-bottom: 24px;
-        }
-        .lead-card__eyebrow {
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.12em;
-          text-transform: uppercase;
-          color: var(--color-blue-500);
-          margin-bottom: 12px;
-        }
-        .lead-card__title {
-          font-family: var(--font-display);
-          font-size: 28px;
-          font-weight: 800;
-          line-height: 1.05;
-          letter-spacing: -0.03em;
-          color: var(--color-gray-100);
-          margin: 0 0 12px;
-        }
-        .lead-card__copy {
-          margin: 0;
-          font-size: 14px;
-          line-height: 1.7;
-          color: var(--color-gray-400);
+          background: var(--color-bg);
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-lg);
+          padding: 28px;
         }
         .lead-form {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
+          gap: 16px;
         }
-        .lead-field {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-        .lead-field--full {
-          grid-column: 1 / -1;
-        }
-        .lead-field--trap {
+        .lead-trap {
           position: absolute;
           width: 1px;
           height: 1px;
@@ -263,99 +221,125 @@ export function LeadCapture() {
           clip: rect(0, 0, 0, 0);
           white-space: nowrap;
         }
-        .lead-field__label {
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-          color: var(--color-gray-500);
+        .lead-status {
+          margin-top: 16px;
+          padding: 12px 14px;
+          border-radius: var(--radius-md);
+          background: var(--color-bg-muted);
+          border: 1px solid var(--color-border);
+          color: var(--color-text-muted);
+          font-size: 13px;
+          line-height: 1.6;
         }
-        .lead-field__input {
-          width: 100%;
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          border-radius: 14px;
-          background: rgba(14, 16, 28, 0.92);
-          color: var(--color-gray-100);
-          padding: 14px 15px;
-          font: inherit;
-          outline: none;
-          transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+        .lead-status--success {
+          background: var(--color-text);
+          color: var(--color-text-invert);
+          border-color: var(--color-text);
         }
-        .lead-field__input::placeholder {
-          color: var(--color-gray-600);
+        .lead-status--error {
+          background: var(--color-bg-muted);
+          color: var(--color-text);
+          border-color: var(--color-text);
         }
-        .lead-field__input:focus {
-          border-color: rgba(74, 126, 255, 0.8);
-          box-shadow: 0 0 0 4px rgba(74, 126, 255, 0.12);
-          background: rgba(16, 18, 32, 0.98);
+        .lead-footnote {
+          margin-top: 14px;
+          font-size: 13px;
+          color: var(--color-text-muted);
         }
-        .lead-field__input--textarea {
-          min-height: 112px;
-          resize: vertical;
+        .lead-footnote :global(a) {
+          color: var(--color-text);
+          text-decoration: underline;
+          text-underline-offset: 3px;
         }
         .lead-submit {
           grid-column: 1 / -1;
-          border: none;
-          border-radius: 14px;
-          padding: 16px 20px;
-          background: linear-gradient(135deg, #2a5fff, #4a7eff);
-          color: white;
-          font: inherit;
-          font-size: 15px;
-          font-weight: 700;
-          cursor: pointer;
-          box-shadow: 0 0 36px rgba(74, 126, 255, 0.28);
-          transition: transform 0.2s, opacity 0.2s, box-shadow 0.2s;
+          height: 46px;
+          border-radius: var(--radius-md);
+          background: var(--color-text);
+          color: var(--color-text-invert);
+          font-size: 14px;
+          font-weight: 500;
+          transition: background-color 0.18s ease, opacity 0.18s ease;
         }
         .lead-submit:hover:enabled {
-          transform: translateY(-1px);
-          box-shadow: 0 0 48px rgba(74, 126, 255, 0.4);
+          background: #1f1f23;
         }
         .lead-submit:disabled {
-          opacity: 0.7;
+          opacity: 0.6;
           cursor: wait;
         }
-        .lead-status {
-          margin-top: 16px;
-          padding: 14px 16px;
-          border-radius: 14px;
-          background: rgba(255, 255, 255, 0.03);
-          border: 1px solid rgba(255, 255, 255, 0.06);
-          color: var(--color-gray-400);
-          font-size: 13px;
-          line-height: 1.7;
-        }
-        .lead-status--success {
-          border-color: rgba(63, 214, 152, 0.3);
-          color: #9ef0c9;
-          background: rgba(10, 48, 34, 0.4);
-        }
-        .lead-status--error {
-          border-color: rgba(255, 116, 116, 0.22);
-          color: #ffb1b1;
-          background: rgba(62, 18, 18, 0.45);
-        }
-        .lead-card__footer {
-          margin-top: 14px;
-          font-size: 13px;
-          color: var(--color-gray-500);
-        }
-        .lead-card__footer :global(a) {
-          color: var(--color-gray-200);
-          text-decoration: none;
-        }
-        .lead-card__footer :global(a:hover) {
-          color: white;
-        }
-        @media (max-width: 720px) {
-          .lead-card {
-            padding: 22px;
-          }
+        @media (max-width: 560px) {
           .lead-form {
             grid-template-columns: 1fr;
           }
+          .lead-card {
+            padding: 22px;
+          }
+        }
+      `}</style>
+
+      <style jsx global>{`
+        .lead-input {
+          width: 100%;
+          height: 44px;
+          padding: 0 14px;
+          border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+          background: var(--color-bg);
+          color: var(--color-text);
+          font-size: 14.5px;
+          line-height: 1.4;
+          outline: none;
+          transition: border-color 0.18s ease, box-shadow 0.18s ease;
+        }
+        .lead-input::placeholder {
+          color: var(--color-text-subtle);
+        }
+        .lead-input:focus {
+          border-color: var(--color-text);
+          box-shadow: var(--shadow-focus);
+        }
+        .lead-textarea {
+          height: auto;
+          min-height: 96px;
+          padding: 12px 14px;
+          resize: vertical;
         }
       `}</style>
     </div>
+  );
+}
+
+function Field({
+  label,
+  full,
+  children,
+}: {
+  label: string;
+  full?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        gridColumn: full ? "1 / -1" : undefined,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          color: "var(--color-text-muted)",
+        }}
+      >
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }

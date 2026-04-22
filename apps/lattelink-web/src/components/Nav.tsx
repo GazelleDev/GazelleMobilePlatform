@@ -2,179 +2,114 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { LogoIcon, Wordmark } from "./Logo";
+import { NomlyMark } from "./Logo";
 import { demoHref } from "@/lib/site";
 import { TrackedAnchor } from "./TrackedAnchor";
+import { buttonStyles } from "./Sections";
 
 const links = [
-  { href: "#features", label: "Features" },
-  { href: "#how", label: "How it works" },
-  { href: "#pricing", label: "Pricing" },
-  { href: "#about", label: "About" },
+  { href: "#product", label: "Product" },
+  { href: "#solutions", label: "Solutions" },
+  { href: "#nomly", label: "Company" },
+  { href: "#contact", label: "Contact" },
 ];
 
 export function Nav() {
   const [scrolled, setScrolled] = useState(false);
-  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
-    const onScroll = () => {
-      setScrolled(window.scrollY > 20);
-      const total =
-        document.documentElement.scrollHeight - window.innerHeight;
-      setProgress(total > 0 ? window.scrollY / total : 0);
-    };
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   return (
     <>
-      {/* Scroll progress */}
-      <div
-        className="progress-bar"
-        style={{ transform: `scaleX(${progress})` }}
-      />
-
       <nav
-        className="site-nav"
         style={{
-          position: "fixed",
+          position: "sticky",
           top: 0,
-          left: 0,
-          right: 0,
           zIndex: 100,
-          borderBottom: `1px solid ${scrolled ? "var(--color-border-s)" : "transparent"}`,
-          backdropFilter: scrolled ? "blur(24px)" : "none",
-          WebkitBackdropFilter: scrolled ? "blur(24px)" : "none",
-          background: scrolled ? "rgba(9,9,15,0.85)" : "transparent",
-          transition: "background 0.4s, border-color 0.4s",
+          background: "rgba(255,255,255,0.85)",
+          backdropFilter: "saturate(140%) blur(12px)",
+          WebkitBackdropFilter: "saturate(140%) blur(12px)",
+          borderBottom: `1px solid ${
+            scrolled ? "var(--color-border)" : "transparent"
+          }`,
+          transition: "border-color 0.25s ease",
         }}
       >
-        <div className="page-shell nav-shell">
-          {/* Logo */}
+        <div
+          className="page-shell"
+          style={{
+            height: 64,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 24,
+          }}
+        >
           <Link
             href="/"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              textDecoration: "none",
-            }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+            aria-label="Nomly home"
           >
-            <LogoIcon size={34} />
-            <Wordmark style={{ fontSize: 17, color: "var(--color-gray-100)" }} />
+            <NomlyMark size={18} />
           </Link>
 
-          {/* Links */}
           <ul className="nav-links">
             {links.map((l) => (
               <li key={l.href}>
-                <NavLink href={l.href}>{l.label}</NavLink>
+                <TrackedAnchor
+                  href={l.href}
+                  className="nav-link"
+                  eventName="section_navigation_click"
+                  eventProperties={{ placement: "nav", destination: l.href }}
+                >
+                  {l.label}
+                </TrackedAnchor>
               </li>
             ))}
           </ul>
 
-          {/* CTA */}
           <TrackedAnchor
             href={demoHref}
-            className="btn-primary-nav nav-cta"
+            style={buttonStyles("primary")}
             eventName="cta_click"
-            eventProperties={{ placement: "nav", label: "request_intro", destination: "contact" }}
+            eventProperties={{
+              placement: "nav",
+              label: "request_access",
+              destination: "contact",
+            }}
           >
-            Request intro
+            Request access
           </TrackedAnchor>
         </div>
       </nav>
 
-      <style>{`
-        .nav-shell {
-          height: 68px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 20px;
-        }
+      <style jsx>{`
         .nav-links {
           display: flex;
           align-items: center;
-          gap: 36px;
+          gap: 32px;
           list-style: none;
         }
-        .btn-primary-nav {
-          font-family: var(--font-body);
-          font-size: 14px;
-          font-weight: 600;
-          color: #fff;
-          background: linear-gradient(135deg, #2a5fff, #4a7eff);
-          border: none;
-          border-radius: 8px;
-          padding: 10px 22px;
-          text-decoration: none;
-          box-shadow: 0 0 20px rgba(74,126,255,0.3);
-          transition: opacity 0.2s, box-shadow 0.2s, transform 0.2s;
-        }
-        .btn-primary-nav:hover {
-          opacity: 0.9;
-          box-shadow: 0 0 36px rgba(74,126,255,0.5);
-          transform: translateY(-1px);
-        }
-        .nav-link-item {
-          color: var(--color-gray-400);
-          text-decoration: none;
+        .nav-link {
           font-size: 14px;
           font-weight: 500;
-          position: relative;
-          transition: color 0.2s;
+          color: var(--color-text-muted);
+          transition: color 0.18s ease;
         }
-        .nav-link-item::after {
-          content: '';
-          position: absolute;
-          bottom: -4px; left: 0; right: 0;
-          height: 1px;
-          background: var(--color-blue-500);
-          transform: scaleX(0);
-          transition: transform 0.25s cubic-bezier(0.16,1,0.3,1);
+        .nav-link:hover {
+          color: var(--color-text);
         }
-        .nav-link-item:hover { color: var(--color-gray-100); }
-        .nav-link-item:hover::after { transform: scaleX(1); }
-        @media (max-width: 920px) {
+        @media (max-width: 820px) {
           .nav-links {
             display: none;
-          }
-          .nav-shell {
-            gap: 12px;
-          }
-        }
-        @media (max-width: 640px) {
-          .nav-shell {
-            height: 62px;
-          }
-          .btn-primary-nav {
-            padding: 9px 14px;
-            font-size: 13px;
           }
         }
       `}</style>
     </>
-  );
-}
-
-function NavLink({
-  href,
-  children,
-}: {
-  href: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <TrackedAnchor
-      href={href}
-      className="nav-link-item"
-      eventName="section_navigation_click"
-      eventProperties={{ placement: "nav", destination: href }}
-    >
-      {children}
-    </TrackedAnchor>
   );
 }
