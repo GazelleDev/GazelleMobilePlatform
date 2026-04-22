@@ -72,6 +72,11 @@ export function resolveDefaultAppConfigPayload(
       card: true,
       cash: false,
       refunds: true,
+      stripe: {
+        enabled: false,
+        onboarded: false,
+        dashboardEnabled: false
+      },
       clover: {
         enabled: true,
         merchantRef: DEFAULT_LOCATION_ID
@@ -116,6 +121,9 @@ export function resolveProvisionedAppConfigPayload(
     },
     paymentCapabilities: {
       ...base.paymentCapabilities,
+      stripe: {
+        ...base.paymentCapabilities.stripe
+      },
       clover: {
         ...base.paymentCapabilities.clover,
         merchantRef: input.locationId.trim()

@@ -50,8 +50,10 @@ import {
   homeNewsCardVisibilityUpdateSchema,
   homeNewsCardsResponseSchema,
   catalogContract,
+  clientPaymentProfileSchema,
   internalLocationBootstrapSchema,
   internalLocationListResponseSchema,
+  internalLocationPaymentProfileUpdateSchema,
   internalLocationParamsSchema,
   internalLocationSummarySchema,
   menuResponseSchema,
@@ -60,6 +62,8 @@ import {
 import {
   ordersContract,
   createOrderRequestSchema,
+  stripeMobilePaymentSessionRequestSchema,
+  stripeMobilePaymentSessionResponseSchema,
   orderQuoteSchema,
   orderSchema,
   payOrderRequestSchema,
@@ -1229,6 +1233,28 @@ export async function registerRoutes(app: FastifyInstance) {
         path: "/v1/payments/clover/card-entry-config",
         responseSchema: cloverCardEntryConfigResponseSchema
       })
+  );
+
+  app.post(
+    "/v1/payments/stripe/mobile-session",
+    { preHandler: [app.rateLimit(checkoutRateLimit), requireCustomerAuth] },
+    async (request, reply) => {
+      const input = stripeMobilePaymentSessionRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: paymentsBaseUrl,
+        serviceLabel: "Payments",
+        method: "POST",
+        path: "/v1/payments/stripe/mobile-session",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        responseSchema: stripeMobilePaymentSessionResponseSchema
+      });
+    }
   );
 
   app.get(
@@ -2736,6 +2762,59 @@ export async function registerRoutes(app: FastifyInstance) {
         },
         forwardUserIdHeader: false,
         responseSchema: internalLocationSummarySchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/internal/locations/:locationId/payment-profile",
+    {
+      preHandler: [app.rateLimit(authReadRateLimit), requireInternalAdminCapability("clients:read")]
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "GET",
+        path: `/v1/catalog/internal/locations/${locationId}/payment-profile`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: clientPaymentProfileSchema
+      });
+    }
+  );
+
+  app.put(
+    "/v1/internal/locations/:locationId/payment-profile",
+    {
+      preHandler: [app.rateLimit(authWriteRateLimit), requireInternalAdminCapability("clients:write")]
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+      const input = internalLocationPaymentProfileUpdateSchema.parse({
+        ...(typeof request.body === "object" && request.body !== null ? request.body : {}),
+        locationId
+      });
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "PUT",
+        path: `/v1/catalog/internal/locations/${locationId}/payment-profile`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: clientPaymentProfileSchema
       });
     }
   );

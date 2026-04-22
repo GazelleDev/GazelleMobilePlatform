@@ -124,6 +124,31 @@ export const payOrderRequestSchema = z.object({
   }
 });
 
+export const stripeMobilePaymentSessionRequestSchema = z.object({
+  orderId: z.string().uuid()
+});
+
+export const stripeMobilePaymentSessionResponseSchema = z.object({
+  orderId: z.string().uuid(),
+  paymentIntentId: z.string().min(1),
+  paymentIntentClientSecret: z.string().min(1),
+  publishableKey: z.string().min(1),
+  stripeAccountId: z.string().min(1),
+  merchantDisplayName: z.string().min(1),
+  merchantCountryCode: z.literal("US"),
+  amountCents: z.number().int().positive(),
+  currency: z.literal("USD"),
+  applePayEnabled: z.boolean(),
+  cardEnabled: z.boolean()
+});
+
+export const orderPaymentContextSchema = z.object({
+  orderId: z.string().uuid(),
+  locationId: z.string().min(1),
+  status: orderStatusSchema,
+  total: moneySchema
+});
+
 export type OrderStatus = z.output<typeof orderStatusSchema>;
 export type OrderItemCustomizationSelectionSnapshot = z.output<typeof orderItemCustomizationSelectionSnapshotSchema>;
 export type OrderItemCustomizationSnapshot = z.output<typeof orderItemCustomizationSnapshotSchema>;
@@ -131,15 +156,18 @@ export type OrderItem = z.output<typeof orderItemSchema>;
 export type OrderQuote = z.output<typeof orderQuoteSchema>;
 export type OrderTimelineEntry = z.output<typeof orderTimelineEntrySchema>;
 export type Order = z.output<typeof orderSchema>;
+export type StripeMobilePaymentSessionRequest = z.output<typeof stripeMobilePaymentSessionRequestSchema>;
+export type StripeMobilePaymentSessionResponse = z.output<typeof stripeMobilePaymentSessionResponseSchema>;
+export type OrderPaymentContext = z.output<typeof orderPaymentContextSchema>;
 
-export const paymentReconciliationProviderSchema = z.literal("CLOVER");
+export const paymentReconciliationProviderSchema = z.enum(["CLOVER", "STRIPE"]);
 
 export const paymentChargeReconciliationSchema = z.object({
   eventId: z.string().min(1).optional(),
   provider: paymentReconciliationProviderSchema,
   kind: z.literal("CHARGE"),
   orderId: z.string().uuid(),
-  paymentId: z.string().uuid(),
+  paymentId: z.string().min(1),
   status: z.enum(["SUCCEEDED", "DECLINED", "TIMEOUT"]),
   occurredAt: z.string().datetime(),
   message: z.string().optional(),
@@ -153,8 +181,8 @@ export const paymentRefundReconciliationSchema = z.object({
   provider: paymentReconciliationProviderSchema,
   kind: z.literal("REFUND"),
   orderId: z.string().uuid(),
-  paymentId: z.string().uuid(),
-  refundId: z.string().uuid().optional(),
+  paymentId: z.string().min(1),
+  refundId: z.string().min(1).optional(),
   status: z.enum(["REFUNDED", "REJECTED"]),
   occurredAt: z.string().datetime(),
   message: z.string().optional(),

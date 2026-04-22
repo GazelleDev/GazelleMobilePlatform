@@ -1,16 +1,15 @@
 import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "../api/client";
 import type { CartItem } from "../cart/model";
-import { quoteRequestItemSchema } from "@lattelink/contracts-orders";
+import { orderItemSchema, quoteRequestItemSchema } from "@lattelink/contracts-orders";
 import { z } from "zod";
 
-type PayOrderInput = Parameters<(typeof apiClient)["payOrder"]>[1];
-type ApplePayWalletInput = NonNullable<PayOrderInput["applePayWallet"]>;
 const orderStatusSchema = z.enum(["PENDING_PAYMENT", "PAID", "IN_PREP", "READY", "COMPLETED", "CANCELED"]);
 const checkoutOrderSchema = z.object({
   id: z.string().uuid(),
   pickupCode: z.string().min(1),
   status: orderStatusSchema,
+  items: z.array(orderItemSchema),
   total: z.object({
     currency: z.literal("USD"),
     amountCents: z.number().int().nonnegative()
@@ -22,18 +21,17 @@ export type CheckoutOrderSnapshot = z.output<typeof checkoutOrderSchema> & {
   quoteItems: QuoteItem[];
 };
 export type CheckoutSubmissionStage = "quote" | "create" | "pay";
-
-type CheckoutPaymentInput =
-  | { paymentSourceToken: string; applePayToken?: never; applePayWallet?: never }
-  | { applePayToken: string; applePayWallet?: never }
-  | { applePayWallet: ApplePayWalletInput; applePayToken?: never };
+export type PreparedStripeCheckout = {
+  order: CheckoutOrderSnapshot;
+  paymentSession: Awaited<ReturnType<typeof apiClient.createStripeMobilePaymentSession>>;
+};
 
 export type CheckoutInput = {
   locationId: string;
   items: CartItem[];
   pointsToRedeem?: number;
   existingOrder?: CheckoutOrderSnapshot;
-} & CheckoutPaymentInput;
+};
 
 export class CheckoutSubmissionError extends Error {
   readonly stage: CheckoutSubmissionStage;
@@ -132,97 +130,91 @@ function resolveCheckoutErrorMessage(error: unknown, fallback: string) {
   return error.message;
 }
 
-export function useApplePayCheckoutMutation() {
-  return useMutation({
-    mutationFn: async (input: CheckoutInput) => {
-      if (input.items.length === 0) {
-        throw new Error("Cart is empty.");
-      }
+function toCheckoutOrderSnapshot(
+  order: Awaited<ReturnType<typeof apiClient.createOrder>> | CheckoutOrderSnapshot,
+  quoteItems: QuoteItem[]
+): CheckoutOrderSnapshot {
+  return {
+    ...checkoutOrderSchema.parse(order),
+    quoteItems
+  };
+}
 
-      const hasPaymentSourceToken = typeof (input as { paymentSourceToken?: string }).paymentSourceToken === "string";
-      const hasToken = typeof (input as { applePayToken?: string }).applePayToken === "string";
-      const hasWallet = typeof (input as { applePayWallet?: ApplePayWalletInput }).applePayWallet !== "undefined";
+type StripeCheckoutApi = Pick<typeof apiClient, "quoteOrder" | "createOrder" | "createStripeMobilePaymentSession">;
 
-      if ([hasPaymentSourceToken, hasToken, hasWallet].filter(Boolean).length !== 1) {
-        throw new Error("Provide exactly one payment method.");
-      }
+export async function prepareStripeCheckout(
+  input: CheckoutInput,
+  checkoutApi: StripeCheckoutApi = apiClient
+): Promise<PreparedStripeCheckout> {
+  if (input.items.length === 0) {
+    throw new Error("Cart is empty.");
+  }
 
-      const paymentPayload: Pick<PayOrderInput, "paymentSourceToken" | "applePayToken" | "applePayWallet"> = hasPaymentSourceToken
-        ? (() => {
-            const paymentSourceToken = (input as { paymentSourceToken: string }).paymentSourceToken.trim();
-            if (!paymentSourceToken) {
-              throw new Error("Payment source token is required.");
-            }
+  const quoteItems = toQuoteItems(input.items);
 
-            return { paymentSourceToken };
-          })()
-        : hasToken
-        ? (() => {
-            const applePayToken = (input as { applePayToken: string }).applePayToken.trim();
-            if (!applePayToken) {
-              throw new Error("Apple Pay token is required.");
-            }
-
-            return { applePayToken };
-          })()
-        : { applePayWallet: (input as { applePayWallet: ApplePayWalletInput }).applePayWallet };
-
-      if (input.existingOrder) {
-        try {
-          return await apiClient.payOrder(input.existingOrder.id, {
-            ...paymentPayload,
-            idempotencyKey: createCheckoutIdempotencyKey()
-          });
-        } catch (error) {
-          const parsedApiError = parseCheckoutApiError(error);
-          const message = resolveCheckoutErrorMessage(error, "Unable to complete payment.");
-          const shouldKeepRetryOrder =
-            parsedApiError?.code === "PAYMENT_TIMEOUT" || parsedApiError?.code === "PAYMENT_RECONCILIATION_PENDING";
-          throw new CheckoutSubmissionError(message, "pay", shouldKeepRetryOrder ? input.existingOrder : undefined);
-        }
-      }
-
-      const quoteItems = toQuoteItems(input.items);
-      let quote: Awaited<ReturnType<typeof apiClient.quoteOrder>>;
-      try {
-        quote = await apiClient.quoteOrder({
-          locationId: input.locationId,
-          items: quoteItems,
-          pointsToRedeem: input.pointsToRedeem ?? 0
-        });
-      } catch (error) {
-        const message = resolveCheckoutErrorMessage(error, "Unable to prepare checkout.");
-        throw new CheckoutSubmissionError(message, "quote");
-      }
-
-      let order: Awaited<ReturnType<typeof apiClient.createOrder>>;
-      try {
-        order = await apiClient.createOrder({
-          quoteId: quote.quoteId,
-          quoteHash: quote.quoteHash
-        });
-      } catch (error) {
-        const message = resolveCheckoutErrorMessage(error, "Unable to create order.");
-        throw new CheckoutSubmissionError(message, "create");
-      }
-
-      const orderSnapshot: CheckoutOrderSnapshot = {
-        ...checkoutOrderSchema.parse(order),
-        quoteItems
-      };
-
-      try {
-        return await apiClient.payOrder(order.id, {
-          ...paymentPayload,
-          idempotencyKey: createCheckoutIdempotencyKey()
-        });
-      } catch (error) {
-        const parsedApiError = parseCheckoutApiError(error);
-        const message = resolveCheckoutErrorMessage(error, "Unable to complete payment.");
-        const shouldKeepRetryOrder =
-          parsedApiError?.code === "PAYMENT_TIMEOUT" || parsedApiError?.code === "PAYMENT_RECONCILIATION_PENDING";
-        throw new CheckoutSubmissionError(message, "pay", shouldKeepRetryOrder ? orderSnapshot : undefined);
-      }
+  if (input.existingOrder) {
+    const existingOrder = toCheckoutOrderSnapshot(input.existingOrder, quoteItems);
+    if (existingOrder.status !== "PENDING_PAYMENT") {
+      throw new CheckoutSubmissionError("Only unpaid orders can be retried.", "pay");
     }
+
+    try {
+      const paymentSession = await checkoutApi.createStripeMobilePaymentSession({
+        orderId: existingOrder.id
+      });
+
+      return {
+        order: existingOrder,
+        paymentSession
+      };
+    } catch (error) {
+      const message = resolveCheckoutErrorMessage(error, "Unable to prepare payment.");
+      throw new CheckoutSubmissionError(message, "pay", existingOrder);
+    }
+  }
+
+  let quote: Awaited<ReturnType<typeof apiClient.quoteOrder>>;
+  try {
+    quote = await checkoutApi.quoteOrder({
+      locationId: input.locationId,
+      items: quoteItems,
+      pointsToRedeem: input.pointsToRedeem ?? 0
+    });
+  } catch (error) {
+    const message = resolveCheckoutErrorMessage(error, "Unable to prepare checkout.");
+    throw new CheckoutSubmissionError(message, "quote");
+  }
+
+  let order: Awaited<ReturnType<typeof apiClient.createOrder>>;
+  try {
+    order = await checkoutApi.createOrder({
+      quoteId: quote.quoteId,
+      quoteHash: quote.quoteHash
+    });
+  } catch (error) {
+    const message = resolveCheckoutErrorMessage(error, "Unable to create order.");
+    throw new CheckoutSubmissionError(message, "create");
+  }
+
+  const orderSnapshot = toCheckoutOrderSnapshot(order, quoteItems);
+
+  try {
+    const paymentSession = await checkoutApi.createStripeMobilePaymentSession({
+      orderId: orderSnapshot.id
+    });
+
+    return {
+      order: orderSnapshot,
+      paymentSession
+    };
+  } catch (error) {
+    const message = resolveCheckoutErrorMessage(error, "Unable to prepare payment.");
+    throw new CheckoutSubmissionError(message, "pay", orderSnapshot);
+  }
+}
+
+export function useStripeCheckoutMutation() {
+  return useMutation({
+    mutationFn: async (input: CheckoutInput) => prepareStripeCheckout(input)
   });
 }

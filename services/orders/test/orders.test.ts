@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { orderQuoteSchema, orderSchema } from "@lattelink/contracts-orders";
+import { orderPaymentContextSchema, orderQuoteSchema, orderSchema } from "@lattelink/contracts-orders";
 import { buildApp } from "../src/app.js";
 
 const sampleQuotePayload = {
@@ -394,6 +394,32 @@ describe("orders service", () => {
     expect(listResponse.statusCode).toBe(200);
     const listed = listResponse.json() as Array<{ id: string }>;
     expect(listed.some((entry) => entry.id === order.id)).toBe(true);
+
+    await app.close();
+  });
+
+  it("returns internal order payment context for the owning user", async () => {
+    const app = await buildApp();
+    const { order } = await createQuotedOrder(app, {
+      userId: defaultTestUserId
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/orders/internal/${order.id}/payment-context`,
+      headers: {
+        "x-internal-token": "orders-internal-token",
+        "x-user-id": defaultTestUserId
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(orderPaymentContextSchema.parse(response.json())).toMatchObject({
+      orderId: order.id,
+      locationId: order.locationId,
+      status: "PENDING_PAYMENT",
+      total: order.total
+    });
 
     await app.close();
   });
@@ -1589,6 +1615,61 @@ describe("orders service", () => {
         })
       ])
     );
+
+    await app.close();
+  });
+
+  it("accepts Stripe reconciliation payloads with payment intent identifiers", async () => {
+    const app = await buildApp();
+    const quoteResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/quote",
+      payload: sampleQuotePayload
+    });
+    const quote = orderQuoteSchema.parse(quoteResponse.json());
+
+    const createResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders",
+      headers: customerHeaders(),
+      payload: {
+        quoteId: quote.quoteId,
+        quoteHash: quote.quoteHash
+      }
+    });
+    const order = orderSchema.parse(createResponse.json());
+
+    const reconcileResponse = await app.inject({
+      method: "POST",
+      url: "/v1/orders/internal/payments/reconcile",
+      headers: {
+        "x-internal-token": "orders-internal-token"
+      },
+      payload: {
+        eventId: "evt_stripe_charge_internal_1",
+        provider: "STRIPE",
+        kind: "CHARGE",
+        orderId: order.id,
+        paymentId: "pi_3QxExample123",
+        status: "SUCCEEDED",
+        occurredAt: "2026-03-11T00:00:00.000Z",
+        message: "Stripe payment settled"
+      }
+    });
+
+    expect(reconcileResponse.statusCode).toBe(200);
+    expect(reconcileResponse.json()).toMatchObject({
+      accepted: true,
+      applied: true,
+      orderStatus: "PAID"
+    });
+
+    const finalOrder = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${order.id}`
+    });
+    expect(finalOrder.statusCode).toBe(200);
+    expect(orderSchema.parse(finalOrder.json()).status).toBe("PAID");
 
     await app.close();
   });

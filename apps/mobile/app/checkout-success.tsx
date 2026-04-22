@@ -123,6 +123,27 @@ function PickupCodePill({ code }: { code: string }) {
   );
 }
 
+function resolveConfirmationCopy(confirmation: CheckoutConfirmation | null) {
+  if (!confirmation) {
+    return {
+      title: "Order Confirmed",
+      body: "Your order has been placed. Visit the Orders tab to track your order and see all the details."
+    };
+  }
+
+  if (confirmation.status === "PENDING_PAYMENT") {
+    return {
+      title: "Finalizing Payment",
+      body: "Stripe accepted your payment details. We’ll mark the order paid as soon as the server receives Stripe’s verified confirmation."
+    };
+  }
+
+  return {
+    title: "Order Confirmed",
+    body: "Your order is confirmed and already moving through the cafe."
+  };
+}
+
 function SummaryRow({
   label,
   value,
@@ -154,6 +175,7 @@ export default function CheckoutSuccessScreen() {
   );
   const resolvedItems = resolvedConfirmation?.items ?? [];
   const earnedPoints = resolvedConfirmation?.total.amountCents ?? 0;
+  const confirmationCopy = resolveConfirmationCopy(resolvedConfirmation);
 
   useEffect(() => {
     return () => {
@@ -183,7 +205,8 @@ export default function CheckoutSuccessScreen() {
           {resolvedConfirmation ? (
             <>
               <View style={styles.heroBlock}>
-                <Text style={styles.title}>Order Confirmed</Text>
+                <Text style={styles.title}>{confirmationCopy.title}</Text>
+                <Text style={styles.body}>{confirmationCopy.body}</Text>
                 <View style={styles.heroCodeRow}>
                   <Text style={styles.heroCodeLabel}>Pickup Code</Text>
                   <PickupCodePill code={resolvedConfirmation.pickupCode} />
@@ -233,10 +256,8 @@ export default function CheckoutSuccessScreen() {
             </>
           ) : (
             <View style={styles.heroBlockEmpty}>
-              <Text style={styles.title}>Order Confirmed</Text>
-              <Text style={styles.body}>
-                Your order has been placed. Visit the Orders tab to track your order and see all the details.
-              </Text>
+              <Text style={styles.title}>{confirmationCopy.title}</Text>
+              <Text style={styles.body}>{confirmationCopy.body}</Text>
             </View>
           )}
         </ScrollView>

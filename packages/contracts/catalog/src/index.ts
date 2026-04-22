@@ -399,6 +399,17 @@ export const appConfigPaymentCapabilitiesSchema = z.object({
   card: z.boolean(),
   cash: z.boolean(),
   refunds: z.boolean(),
+  stripe: z
+    .object({
+      enabled: z.boolean(),
+      onboarded: z.boolean(),
+      dashboardEnabled: z.boolean()
+    })
+    .default({
+      enabled: false,
+      onboarded: false,
+      dashboardEnabled: false
+    }),
   clover: z.object({
     enabled: z.boolean(),
     merchantRef: z.string().min(1).optional()
@@ -600,6 +611,27 @@ export const internalLocationParamsSchema = z.object({
   locationId: z.string().trim().min(1)
 });
 
+const clientPaymentProfileSchemaBase = z.object({
+  locationId: z.string().trim().min(1),
+  stripeAccountId: z.string().trim().regex(/^acct_[A-Za-z0-9]+$/).optional(),
+  stripeAccountType: z.literal("express").default("express"),
+  stripeOnboardingStatus: z.enum(["unconfigured", "pending", "restricted", "completed"]).default("unconfigured"),
+  stripeDetailsSubmitted: z.boolean().default(false),
+  stripeChargesEnabled: z.boolean().default(false),
+  stripePayoutsEnabled: z.boolean().default(false),
+  stripeDashboardEnabled: z.boolean().default(false),
+  country: z.literal("US").default("US"),
+  currency: z.literal("USD").default("USD"),
+  cardEnabled: z.boolean().default(true),
+  applePayEnabled: z.boolean().default(true),
+  refundsEnabled: z.boolean().default(true),
+  cloverPosEnabled: z.boolean().default(false),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional()
+});
+
+export const clientPaymentProfileSchema = clientPaymentProfileSchemaBase;
+
 export const internalLocationBootstrapSchema = z.object({
   brandId: z.string().trim().min(1),
   brandName: z.string().trim().min(1),
@@ -610,7 +642,19 @@ export const internalLocationBootstrapSchema = z.object({
   hours: z.string().trim().min(1).optional(),
   pickupInstructions: z.string().trim().min(1).optional(),
   taxRateBasisPoints: z.number().int().min(0).max(10000).optional(),
-  capabilities: appConfigStoreCapabilitiesSchema.optional()
+  capabilities: appConfigStoreCapabilitiesSchema.optional(),
+  paymentProfile: clientPaymentProfileSchema.optional()
+});
+
+export const internalLocationPaymentProfileUpdateSchema = clientPaymentProfileSchema.omit({
+  createdAt: true,
+  updatedAt: true
+});
+
+export const paymentReadinessSchema = z.object({
+  ready: z.boolean(),
+  onboardingState: clientPaymentProfileSchema.shape.stripeOnboardingStatus,
+  missingRequiredFields: z.array(z.string())
 });
 
 export const internalLocationSummarySchema = z.object({
@@ -624,6 +668,8 @@ export const internalLocationSummarySchema = z.object({
   pickupInstructions: z.string().min(1),
   taxRateBasisPoints: z.number().int().min(0).max(10000),
   capabilities: appConfigStoreCapabilitiesSchema,
+  paymentProfile: clientPaymentProfileSchema.optional(),
+  paymentReadiness: paymentReadinessSchema.optional(),
   action: z.enum(["created", "updated"]).optional()
 });
 
@@ -661,6 +707,9 @@ export type AppConfigFulfillment = z.output<typeof appConfigFulfillmentSchema>;
 export type AppConfigMenuSource = z.output<typeof appConfigMenuSourceSchema>;
 export type AppConfigStoreCapabilities = z.output<typeof appConfigStoreCapabilitiesSchema>;
 export type AppConfig = z.output<typeof appConfigSchema>;
+export type ClientPaymentProfile = z.output<typeof clientPaymentProfileSchema>;
+export type InternalLocationPaymentProfileUpdate = z.output<typeof internalLocationPaymentProfileUpdateSchema>;
+export type PaymentReadiness = z.output<typeof paymentReadinessSchema>;
 export type InternalLocationBootstrap = z.output<typeof internalLocationBootstrapSchema>;
 export type InternalLocationSummary = z.output<typeof internalLocationSummarySchema>;
 export type InternalLocationListResponse = z.output<typeof internalLocationListResponseSchema>;

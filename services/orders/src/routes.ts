@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   createOrderRequestSchema,
+  orderPaymentContextSchema,
   ordersPaymentReconciliationSchema,
   orderSchema,
   payOrderRequestSchema,
@@ -382,6 +383,55 @@ export async function registerRoutes(app: FastifyInstance) {
         reconciledOrderStatus: result.result.orderStatus
       });
       return result.result;
+    }
+  );
+
+  app.get(
+    "/v1/orders/internal/:orderId/payment-context",
+    {
+      preHandler: app.rateLimit(ordersInternalReconcileRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeInternalRequest(request, reply, internalApiToken)) {
+        return;
+      }
+
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const userContext = parseRequestUserContext(request);
+      if (userContext.error) {
+        return sendServiceError(reply, request, userContext.error);
+      }
+
+      const order = await repository.getOrder(orderId);
+      if (!order) {
+        return sendError(reply, {
+          statusCode: 404,
+          code: "ORDER_NOT_FOUND",
+          message: "Order not found",
+          requestId: request.id,
+          details: { orderId }
+        });
+      }
+
+      if (userContext.userId) {
+        const orderUserId = await repository.getOrderUserId(orderId);
+        if (orderUserId !== userContext.userId) {
+          return sendError(reply, {
+            statusCode: 404,
+            code: "ORDER_NOT_FOUND",
+            message: "Order not found",
+            requestId: request.id,
+            details: { orderId }
+          });
+        }
+      }
+
+      return orderPaymentContextSchema.parse({
+        orderId: order.id,
+        locationId: order.locationId,
+        status: order.status,
+        total: order.total
+      });
     }
   );
 

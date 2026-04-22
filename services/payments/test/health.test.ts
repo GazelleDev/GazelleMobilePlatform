@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import Stripe from "stripe";
 import { buildApp } from "../src/app.js";
 import { summarizeCloverResponseForLogs } from "../src/routes.js";
 
 const internalPaymentsToken = "orders-internal-token";
 const cloverWebhookSecret = "secret-1";
+const stripeWebhookSecret = "whsec_test_secret";
+const stripe = new Stripe("sk_test_placeholder");
 
 function internalHeaders(extraHeaders?: Record<string, string>) {
   return {
@@ -15,6 +18,17 @@ function internalHeaders(extraHeaders?: Record<string, string>) {
 function webhookHeaders(extraHeaders?: Record<string, string>) {
   return {
     "x-clover-webhook-secret": cloverWebhookSecret,
+    ...extraHeaders
+  };
+}
+
+function stripeWebhookHeaders(payload: string, extraHeaders?: Record<string, string>) {
+  return {
+    "content-type": "application/json",
+    "stripe-signature": stripe.webhooks.generateTestHeaderString({
+      payload,
+      secret: stripeWebhookSecret
+    }),
     ...extraHeaders
   };
 }
@@ -76,7 +90,11 @@ function buildChargeOrder(orderId: string, amountCents: number) {
 describe("payments service", () => {
   beforeEach(() => {
     vi.stubEnv("ORDERS_INTERNAL_API_TOKEN", internalPaymentsToken);
+    vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "gateway-payments-token");
     vi.stubEnv("CLOVER_WEBHOOK_SHARED_SECRET", cloverWebhookSecret);
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_payments");
+    vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_payments");
+    vi.stubEnv("STRIPE_CONNECT_WEBHOOK_SECRET", stripeWebhookSecret);
   });
 
   afterEach(() => {
@@ -114,6 +132,139 @@ describe("payments service", () => {
       providerMode: "live",
       providerConfigured: false
     });
+    await app.close();
+  });
+
+  it("creates a Stripe mobile payment session from trusted order and catalog context", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const orderId = "123e4567-e89b-12d3-a456-426614174777";
+    const stripeCreateSpy = vi.spyOn(Object.getPrototypeOf(stripe.paymentIntents), "create").mockResolvedValue({
+      id: "pi_3QxExample123",
+      client_secret: "pi_3QxExample123_secret_abc"
+    } as Stripe.PaymentIntent);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const headers = new Headers(init?.headers);
+
+      if (url === `http://127.0.0.1:3001/v1/orders/internal/${orderId}/payment-context`) {
+        expect(headers.get("x-internal-token")).toBe(internalPaymentsToken);
+        expect(headers.get("x-user-id")).toBe("123e4567-e89b-12d3-a456-426614174000");
+        return new Response(
+          JSON.stringify({
+            orderId,
+            locationId: "flagship-01",
+            status: "PENDING_PAYMENT",
+            total: {
+              currency: "USD",
+              amountCents: 1295
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "http://127.0.0.1:3002/v1/catalog/internal/locations/flagship-01") {
+        expect(headers.get("x-gateway-token")).toBe("gateway-payments-token");
+        return new Response(
+          JSON.stringify({
+            brandId: "gazelle",
+            brandName: "Gazelle Coffee",
+            locationId: "flagship-01",
+            locationName: "Flagship",
+            marketLabel: "Detroit, MI",
+            storeName: "Gazelle Flagship",
+            hours: "Daily · 7:00 AM - 6:00 PM",
+            pickupInstructions: "Pickup at the espresso counter.",
+            taxRateBasisPoints: 600,
+            capabilities: {
+              menu: {
+                source: "platform_managed"
+              },
+              operations: {
+                fulfillmentMode: "staff",
+                liveOrderTrackingEnabled: true,
+                dashboardEnabled: true
+              },
+              loyalty: {
+                visible: true
+              }
+            },
+            paymentProfile: {
+              locationId: "flagship-01",
+              stripeAccountId: "acct_123456789",
+              stripeAccountType: "express",
+              stripeOnboardingStatus: "completed",
+              stripeDetailsSubmitted: true,
+              stripeChargesEnabled: true,
+              stripePayoutsEnabled: true,
+              stripeDashboardEnabled: true,
+              country: "US",
+              currency: "USD",
+              cardEnabled: true,
+              applePayEnabled: true,
+              refundsEnabled: true,
+              cloverPosEnabled: true
+            },
+            paymentReadiness: {
+              ready: true,
+              onboardingState: "completed",
+              missingRequiredFields: []
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`unexpected Stripe mobile session URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/stripe/mobile-session",
+      headers: {
+        "x-gateway-token": "gateway-payments-token",
+        "x-user-id": "123e4567-e89b-12d3-a456-426614174000"
+      },
+      payload: {
+        orderId
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      orderId,
+      paymentIntentId: "pi_3QxExample123",
+      paymentIntentClientSecret: "pi_3QxExample123_secret_abc",
+      publishableKey: "pk_test_payments",
+      stripeAccountId: "acct_123456789",
+      merchantDisplayName: "Gazelle Flagship",
+      merchantCountryCode: "US",
+      amountCents: 1295,
+      currency: "USD",
+      applePayEnabled: true,
+      cardEnabled: true
+    });
+
+    expect(stripeCreateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 1295,
+        currency: "usd",
+        metadata: expect.objectContaining({
+          orderId,
+          locationId: "flagship-01",
+          userId: "123e4567-e89b-12d3-a456-426614174000"
+        })
+      }),
+      expect.objectContaining({
+        stripeAccount: "acct_123456789",
+        idempotencyKey: `stripe-mobile-session:${orderId}`
+      })
+    );
+
+    stripeCreateSpy.mockRestore();
     await app.close();
   });
 
@@ -168,6 +319,318 @@ describe("payments service", () => {
       providerMode: "live",
       providerConfigured: true
     });
+    await app.close();
+  });
+
+  it("rejects Stripe webhooks when the Stripe webhook secret is not configured", async () => {
+    vi.stubEnv("STRIPE_CONNECT_WEBHOOK_SECRET", "");
+    const app = await buildApp();
+    const payload = JSON.stringify({
+      id: "evt_test_missing_secret",
+      object: "event",
+      type: "payment_intent.succeeded",
+      account: "acct_123456789",
+      livemode: false,
+      data: {
+        object: {
+          id: "pi_test_123"
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: stripeWebhookHeaders(payload),
+      payload
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      code: "STRIPE_WEBHOOK_NOT_CONFIGURED"
+    });
+    await app.close();
+  });
+
+  it("rejects Stripe webhooks with invalid signatures", async () => {
+    const app = await buildApp();
+    const payload = JSON.stringify({
+      id: "evt_test_invalid_signature",
+      object: "event",
+      type: "payment_intent.succeeded",
+      account: "acct_123456789",
+      livemode: false,
+      data: {
+        object: {
+          id: "pi_test_invalid"
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: {
+        "content-type": "application/json",
+        "stripe-signature": "t=1,v1=bad"
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "INVALID_STRIPE_SIGNATURE"
+    });
+    await app.close();
+  });
+
+  it("reconciles a signed Stripe payment webhook and deduplicates repeated deliveries", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const orderId = "123e4567-e89b-12d3-a456-426614174401";
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-internal-token")).toBe(internalPaymentsToken);
+        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({
+          eventId: "evt_test_valid_signature",
+          provider: "STRIPE",
+          kind: "CHARGE",
+          orderId,
+          paymentId: "pi_test_valid",
+          status: "SUCCEEDED",
+          amountCents: 975,
+          currency: "USD"
+        });
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            applied: true,
+            orderStatus: "PAID"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`unexpected Stripe webhook dispatch URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const payload = JSON.stringify({
+      id: "evt_test_valid_signature",
+      object: "event",
+      type: "payment_intent.succeeded",
+      account: "acct_123456789",
+      created: 1776829450,
+      livemode: false,
+      data: {
+        object: {
+          id: "pi_test_valid",
+          amount: 975,
+          amount_received: 975,
+          currency: "usd",
+          metadata: {
+            orderId
+          }
+        }
+      }
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: stripeWebhookHeaders(payload),
+      payload
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({
+      accepted: true,
+      provider: "STRIPE",
+      eventId: "evt_test_valid_signature",
+      eventType: "payment_intent.succeeded",
+      duplicate: false,
+      account: "acct_123456789"
+    });
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: stripeWebhookHeaders(payload),
+      payload
+    });
+
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({
+      accepted: true,
+      provider: "STRIPE",
+      eventId: "evt_test_valid_signature",
+      duplicate: true
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it("retries Stripe webhook reconciliation after a transient downstream failure", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const orderId = "123e4567-e89b-12d3-a456-426614174402";
+    let reconcileAttempts = 0;
+    fetchMock.mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
+        reconcileAttempts += 1;
+        if (reconcileAttempts === 1) {
+          return new Response(
+            JSON.stringify({
+              code: "ORDERS_RECONCILIATION_FAILED",
+              message: "Orders reconciliation call failed",
+              requestId: "payments-test"
+            }),
+            { status: 502, headers: { "content-type": "application/json" } }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            applied: false,
+            orderStatus: "PENDING_PAYMENT"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`unexpected Stripe webhook dispatch URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const payload = JSON.stringify({
+      id: "evt_test_retry_signature",
+      object: "event",
+      type: "payment_intent.payment_failed",
+      account: "acct_123456789",
+      created: 1776829510,
+      livemode: false,
+      data: {
+        object: {
+          id: "pi_test_retry",
+          amount: 825,
+          currency: "usd",
+          metadata: {
+            orderId
+          },
+          last_payment_error: {
+            code: "card_declined",
+            decline_code: "insufficient_funds",
+            message: "Card was declined"
+          }
+        }
+      }
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: stripeWebhookHeaders(payload),
+      payload
+    });
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: stripeWebhookHeaders(payload),
+      payload
+    });
+
+    expect(first.statusCode).toBe(502);
+    expect(first.json()).toMatchObject({ code: "ORDERS_RECONCILIATION_FAILED" });
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({
+      accepted: true,
+      provider: "STRIPE",
+      eventId: "evt_test_retry_signature",
+      duplicate: false
+    });
+    expect(reconcileAttempts).toBe(2);
+    await app.close();
+  });
+
+  it("reconciles a signed Stripe refund webhook", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const orderId = "123e4567-e89b-12d3-a456-426614174403";
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
+        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({
+          eventId: "evt_test_refund_signature",
+          provider: "STRIPE",
+          kind: "REFUND",
+          orderId,
+          paymentId: "pi_test_refund",
+          refundId: "re_test_refund",
+          status: "REFUNDED",
+          amountCents: 650,
+          currency: "USD"
+        });
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            applied: true,
+            orderStatus: "CANCELED"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`unexpected Stripe refund dispatch URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const payload = JSON.stringify({
+      id: "evt_test_refund_signature",
+      object: "event",
+      type: "charge.refunded",
+      account: "acct_123456789",
+      created: 1776829570,
+      livemode: false,
+      data: {
+        object: {
+          id: "ch_test_refund",
+          payment_intent: "pi_test_refund",
+          amount: 650,
+          amount_refunded: 650,
+          currency: "usd",
+          metadata: {
+            orderId
+          },
+          refunds: {
+            data: [
+              {
+                id: "re_test_refund"
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: stripeWebhookHeaders(payload),
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      accepted: true,
+      provider: "STRIPE",
+      eventId: "evt_test_refund_signature",
+      duplicate: false
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     await app.close();
   });
 

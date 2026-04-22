@@ -66,6 +66,15 @@ const variant = resolveAppVariant();
 const bundleIdentifier = resolveBundleIdentifier(variant);
 const applePayMerchantIdentifier = resolveApplePayMerchantIdentifier(variant, bundleIdentifier);
 const applePayMerchantIdentifiers = applePayMerchantIdentifier ? [applePayMerchantIdentifier] : [];
+const stripePlugin =
+  applePayMerchantIdentifiers.length > 0
+    ? ([
+        "@stripe/stripe-react-native",
+        {
+          merchantIdentifier: applePayMerchantIdentifiers
+        }
+      ] as [string, { merchantIdentifier: string[] }])
+    : "@stripe/stripe-react-native";
 
 const config: ExpoConfig = {
   name: resolveDisplayName(variant),
@@ -114,7 +123,7 @@ const config: ExpoConfig = {
       projectId: "18320a67-0f15-4860-9f84-845eb0f4c31c"
     }
   },
-  plugins: ["expo-router", "expo-secure-store", "expo-font", "expo-apple-authentication"]
+  plugins: ["expo-router", "expo-secure-store", "expo-font", "expo-apple-authentication", stripePlugin]
 };
 
 export default config;

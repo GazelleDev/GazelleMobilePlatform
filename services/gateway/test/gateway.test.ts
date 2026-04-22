@@ -730,6 +730,11 @@ describe("gateway", () => {
               card: true,
               cash: false,
               refunds: true,
+              stripe: {
+                enabled: false,
+                onboarded: false,
+                dashboardEnabled: false
+              },
               clover: {
                 enabled: true,
                 merchantRef: "flagship-01"
@@ -1119,6 +1124,69 @@ describe("gateway", () => {
         );
       }
 
+      const internalLocationPaymentProfileMatch = url.match(/\/v1\/catalog\/internal\/locations\/([^/]+)\/payment-profile$/);
+      if (internalLocationPaymentProfileMatch && method === "GET") {
+        const locationId = internalLocationPaymentProfileMatch[1];
+
+        return new Response(
+          JSON.stringify({
+            locationId,
+            stripeAccountId: "acct_123456789",
+            stripeAccountType: "express",
+            stripeOnboardingStatus: "completed",
+            stripeDetailsSubmitted: true,
+            stripeChargesEnabled: true,
+            stripePayoutsEnabled: true,
+            stripeDashboardEnabled: true,
+            country: "US",
+            currency: "USD",
+            cardEnabled: true,
+            applePayEnabled: true,
+            refundsEnabled: true,
+            cloverPosEnabled: true
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (internalLocationPaymentProfileMatch && method === "PUT") {
+        const locationId = internalLocationPaymentProfileMatch[1];
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          stripeAccountId?: string;
+          stripeOnboardingStatus?: string;
+          stripeDetailsSubmitted?: boolean;
+          stripeChargesEnabled?: boolean;
+          stripePayoutsEnabled?: boolean;
+          stripeDashboardEnabled?: boolean;
+          country?: string;
+          currency?: string;
+          cardEnabled?: boolean;
+          applePayEnabled?: boolean;
+          refundsEnabled?: boolean;
+          cloverPosEnabled?: boolean;
+        };
+
+        return new Response(
+          JSON.stringify({
+            locationId,
+            stripeAccountId: body.stripeAccountId ?? "acct_123456789",
+            stripeAccountType: "express",
+            stripeOnboardingStatus: body.stripeOnboardingStatus ?? "completed",
+            stripeDetailsSubmitted: body.stripeDetailsSubmitted ?? true,
+            stripeChargesEnabled: body.stripeChargesEnabled ?? true,
+            stripePayoutsEnabled: body.stripePayoutsEnabled ?? true,
+            stripeDashboardEnabled: body.stripeDashboardEnabled ?? true,
+            country: body.country ?? "US",
+            currency: body.currency ?? "USD",
+            cardEnabled: body.cardEnabled ?? true,
+            applePayEnabled: body.applePayEnabled ?? true,
+            refundsEnabled: body.refundsEnabled ?? true,
+            cloverPosEnabled: body.cloverPosEnabled ?? true
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       const internalLocationMatch = url.match(/\/v1\/catalog\/internal\/locations\/([^/]+)$/);
       if (internalLocationMatch && method === "GET") {
         const locationId = internalLocationMatch[1];
@@ -1245,6 +1313,28 @@ describe("gateway", () => {
             tokenizeEndpoint: "https://token.clover.com/v1/tokens",
             apiAccessKey: "public-api-access-key",
             merchantId: "test-merchant-123"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/v1/payments/stripe/mobile-session") && method === "POST") {
+        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+        const body = JSON.parse(String(init?.body ?? "{}")) as { orderId?: string };
+        expect(headers.get("x-gateway-token")).toBe("gateway-test-token");
+        expect(headers.get("x-user-id")).toBe("123e4567-e89b-12d3-a456-426614174000");
+        return new Response(
+          JSON.stringify({
+            orderId: body.orderId ?? "123e4567-e89b-12d3-a456-426614174112",
+            paymentIntentId: "pi_3QxExample123",
+            paymentIntentClientSecret: "pi_3QxExample123_secret_abc",
+            publishableKey: "pk_test_payments",
+            stripeAccountId: "acct_123456789",
+            merchantDisplayName: "Northside Coffee",
+            merchantCountryCode: "US",
+            amountCents: 530,
+            currency: "USD",
+            applePayEnabled: true,
+            cardEnabled: true
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -2466,6 +2556,44 @@ describe("gateway", () => {
       marketLabel: "Detroit, MI"
     });
 
+    const paymentProfileResponse = await app.inject({
+      method: "GET",
+      url: "/v1/internal/locations/northside-01/payment-profile",
+      headers: ownerInternalAdminHeaders
+    });
+    expect(paymentProfileResponse.statusCode).toBe(200);
+    expect(paymentProfileResponse.json()).toMatchObject({
+      locationId: "northside-01",
+      stripeAccountId: "acct_123456789",
+      stripeOnboardingStatus: "completed"
+    });
+
+    const paymentProfileUpdateResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/internal/locations/northside-01/payment-profile",
+      headers: ownerInternalAdminHeaders,
+      payload: {
+        stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+        stripeOnboardingStatus: "completed",
+        stripeDetailsSubmitted: true,
+        stripeChargesEnabled: true,
+        stripePayoutsEnabled: true,
+        stripeDashboardEnabled: true,
+        country: "US",
+        currency: "USD",
+        cardEnabled: true,
+        applePayEnabled: true,
+        refundsEnabled: true,
+        cloverPosEnabled: true
+      }
+    });
+    expect(paymentProfileUpdateResponse.statusCode).toBe(200);
+    expect(paymentProfileUpdateResponse.json()).toMatchObject({
+      locationId: "northside-01",
+      stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+      stripeOnboardingStatus: "completed"
+    });
+
     const bootstrapCall = fetchMock.mock.calls.find(([input]) => {
       const url = typeof input === "string" ? input : input.url;
       return url === "http://catalog.internal/v1/catalog/internal/locations/bootstrap";
@@ -2475,6 +2603,33 @@ describe("gateway", () => {
       const upstreamHeaders = new Headers((bootstrapCall[1]?.headers ?? {}) as HeadersInit);
       expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
       expect(upstreamHeaders.get("x-user-id")).toBeNull();
+    }
+
+    const paymentProfileGetCall = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://catalog.internal/v1/catalog/internal/locations/northside-01/payment-profile";
+    });
+    expect(paymentProfileGetCall).toBeDefined();
+    if (paymentProfileGetCall) {
+      const upstreamHeaders = new Headers((paymentProfileGetCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
+      expect(upstreamHeaders.get("x-user-id")).toBeNull();
+    }
+
+    const paymentProfileUpdateCall = [...fetchMock.mock.calls].reverse().find(([input, init]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://catalog.internal/v1/catalog/internal/locations/northside-01/payment-profile" && init?.method === "PUT";
+    });
+    expect(paymentProfileUpdateCall).toBeDefined();
+    if (paymentProfileUpdateCall) {
+      const upstreamHeaders = new Headers((paymentProfileUpdateCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
+      expect(upstreamHeaders.get("x-user-id")).toBeNull();
+      expect(JSON.parse(String(paymentProfileUpdateCall[1]?.body ?? "{}"))).toMatchObject({
+        locationId: "northside-01",
+        stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+        stripeOnboardingStatus: "completed"
+      });
     }
 
     await app.close();
@@ -2655,6 +2810,34 @@ describe("gateway", () => {
         "http://payments.internal/v1/payments/clover/card-entry-config"
       );
     }
+
+    await app.close();
+  });
+
+  it("forwards Stripe mobile payment session creation through the gateway", async () => {
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174112";
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/stripe/mobile-session",
+      headers: authHeader,
+      payload: {
+        orderId
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      orderId,
+      paymentIntentId: "pi_3QxExample123",
+      paymentIntentClientSecret: "pi_3QxExample123_secret_abc",
+      stripeAccountId: "acct_123456789"
+    });
+
+    const sessionCall = fetchMock.mock.calls.find(
+      ([input]) => (typeof input === "string" ? input : input.url) === "http://payments.internal/v1/payments/stripe/mobile-session"
+    );
+    expect(sessionCall).toBeDefined();
 
     await app.close();
   });

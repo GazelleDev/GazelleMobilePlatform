@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import Stripe from "stripe";
 import { z } from "zod";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
@@ -9,10 +10,16 @@ import {
   runMigrations
 } from "@lattelink/persistence";
 import {
+  internalLocationSummarySchema,
+} from "@lattelink/contracts-catalog";
+import {
   applePayWalletSchema,
+  orderPaymentContextSchema,
   orderSchema,
   ordersPaymentReconciliationResultSchema,
-  ordersPaymentReconciliationSchema
+  ordersPaymentReconciliationSchema,
+  stripeMobilePaymentSessionRequestSchema,
+  stripeMobilePaymentSessionResponseSchema
 } from "@lattelink/contracts-orders";
 import {
   paymentWebhookDispatchResultSchema,
@@ -138,6 +145,14 @@ const internalHeadersSchema = z.object({
   "x-internal-token": z.string().optional()
 });
 
+const gatewayHeadersSchema = z.object({
+  "x-gateway-token": z.string().optional()
+});
+
+const userHeadersSchema = z.object({
+  "x-user-id": z.string().uuid().optional()
+});
+
 const cloverOauthCallbackQuerySchema = z.object({
   code: z.string().min(1).optional(),
   state: z.string().min(1).optional(),
@@ -179,6 +194,16 @@ const cloverWebhookVerificationCodeResponseSchema = z.object({
   verificationCode: z.string().min(1),
   receivedAt: z.string().datetime(),
   expiresAt: z.string().datetime()
+});
+
+const stripeWebhookAcceptedResponseSchema = z.object({
+  accepted: z.literal(true),
+  provider: z.literal("STRIPE"),
+  eventId: z.string().min(1),
+  eventType: z.string().min(1),
+  duplicate: z.boolean(),
+  livemode: z.boolean(),
+  account: z.string().min(1).optional()
 });
 
 const cloverOauthTokenResponseSchema = z.object({
@@ -235,6 +260,16 @@ type PersistedWebhookDedupRow = {
   status: string;
   order_applied: boolean;
   created_at: string;
+};
+
+type PersistedStripeWebhookEventRow = {
+  event_id: string;
+  event_type: string;
+  stripe_account: string | null;
+  livemode: boolean;
+  payload_json: unknown;
+  created_at: string;
+  updated_at: string;
 };
 
 type PersistedCloverConnectionRow = {
@@ -297,6 +332,14 @@ export type PaymentsRepository = {
   saveCloverConnection(connection: CloverConnection): Promise<CloverConnection>;
   findWebhookResult(eventKey: string): Promise<PaymentWebhookDispatchResult | undefined>;
   saveWebhookResult(eventKey: string, result: PaymentWebhookDispatchResult): Promise<void>;
+  findStripeWebhookEvent(eventId: string): Promise<PersistedStripeWebhookEventRow | undefined>;
+  saveStripeWebhookEvent(input: {
+    eventId: string;
+    eventType: string;
+    stripeAccount?: string;
+    livemode: boolean;
+    payload: unknown;
+  }): Promise<PersistedStripeWebhookEventRow>;
   close(): Promise<void>;
 };
 
@@ -372,6 +415,7 @@ function createInMemoryRepository(): PaymentsRepository {
   const refundResultByRefundId = new Map<string, RefundResponse>();
   const latestRefundIdByOrderPayment = new Map<string, string>();
   const webhookResultsByEventKey = new Map<string, PaymentWebhookDispatchResult>();
+  const stripeWebhookEventsById = new Map<string, PersistedStripeWebhookEventRow>();
   const cloverConnectionsByMerchantId = new Map<string, CloverConnection>();
   let latestCloverMerchantId: string | undefined;
 
@@ -496,6 +540,28 @@ function createInMemoryRepository(): PaymentsRepository {
     },
     async saveWebhookResult(eventKey, result) {
       webhookResultsByEventKey.set(eventKey, result);
+    },
+    async findStripeWebhookEvent(eventId) {
+      return stripeWebhookEventsById.get(eventId);
+    },
+    async saveStripeWebhookEvent(input) {
+      const existing = stripeWebhookEventsById.get(input.eventId);
+      if (existing) {
+        return existing;
+      }
+
+      const now = new Date().toISOString();
+      const next: PersistedStripeWebhookEventRow = {
+        event_id: input.eventId,
+        event_type: input.eventType,
+        stripe_account: input.stripeAccount ?? null,
+        livemode: input.livemode,
+        payload_json: input.payload,
+        created_at: now,
+        updated_at: now
+      };
+      stripeWebhookEventsById.set(input.eventId, next);
+      return next;
     },
     async close() {
       // no-op
@@ -769,6 +835,41 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
         .onConflict((oc) => oc.column("event_key").doNothing())
         .execute();
     },
+    async findStripeWebhookEvent(eventId) {
+      const row = await db
+        .selectFrom("payments_stripe_webhook_events")
+        .selectAll()
+        .where("event_id", "=", eventId)
+        .executeTakeFirst();
+      return row as PersistedStripeWebhookEventRow | undefined;
+    },
+    async saveStripeWebhookEvent(input) {
+      await db
+        .insertInto("payments_stripe_webhook_events")
+        .values({
+          event_id: input.eventId,
+          event_type: input.eventType,
+          stripe_account: input.stripeAccount ?? null,
+          livemode: input.livemode,
+          payload_json: input.payload
+        })
+        .onConflict((oc) =>
+          oc.column("event_id").doUpdateSet({
+            event_type: input.eventType,
+            stripe_account: input.stripeAccount ?? null,
+            livemode: input.livemode,
+            payload_json: input.payload,
+            updated_at: new Date().toISOString()
+          })
+        )
+        .execute();
+
+      return (await db
+        .selectFrom("payments_stripe_webhook_events")
+        .selectAll()
+        .where("event_id", "=", input.eventId)
+        .executeTakeFirstOrThrow()) as PersistedStripeWebhookEventRow;
+    },
     async close() {
       await db.destroy();
     }
@@ -929,6 +1030,36 @@ function authorizeInternalRequest(
   return false;
 }
 
+function authorizeGatewayRequest(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  gatewayToken: string | undefined
+) {
+  if (!gatewayToken) {
+    sendError(reply, {
+      statusCode: 503,
+      code: "GATEWAY_ACCESS_NOT_CONFIGURED",
+      message: "GATEWAY_INTERNAL_API_TOKEN must be configured before accepting gateway payment reads",
+      requestId: request.id
+    });
+    return false;
+  }
+
+  const parsedHeaders = gatewayHeadersSchema.safeParse(request.headers);
+  const providedToken = parsedHeaders.success ? parsedHeaders.data["x-gateway-token"] : undefined;
+  if (providedToken && secretsMatch(gatewayToken, providedToken)) {
+    return true;
+  }
+
+  sendError(reply, {
+    statusCode: 401,
+    code: "UNAUTHORIZED_GATEWAY_REQUEST",
+    message: "Gateway payments token is invalid",
+    requestId: request.id
+  });
+  return false;
+}
+
 function authorizeWebhookRequest(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -961,6 +1092,60 @@ function authorizeWebhookRequest(
   }
 
   return true;
+}
+
+function requireStripeWebhookSecret(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  webhookSecret: string | undefined
+) {
+  if (webhookSecret) {
+    return true;
+  }
+
+  sendError(reply, {
+    statusCode: 503,
+    code: "STRIPE_WEBHOOK_NOT_CONFIGURED",
+    message: "STRIPE_CONNECT_WEBHOOK_SECRET must be configured before accepting Stripe webhooks",
+    requestId: request.id
+  });
+  return false;
+}
+
+function requireStripeSecretKey(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  stripeSecretKey: string | undefined
+) {
+  if (stripeSecretKey) {
+    return true;
+  }
+
+  sendError(reply, {
+    statusCode: 503,
+    code: "STRIPE_SECRET_KEY_NOT_CONFIGURED",
+    message: "STRIPE_SECRET_KEY must be configured before creating Stripe payment sessions",
+    requestId: request.id
+  });
+  return false;
+}
+
+function requireStripePublishableKey(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  stripePublishableKey: string | undefined
+) {
+  if (stripePublishableKey) {
+    return true;
+  }
+
+  sendError(reply, {
+    statusCode: 503,
+    code: "STRIPE_PUBLISHABLE_KEY_NOT_CONFIGURED",
+    message: "STRIPE_PUBLISHABLE_KEY must be configured before creating Stripe payment sessions",
+    requestId: request.id
+  });
+  return false;
 }
 
 function resolveProviderMode(rawMode: string | undefined): ProviderMode {
@@ -1949,6 +2134,110 @@ async function dispatchOrderReconciliation(params: {
   };
 }
 
+async function fetchOrderPaymentContext(params: {
+  ordersBaseUrl: string;
+  internalToken?: string;
+  requestId: string;
+  orderId: string;
+  userId?: string;
+}): Promise<
+  | { ok: true; response: z.output<typeof orderPaymentContextSchema> }
+  | { ok: false; status?: number; body?: unknown }
+> {
+  const headers: Record<string, string> = {
+    "x-request-id": params.requestId
+  };
+  if (params.internalToken) {
+    headers["x-internal-token"] = params.internalToken;
+  }
+  if (params.userId) {
+    headers["x-user-id"] = params.userId;
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${params.ordersBaseUrl}/v1/orders/internal/${params.orderId}/payment-context`, {
+      method: "GET",
+      headers
+    });
+  } catch {
+    return { ok: false };
+  }
+
+  const body = parseJsonSafely(await upstream.text());
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      status: upstream.status,
+      body
+    };
+  }
+
+  const parsed = orderPaymentContextSchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: upstream.status,
+      body
+    };
+  }
+
+  return {
+    ok: true,
+    response: parsed.data
+  };
+}
+
+async function fetchInternalLocationSummary(params: {
+  catalogBaseUrl: string;
+  gatewayToken?: string;
+  requestId: string;
+  locationId: string;
+}): Promise<
+  | { ok: true; response: z.output<typeof internalLocationSummarySchema> }
+  | { ok: false; status?: number; body?: unknown }
+> {
+  const headers: Record<string, string> = {
+    "x-request-id": params.requestId
+  };
+  if (params.gatewayToken) {
+    headers["x-gateway-token"] = params.gatewayToken;
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${params.catalogBaseUrl}/v1/catalog/internal/locations/${params.locationId}`, {
+      method: "GET",
+      headers
+    });
+  } catch {
+    return { ok: false };
+  }
+
+  const body = parseJsonSafely(await upstream.text());
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      status: upstream.status,
+      body
+    };
+  }
+
+  const parsed = internalLocationSummarySchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: upstream.status,
+      body
+    };
+  }
+
+  return {
+    ok: true,
+    response: parsed.data
+  };
+}
+
 function createSimulatedChargeResponse(input: ChargeRequest): ChargeResponse {
   const simulationSignal = (input.paymentSourceToken ?? input.applePayToken ?? input.applePayWallet?.data ?? "").toLowerCase();
 
@@ -2009,6 +2298,145 @@ function createSimulatedRefundResponse(input: RefundRequest): RefundResponse {
   });
 }
 
+function verifyStripeWebhookEvent(params: {
+  stripeClient: Stripe;
+  rawBody: string | undefined;
+  signature: string | undefined;
+  endpointSecret: string;
+}) {
+  if (!params.rawBody) {
+    throw new Error("Stripe webhook raw body was unavailable for signature verification");
+  }
+  if (!params.signature) {
+    throw new Error("Missing Stripe-Signature header");
+  }
+
+  return params.stripeClient.webhooks.constructEvent(
+    params.rawBody,
+    params.signature,
+    params.endpointSecret
+  );
+}
+
+function toStripeWebhookOccurredAt(createdUnixSeconds: number) {
+  return new Date(createdUnixSeconds * 1000).toISOString();
+}
+
+function normalizeStripeCurrency(currency: string | null | undefined): "USD" | undefined {
+  return currency?.toUpperCase() === "USD" ? "USD" : undefined;
+}
+
+function resolveStripeMetadataOrderId(metadata: Stripe.Metadata | null | undefined) {
+  const orderId = metadata?.orderId;
+  if (!orderId) {
+    return undefined;
+  }
+
+  const parsedOrderId = z.string().uuid().safeParse(orderId);
+  return parsedOrderId.success ? parsedOrderId.data : undefined;
+}
+
+function resolveStripeChargePaymentId(charge: Stripe.Charge) {
+  if (typeof charge.payment_intent === "string" && charge.payment_intent.length > 0) {
+    return charge.payment_intent;
+  }
+
+  if (charge.payment_intent && typeof charge.payment_intent === "object" && charge.payment_intent.id) {
+    return charge.payment_intent.id;
+  }
+
+  return undefined;
+}
+
+function resolveStripeRefundId(charge: Stripe.Charge) {
+  const refunds = charge.refunds?.data ?? [];
+  const latestRefund = refunds[refunds.length - 1];
+  return latestRefund?.id;
+}
+
+function resolveStripeOrderReconciliation(event: Stripe.Event): OrderPaymentReconciliation | undefined {
+  if (event.type === "payment_intent.succeeded") {
+    const intent = event.data.object as Stripe.PaymentIntent;
+    const orderId = resolveStripeMetadataOrderId(intent.metadata);
+    if (!orderId) {
+      return undefined;
+    }
+
+    return ordersPaymentReconciliationSchema.parse({
+      eventId: event.id,
+      provider: "STRIPE",
+      kind: "CHARGE",
+      orderId,
+      paymentId: intent.id,
+      status: "SUCCEEDED",
+      occurredAt: toStripeWebhookOccurredAt(event.created),
+      message: "Stripe payment succeeded",
+      amountCents: intent.amount_received > 0 ? intent.amount_received : intent.amount,
+      currency: normalizeStripeCurrency(intent.currency)
+    });
+  }
+
+  if (event.type === "payment_intent.payment_failed") {
+    const intent = event.data.object as Stripe.PaymentIntent;
+    const orderId = resolveStripeMetadataOrderId(intent.metadata);
+    if (!orderId) {
+      return undefined;
+    }
+
+    const declineCode =
+      intent.last_payment_error?.decline_code ??
+      (typeof intent.last_payment_error?.code === "string" ? intent.last_payment_error.code : undefined);
+
+    return ordersPaymentReconciliationSchema.parse({
+      eventId: event.id,
+      provider: "STRIPE",
+      kind: "CHARGE",
+      orderId,
+      paymentId: intent.id,
+      status: "DECLINED",
+      occurredAt: toStripeWebhookOccurredAt(event.created),
+      message: intent.last_payment_error?.message ?? "Stripe payment failed",
+      declineCode,
+      amountCents: intent.amount,
+      currency: normalizeStripeCurrency(intent.currency)
+    });
+  }
+
+  if (event.type === "charge.refunded") {
+    const charge = event.data.object as Stripe.Charge;
+    const orderId = resolveStripeMetadataOrderId(charge.metadata);
+    const paymentId = resolveStripeChargePaymentId(charge);
+    if (!orderId || !paymentId) {
+      return undefined;
+    }
+
+    return ordersPaymentReconciliationSchema.parse({
+      eventId: event.id,
+      provider: "STRIPE",
+      kind: "REFUND",
+      orderId,
+      paymentId,
+      refundId: resolveStripeRefundId(charge),
+      status: "REFUNDED",
+      occurredAt: toStripeWebhookOccurredAt(event.created),
+      message: "Stripe refund succeeded",
+      amountCents: charge.amount_refunded > 0 ? charge.amount_refunded : charge.amount,
+      currency: normalizeStripeCurrency(charge.currency)
+    });
+  }
+
+  return undefined;
+}
+
+function resolveStripeMerchantDisplayName(locationSummary: z.output<typeof internalLocationSummarySchema>) {
+  return (
+    trimToUndefined(locationSummary.storeName) ??
+    trimToUndefined(locationSummary.locationName) ??
+    trimToUndefined(locationSummary.brandName) ??
+    "Gazelle"
+  );
+}
+
 async function executeLiveCharge(params: {
   config: CloverProviderConfig;
   request: ChargeRequest;
@@ -2050,9 +2478,15 @@ export async function registerRoutes(app: FastifyInstance) {
   const repository = await createPaymentsRepository(app.log);
   const cloverProvider = resolveCloverProviderConfig(app.log);
   const cloverOAuthConfig = resolveCloverOAuthConfig();
+  const catalogBaseUrl = process.env.CATALOG_SERVICE_BASE_URL ?? "http://127.0.0.1:3002";
   const ordersBaseUrl = process.env.ORDERS_SERVICE_BASE_URL ?? "http://127.0.0.1:3001";
   const ordersInternalToken = trimToUndefined(process.env.ORDERS_INTERNAL_API_TOKEN);
+  const gatewayInternalToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const cloverWebhookSharedSecret = trimToUndefined(process.env.CLOVER_WEBHOOK_SHARED_SECRET);
+  const stripeSecretKey = trimToUndefined(process.env.STRIPE_SECRET_KEY);
+  const stripePublishableKey = trimToUndefined(process.env.STRIPE_PUBLISHABLE_KEY);
+  const stripeConnectWebhookSecret = trimToUndefined(process.env.STRIPE_CONNECT_WEBHOOK_SECRET);
+  const stripeClient = new Stripe(stripeSecretKey ?? "sk_test_placeholder");
   const rateLimitWindowMs = toPositiveInteger(process.env.PAYMENTS_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const paymentsWriteRateLimit = {
     max: toPositiveInteger(process.env.PAYMENTS_RATE_LIMIT_WRITE_MAX, defaultPaymentsWriteRateLimitMax),
@@ -2171,6 +2605,173 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get("/v1/payments/clover/oauth/status", async () => buildCloverOauthStatus());
 
   app.get("/v1/payments/clover/card-entry-config", async () => buildCloverCardEntryConfig());
+  app.post("/v1/payments/stripe/mobile-session", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
+    if (!authorizeGatewayRequest(request, reply, gatewayInternalToken)) {
+      return;
+    }
+    if (!requireStripeSecretKey(request, reply, stripeSecretKey)) {
+      return;
+    }
+    if (!requireStripePublishableKey(request, reply, stripePublishableKey)) {
+      return;
+    }
+
+    const input = stripeMobilePaymentSessionRequestSchema.parse(request.body);
+    const parsedUserHeaders = userHeadersSchema.safeParse(request.headers);
+    const userId = parsedUserHeaders.success ? parsedUserHeaders.data["x-user-id"] : undefined;
+    const orderPaymentContextResult = await fetchOrderPaymentContext({
+      ordersBaseUrl,
+      internalToken: ordersInternalToken,
+      requestId: request.id,
+      orderId: input.orderId,
+      userId
+    });
+
+    if (!orderPaymentContextResult.ok) {
+      const upstreamError = serviceErrorSchema.safeParse(orderPaymentContextResult.body);
+      return reply.status(orderPaymentContextResult.status ?? 502).send(
+        upstreamError.success
+          ? upstreamError.data
+          : serviceErrorSchema.parse({
+              code: "ORDERS_PAYMENT_CONTEXT_UNAVAILABLE",
+              message: "Unable to load order payment context",
+              requestId: request.id
+            })
+      );
+    }
+
+    const orderPaymentContext = orderPaymentContextResult.response;
+    if (orderPaymentContext.status !== "PENDING_PAYMENT") {
+      return reply.status(409).send(
+        serviceErrorSchema.parse({
+          code: "ORDER_NOT_PENDING_PAYMENT",
+          message: `Order cannot create a Stripe payment session from status ${orderPaymentContext.status}`,
+          requestId: request.id,
+          details: {
+            orderId: orderPaymentContext.orderId,
+            status: orderPaymentContext.status
+          }
+        })
+      );
+    }
+
+    const locationSummaryResult = await fetchInternalLocationSummary({
+      catalogBaseUrl,
+      gatewayToken: gatewayInternalToken,
+      requestId: request.id,
+      locationId: orderPaymentContext.locationId
+    });
+
+    if (!locationSummaryResult.ok) {
+      const upstreamError = serviceErrorSchema.safeParse(locationSummaryResult.body);
+      return reply.status(locationSummaryResult.status ?? 502).send(
+        upstreamError.success
+          ? upstreamError.data
+          : serviceErrorSchema.parse({
+              code: "CATALOG_LOCATION_UNAVAILABLE",
+              message: "Unable to load location payment profile",
+              requestId: request.id
+            })
+      );
+    }
+
+    const locationSummary = locationSummaryResult.response;
+    const paymentProfile = locationSummary.paymentProfile;
+    const paymentReadiness = locationSummary.paymentReadiness;
+    if (
+      !paymentProfile ||
+      !paymentProfile.stripeAccountId ||
+      !paymentReadiness?.ready ||
+      !paymentProfile.stripeChargesEnabled ||
+      !paymentProfile.cardEnabled
+    ) {
+      return reply.status(409).send(
+        serviceErrorSchema.parse({
+          code: "STRIPE_ACCOUNT_NOT_READY",
+          message: "Location is not ready for Stripe mobile checkout",
+          requestId: request.id,
+          details: {
+            locationId: locationSummary.locationId,
+            onboardingState: paymentReadiness?.onboardingState ?? paymentProfile?.stripeOnboardingStatus ?? "unconfigured",
+            missingRequiredFields: paymentReadiness?.missingRequiredFields ?? []
+          }
+        })
+      );
+    }
+
+    try {
+      const paymentIntent = await stripeClient.paymentIntents.create(
+        {
+          amount: orderPaymentContext.total.amountCents,
+          currency: orderPaymentContext.total.currency.toLowerCase(),
+          automatic_payment_methods: {
+            enabled: true
+          },
+          metadata: {
+            orderId: orderPaymentContext.orderId,
+            locationId: orderPaymentContext.locationId,
+            ...(userId ? { userId } : {})
+          },
+          description: `${resolveStripeMerchantDisplayName(locationSummary)} mobile order ${orderPaymentContext.orderId}`
+        },
+        {
+          stripeAccount: paymentProfile.stripeAccountId,
+          idempotencyKey: `stripe-mobile-session:${orderPaymentContext.orderId}`
+        }
+      );
+
+      if (!paymentIntent.client_secret) {
+        request.log.error(
+          {
+            requestId: request.id,
+            orderId: orderPaymentContext.orderId,
+            paymentIntentId: paymentIntent.id,
+            stripeAccountId: paymentProfile.stripeAccountId
+          },
+          "Stripe PaymentIntent was missing client_secret"
+        );
+        return reply.status(502).send(
+          serviceErrorSchema.parse({
+            code: "STRIPE_PAYMENT_INTENT_INVALID",
+            message: "Stripe payment session was missing a client secret",
+            requestId: request.id
+          })
+        );
+      }
+
+      return stripeMobilePaymentSessionResponseSchema.parse({
+        orderId: orderPaymentContext.orderId,
+        paymentIntentId: paymentIntent.id,
+        paymentIntentClientSecret: paymentIntent.client_secret,
+        publishableKey: stripePublishableKey,
+        stripeAccountId: paymentProfile.stripeAccountId,
+        merchantDisplayName: resolveStripeMerchantDisplayName(locationSummary),
+        merchantCountryCode: "US",
+        amountCents: orderPaymentContext.total.amountCents,
+        currency: orderPaymentContext.total.currency,
+        applePayEnabled: paymentProfile.applePayEnabled,
+        cardEnabled: paymentProfile.cardEnabled
+      });
+    } catch (error) {
+      request.log.error(
+        {
+          error,
+          requestId: request.id,
+          orderId: orderPaymentContext.orderId,
+          locationId: orderPaymentContext.locationId,
+          stripeAccountId: paymentProfile.stripeAccountId
+        },
+        "Stripe mobile payment session creation failed"
+      );
+      return reply.status(502).send(
+        serviceErrorSchema.parse({
+          code: "STRIPE_PAYMENT_SESSION_ERROR",
+          message: error instanceof Error ? error.message : "Stripe payment session creation failed",
+          requestId: request.id
+        })
+      );
+    }
+  });
   app.get("/v1/payments/clover/webhooks/verification-code", async (request, reply) => {
     const latestVerificationCode = readLatestCloverWebhookVerificationCode();
 
@@ -2702,6 +3303,117 @@ export async function registerRoutes(app: FastifyInstance) {
         })
       );
     }
+  });
+
+  app.post("/v1/payments/webhooks/stripe", { preHandler: app.rateLimit(paymentsWebhookRateLimit) }, async (request, reply) => {
+    if (!requireStripeWebhookSecret(request, reply, stripeConnectWebhookSecret)) {
+      return;
+    }
+
+    const requestHeaders = request.headers as Record<string, unknown>;
+    const signature = getHeaderValue(requestHeaders, "stripe-signature");
+
+    let event: Stripe.Event;
+    try {
+      event = verifyStripeWebhookEvent({
+        stripeClient,
+        rawBody: request.rawBody,
+        signature,
+        endpointSecret: stripeConnectWebhookSecret
+      });
+    } catch (error) {
+      request.log.warn(
+        {
+          requestId: request.id,
+          error: error instanceof Error ? error.message : "unknown error"
+        },
+        "stripe webhook signature verification failed"
+      );
+      return reply.status(400).send(
+        serviceErrorSchema.parse({
+          code: "INVALID_STRIPE_SIGNATURE",
+          message: "Stripe webhook signature verification failed",
+          requestId: request.id
+        })
+      );
+    }
+
+    const existingEvent = await repository.findStripeWebhookEvent(event.id);
+    if (existingEvent) {
+      return stripeWebhookAcceptedResponseSchema.parse({
+        accepted: true,
+        provider: "STRIPE",
+        eventId: existingEvent.event_id,
+        eventType: existingEvent.event_type,
+        duplicate: true,
+        livemode: existingEvent.livemode,
+        account: existingEvent.stripe_account ?? undefined
+      });
+    }
+
+    const stripeAccount = typeof event.account === "string" ? event.account : undefined;
+    const reconciliationPayload = resolveStripeOrderReconciliation(event);
+    let reconciliationApplied: boolean | undefined;
+
+    if (reconciliationPayload) {
+      const dispatchResult = await dispatchOrderReconciliation({
+        ordersBaseUrl,
+        internalToken: ordersInternalToken,
+        requestId: request.id,
+        payload: reconciliationPayload
+      });
+      if (!dispatchResult.ok) {
+        request.log.error(
+          {
+            requestId: request.id,
+            eventId: event.id,
+            eventType: event.type,
+            stripeAccount,
+            dispatchResult
+          },
+          "failed to dispatch Stripe webhook reconciliation to orders service"
+        );
+        return reply.status(502).send(
+          serviceErrorSchema.parse({
+            code: "ORDERS_RECONCILIATION_FAILED",
+            message: "Orders reconciliation call failed",
+            requestId: request.id
+          })
+        );
+      }
+
+      reconciliationApplied = dispatchResult.response.applied;
+    }
+
+    await repository.saveStripeWebhookEvent({
+      eventId: event.id,
+      eventType: event.type,
+      stripeAccount,
+      livemode: event.livemode,
+      payload: event
+    });
+
+    request.log.info(
+      {
+        requestId: request.id,
+        eventId: event.id,
+        eventType: event.type,
+        stripeAccount,
+        livemode: event.livemode,
+        orderApplied: reconciliationApplied
+      },
+      "stripe webhook accepted"
+    );
+
+    return stripeWebhookAcceptedResponseSchema.parse({
+      accepted: true,
+      provider: "STRIPE",
+      eventId: event.id,
+      eventType: event.type,
+      duplicate: false,
+      livemode: event.livemode,
+      account: stripeAccount
+    });
   });
 
   app.post("/v1/payments/webhooks/clover", { preHandler: app.rateLimit(paymentsWebhookRateLimit) }, async (request, reply) => {

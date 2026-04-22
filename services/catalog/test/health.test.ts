@@ -4,6 +4,7 @@ import {
   adminMenuResponseSchema,
   adminStoreConfigSchema,
   appConfigSchema,
+  clientPaymentProfileSchema,
   internalLocationListResponseSchema,
   internalLocationSummarySchema,
   menuResponseSchema,
@@ -561,6 +562,52 @@ describe("catalog service", () => {
           fulfillmentMode: "staff"
         }
       }
+    });
+
+    const paymentProfileResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/catalog/internal/locations/northside-01/payment-profile",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      },
+      payload: {
+        locationId: "northside-01",
+        stripeAccountId: "acct_123456789",
+        stripeAccountType: "express",
+        stripeOnboardingStatus: "completed",
+        stripeDetailsSubmitted: true,
+        stripeChargesEnabled: true,
+        stripePayoutsEnabled: true,
+        stripeDashboardEnabled: true,
+        country: "US",
+        currency: "USD",
+        cardEnabled: true,
+        applePayEnabled: true,
+        refundsEnabled: true,
+        cloverPosEnabled: true
+      }
+    });
+
+    expect(paymentProfileResponse.statusCode).toBe(200);
+    expect(clientPaymentProfileSchema.parse(paymentProfileResponse.json())).toMatchObject({
+      locationId: "northside-01",
+      stripeAccountId: "acct_123456789",
+      stripeOnboardingStatus: "completed"
+    });
+
+    const paymentProfileReadResponse = await app.inject({
+      method: "GET",
+      url: "/v1/catalog/internal/locations/northside-01/payment-profile",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token"
+      }
+    });
+
+    expect(paymentProfileReadResponse.statusCode).toBe(200);
+    expect(clientPaymentProfileSchema.parse(paymentProfileReadResponse.json())).toMatchObject({
+      locationId: "northside-01",
+      stripeChargesEnabled: true,
+      stripePayoutsEnabled: true
     });
 
     await app.close();

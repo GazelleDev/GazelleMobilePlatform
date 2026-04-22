@@ -3,9 +3,10 @@ import "../global.css";
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import * as SplashScreen from "expo-splash-screen";
 import { Stack, usePathname, useRootNavigationState } from "expo-router";
+import { handleURLCallback } from "@stripe/stripe-react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { InteractionManager, StatusBar } from "react-native";
+import { InteractionManager, Linking, StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthSessionProvider } from "../src/auth/session";
@@ -65,6 +66,29 @@ export default function RootLayout() {
       }
     };
   }, [navigationState?.key, pathname]);
+
+  useEffect(() => {
+    const handleStripeDeepLink = async (url: string | null) => {
+      if (!url) {
+        return;
+      }
+
+      try {
+        await handleURLCallback(url);
+      } catch {
+        // Ignore invalid Stripe callback attempts and allow the app router to continue normally.
+      }
+    };
+
+    void Linking.getInitialURL().then((url) => handleStripeDeepLink(url));
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      void handleStripeDeepLink(url);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

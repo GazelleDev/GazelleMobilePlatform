@@ -295,6 +295,11 @@ const fallbackAppConfig = appConfigSchema.parse({
     card: true,
     cash: false,
     refunds: true,
+    stripe: {
+      enabled: true,
+      onboarded: true,
+      dashboardEnabled: true
+    },
     clover: {
       enabled: true,
       merchantRef: "flagship-01"

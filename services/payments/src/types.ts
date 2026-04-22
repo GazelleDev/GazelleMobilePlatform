@@ -13,7 +13,7 @@ export const paymentWebhookDispatchResultSchema = z.object({
   accepted: z.literal(true),
   kind: paymentWebhookKindSchema,
   orderId: z.string().uuid(),
-  paymentId: z.string().uuid(),
+  paymentId: z.string().min(1),
   status: paymentWebhookStatusSchema,
   orderApplied: z.boolean()
 });

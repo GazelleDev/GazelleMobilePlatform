@@ -6,8 +6,10 @@ import {
   adminMenuItemVisibilityUpdateSchema,
   adminMutationSuccessSchema,
   adminStoreConfigUpdateSchema,
+  clientPaymentProfileSchema,
   internalLocationBootstrapSchema,
   internalLocationListResponseSchema,
+  internalLocationPaymentProfileUpdateSchema,
   internalLocationParamsSchema,
   internalLocationSummarySchema,
   homeNewsCardCreateSchema,
@@ -437,6 +439,56 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       return internalLocationSummarySchema.parse(summary);
+    }
+  );
+
+  app.get(
+    "/v1/catalog/internal/locations/:locationId/payment-profile",
+    {
+      preHandler: [app.rateLimit(gatewayReadRateLimit), requireGatewayAccess]
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+      const paymentProfile = await repository.getInternalLocationPaymentProfile(locationId);
+      if (!paymentProfile) {
+        return reply.status(404).send(
+          serviceErrorSchema.parse({
+            code: "PAYMENT_PROFILE_NOT_FOUND",
+            message: "Payment profile not found",
+            requestId: request.id,
+            details: { locationId }
+          })
+        );
+      }
+
+      return clientPaymentProfileSchema.parse(paymentProfile);
+    }
+  );
+
+  app.put(
+    "/v1/catalog/internal/locations/:locationId/payment-profile",
+    {
+      preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+      const summary = await repository.getInternalLocationSummary(locationId);
+      if (!summary) {
+        return reply.status(404).send(
+          serviceErrorSchema.parse({
+            code: "LOCATION_NOT_FOUND",
+            message: "Location not found",
+            requestId: request.id,
+            details: { locationId }
+          })
+        );
+      }
+
+      const input = internalLocationPaymentProfileUpdateSchema.parse({
+        ...(typeof request.body === "object" && request.body !== null ? request.body : {}),
+        locationId
+      });
+      return clientPaymentProfileSchema.parse(await repository.updateInternalLocationPaymentProfile(locationId, input));
     }
   );
 

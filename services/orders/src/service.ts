@@ -88,10 +88,11 @@ const paymentsChargeRequestSchema = z
   });
 
 const paymentsChargeStatusSchema = z.enum(["SUCCEEDED", "DECLINED", "TIMEOUT"]);
+const paymentsProviderSchema = z.enum(["CLOVER", "STRIPE"]);
 
 const paymentsChargeResponseSchema = z.object({
-  paymentId: z.string().uuid(),
-  provider: z.literal("CLOVER"),
+  paymentId: z.string().min(1),
+  provider: paymentsProviderSchema,
   orderId: z.string().uuid(),
   status: paymentsChargeStatusSchema,
   approved: z.boolean(),
@@ -112,10 +113,10 @@ const paymentsRefundRequestSchema = z.object({
 });
 
 const paymentsRefundResponseSchema = z.object({
-  refundId: z.string().uuid(),
-  provider: z.literal("CLOVER"),
+  refundId: z.string().min(1),
+  provider: paymentsProviderSchema,
   orderId: z.string().uuid(),
-  paymentId: z.string().uuid(),
+  paymentId: z.string().min(1),
   status: z.enum(["REFUNDED", "REJECTED"]),
   amountCents: z.number().int().positive(),
   currency: z.literal("USD"),
@@ -1598,7 +1599,7 @@ export async function reconcilePaymentWebhook(params: {
   if (input.kind === "CHARGE") {
     const chargeSnapshot = paymentsChargeResponseSchema.parse({
       paymentId: input.paymentId,
-      provider: "CLOVER",
+      provider: input.provider,
       orderId: input.orderId,
       status: input.status,
       approved: input.status === "SUCCEEDED",
@@ -1718,7 +1719,7 @@ export async function reconcilePaymentWebhook(params: {
   const refundIdFromStore = parsedPersistedRefund?.success ? parsedPersistedRefund.data.refundId : undefined;
   const refundSnapshot = paymentsRefundResponseSchema.parse({
     refundId: input.refundId ?? refundIdFromStore ?? randomUUID(),
-    provider: "CLOVER",
+    provider: input.provider,
     orderId: input.orderId,
     paymentId: input.paymentId,
     status: input.status,
@@ -1833,7 +1834,7 @@ export async function reconcilePaymentWebhook(params: {
   ].filter((value): value is string => Boolean(value));
   const eventNote = input.eventId ? `event ${input.eventId}` : "webhook event";
   const canceledTransition = transitionOrderStatus(existingOrder, "CANCELED", {
-    note: `Refund reconciled from Clover ${eventNote}; ${reversalParts.join("; ")}.`,
+    note: `Refund reconciled from ${input.provider} ${eventNote}; ${reversalParts.join("; ")}.`,
     source: "webhook"
   });
   await deps.repository.updateOrder(input.orderId, canceledTransition.order);

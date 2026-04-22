@@ -19,6 +19,8 @@ import {
   orderQuoteSchema,
   orderSchema,
   payOrderRequestSchema,
+  stripeMobilePaymentSessionRequestSchema,
+  stripeMobilePaymentSessionResponseSchema,
   quoteRequestSchema
 } from "@lattelink/contracts-orders";
 import { z } from "zod";
@@ -188,6 +190,14 @@ export class GazelleApiClient {
     payOrderRequestSchema.parse(input);
     const data = await this.post<unknown>(`/orders/${orderId}/pay`, input);
     return orderSchema.parse(data);
+  }
+
+  async createStripeMobilePaymentSession(
+    input: z.input<typeof stripeMobilePaymentSessionRequestSchema>
+  ): Promise<z.output<typeof stripeMobilePaymentSessionResponseSchema>> {
+    stripeMobilePaymentSessionRequestSchema.parse(input);
+    const data = await this.post<unknown>("/payments/stripe/mobile-session", input);
+    return stripeMobilePaymentSessionResponseSchema.parse(data);
   }
 
   async listOrders(): Promise<Array<z.output<typeof orderSchema>>> {

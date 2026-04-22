@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { normalizeCustomizationGroups } from "@lattelink/contracts-catalog";
 import { createCartItem, DEFAULT_CUSTOMIZATION } from "../src/cart/model";
 import {
   CheckoutSubmissionError,
   createCheckoutIdempotencyKey,
   createDemoApplePayToken,
+  prepareStripeCheckout,
   resolveInlineCheckoutErrorMessage,
   shouldShowCheckoutFailureScreen,
   toQuoteItems,
@@ -139,6 +140,7 @@ describe("checkout helpers", () => {
       id: "123e4567-e89b-12d3-a456-426614174000",
       pickupCode: "ABC123",
       status: "PENDING_PAYMENT",
+      items: [],
       total: {
         currency: "USD",
         amountCents: 575
@@ -149,5 +151,162 @@ describe("checkout helpers", () => {
 
     expect(shouldShowCheckoutFailureScreen(error)).toBe(true);
     expect(resolveInlineCheckoutErrorMessage(error)).toBe("Payment timed out");
+  });
+
+  it("prepares a Stripe payment session after quoting and creating an order", async () => {
+    const items = [
+      createCartItem({
+        menuItemId: "latte",
+        itemName: "Latte",
+        basePriceCents: 575,
+        customizationGroups: espressoGroups,
+        customization: {
+          ...DEFAULT_CUSTOMIZATION,
+          selectedOptions: [
+            { groupId: "size", optionId: "regular" },
+            { groupId: "milk", optionId: "whole" }
+          ]
+        },
+        quantity: 1
+      })
+    ];
+
+    const checkoutApi = {
+      quoteOrder: vi.fn().mockResolvedValue({
+        quoteId: "5ec083a1-0f31-4d04-a525-7808a0d7624b",
+        locationId: "flagship-01",
+        items: [],
+        subtotal: { currency: "USD", amountCents: 575 },
+        discount: { currency: "USD", amountCents: 0 },
+        tax: { currency: "USD", amountCents: 35 },
+        total: { currency: "USD", amountCents: 610 },
+        pointsToRedeem: 0,
+        quoteHash: "quote-hash-123"
+      }),
+      createOrder: vi.fn().mockResolvedValue({
+        id: "123e4567-e89b-12d3-a456-426614174000",
+        locationId: "flagship-01",
+        status: "PENDING_PAYMENT",
+        pickupCode: "ABC123",
+        items: [
+          {
+            itemId: "latte",
+            itemName: "Latte",
+            quantity: 1,
+            unitPriceCents: 575,
+            lineTotalCents: 575,
+            customization: {
+              notes: "",
+              selectedOptions: [
+                {
+                  groupId: "milk",
+                  groupLabel: "Milk",
+                  optionId: "whole",
+                  optionLabel: "Whole milk",
+                  priceDeltaCents: 0
+                }
+              ]
+            }
+          }
+        ],
+        total: { currency: "USD", amountCents: 610 },
+        timeline: []
+      }),
+      createStripeMobilePaymentSession: vi.fn().mockResolvedValue({
+        orderId: "123e4567-e89b-12d3-a456-426614174000",
+        paymentIntentId: "pi_123",
+        paymentIntentClientSecret: "pi_123_secret_456",
+        publishableKey: "pk_test_123",
+        stripeAccountId: "acct_123",
+        merchantDisplayName: "Gazelle Coffee",
+        merchantCountryCode: "US",
+        amountCents: 610,
+        currency: "USD",
+        applePayEnabled: true,
+        cardEnabled: true
+      })
+    };
+
+    const preparedCheckout = await prepareStripeCheckout(
+      {
+        locationId: "flagship-01",
+        items
+      },
+      checkoutApi
+    );
+
+    expect(checkoutApi.quoteOrder).toHaveBeenCalledTimes(1);
+    expect(checkoutApi.createOrder).toHaveBeenCalledTimes(1);
+    expect(checkoutApi.createStripeMobilePaymentSession).toHaveBeenCalledWith({
+      orderId: "123e4567-e89b-12d3-a456-426614174000"
+    });
+    expect(preparedCheckout.order.pickupCode).toBe("ABC123");
+    expect(preparedCheckout.paymentSession.stripeAccountId).toBe("acct_123");
+  });
+
+  it("reuses an existing pending order when retrying Stripe checkout", async () => {
+    const items = [
+      createCartItem({
+        menuItemId: "latte",
+        itemName: "Latte",
+        basePriceCents: 575,
+        customizationGroups: espressoGroups,
+        customization: {
+          ...DEFAULT_CUSTOMIZATION,
+          selectedOptions: [
+            { groupId: "size", optionId: "regular" },
+            { groupId: "milk", optionId: "whole" }
+          ]
+        },
+        quantity: 1
+      })
+    ];
+    const existingOrder: CheckoutOrderSnapshot = {
+      id: "123e4567-e89b-12d3-a456-426614174000",
+      pickupCode: "ABC123",
+      status: "PENDING_PAYMENT",
+      items: [],
+      total: {
+        currency: "USD",
+        amountCents: 575
+      },
+      quoteItems: []
+    };
+    const checkoutApi = {
+      quoteOrder: vi.fn(),
+      createOrder: vi.fn(),
+      createStripeMobilePaymentSession: vi.fn().mockResolvedValue({
+        orderId: existingOrder.id,
+        paymentIntentId: "pi_retry_123",
+        paymentIntentClientSecret: "pi_retry_123_secret_456",
+        publishableKey: "pk_test_123",
+        stripeAccountId: "acct_123",
+        merchantDisplayName: "Gazelle Coffee",
+        merchantCountryCode: "US",
+        amountCents: 575,
+        currency: "USD",
+        applePayEnabled: true,
+        cardEnabled: true
+      })
+    };
+
+    const preparedCheckout = await prepareStripeCheckout(
+      {
+        locationId: "flagship-01",
+        items,
+        existingOrder: {
+          ...existingOrder,
+          quoteItems: toQuoteItems(items)
+        }
+      },
+      checkoutApi
+    );
+
+    expect(checkoutApi.quoteOrder).not.toHaveBeenCalled();
+    expect(checkoutApi.createOrder).not.toHaveBeenCalled();
+    expect(checkoutApi.createStripeMobilePaymentSession).toHaveBeenCalledWith({
+      orderId: existingOrder.id
+    });
+    expect(preparedCheckout.order.id).toBe(existingOrder.id);
   });
 });

@@ -7,14 +7,17 @@ import {
   appConfigSchema,
   buildDefaultCustomizationInput,
   catalogContract,
+  clientPaymentProfileSchema,
   describeCustomizationSelection,
   internalLocationBootstrapSchema,
   internalLocationListResponseSchema,
+  internalLocationPaymentProfileUpdateSchema,
   internalLocationSummarySchema,
   isLoyaltyVisible,
   isOrderTrackingEnabled,
   isPlatformManagedMenu,
   menuResponseSchema,
+  paymentReadinessSchema,
   priceMenuItemCustomization,
   resolveAppConfigFulfillmentMode,
   resolveMenuItemCustomization,
@@ -139,6 +142,11 @@ describe("contracts-catalog", () => {
         card: true,
         cash: false,
         refunds: true,
+        stripe: {
+          enabled: false,
+          onboarded: false,
+          dashboardEnabled: false
+        },
         clover: {
           enabled: true,
           merchantRef: "flagship-01"
@@ -201,6 +209,11 @@ describe("contracts-catalog", () => {
         card: true,
         cash: false,
         refunds: true,
+        stripe: {
+          enabled: false,
+          onboarded: false,
+          dashboardEnabled: false
+        },
         clover: {
           enabled: true,
           merchantRef: "flagship-01"
@@ -298,6 +311,21 @@ describe("contracts-catalog", () => {
         loyalty: {
           visible: true
         }
+      },
+      paymentProfile: {
+        locationId: "northside-01",
+        stripeAccountType: "express",
+        stripeOnboardingStatus: "pending",
+        stripeDetailsSubmitted: false,
+        stripeChargesEnabled: false,
+        stripePayoutsEnabled: false,
+        stripeDashboardEnabled: false,
+        country: "US",
+        currency: "USD",
+        cardEnabled: true,
+        applePayEnabled: true,
+        refundsEnabled: true,
+        cloverPosEnabled: true
       }
     });
 
@@ -308,6 +336,12 @@ describe("contracts-catalog", () => {
       pickupInstructions: "Pickup at the espresso counter.",
       taxRateBasisPoints: 675,
       capabilities: bootstrap.capabilities,
+      paymentProfile: bootstrap.paymentProfile,
+      paymentReadiness: {
+        ready: false,
+        onboardingState: "pending",
+        missingRequiredFields: ["stripeAccountId", "stripeChargesEnabled", "stripePayoutsEnabled"]
+      },
       action: "created"
     });
 
@@ -319,6 +353,40 @@ describe("contracts-catalog", () => {
     });
 
     expect(list.locations).toHaveLength(1);
+  });
+
+  it("validates payment profile payloads", () => {
+    const paymentProfile = clientPaymentProfileSchema.parse({
+      locationId: "northside-01",
+      stripeAccountId: "acct_123456789",
+      stripeAccountType: "express",
+      stripeOnboardingStatus: "completed",
+      stripeDetailsSubmitted: true,
+      stripeChargesEnabled: true,
+      stripePayoutsEnabled: true,
+      stripeDashboardEnabled: true,
+      country: "US",
+      currency: "USD",
+      cardEnabled: true,
+      applePayEnabled: true,
+      refundsEnabled: true,
+      cloverPosEnabled: true,
+      createdAt: "2026-04-21T12:00:00.000Z",
+      updatedAt: "2026-04-21T12:00:00.000Z"
+    });
+
+    const update = internalLocationPaymentProfileUpdateSchema.parse({
+      ...paymentProfile,
+      locationId: "northside-01"
+    });
+    const readiness = paymentReadinessSchema.parse({
+      ready: true,
+      onboardingState: "completed",
+      missingRequiredFields: []
+    });
+
+    expect(update.locationId).toBe("northside-01");
+    expect(readiness.ready).toBe(true);
   });
 
   it("rejects invalid store tax rate", () => {

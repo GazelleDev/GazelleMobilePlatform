@@ -3,10 +3,13 @@ import type { FastifyBaseLogger } from "fastify";
 import {
   adminMenuItemCreateSchema,
   adminMenuItemSchema,
+  clientPaymentProfileSchema,
   homeNewsCardCreateSchema,
   homeNewsCardSchema,
   homeNewsCardsResponseSchema,
+  internalLocationPaymentProfileUpdateSchema,
   internalLocationBootstrapSchema,
+  paymentReadinessSchema,
   internalLocationSummarySchema,
   adminStoreConfigSchema,
   adminMutationSuccessSchema,
@@ -14,7 +17,9 @@ import {
   type AdminStoreConfig,
   type AppConfig,
   type AppConfigStoreCapabilities,
+  type ClientPaymentProfile,
   type InternalLocationBootstrap,
+  type InternalLocationPaymentProfileUpdate,
   type InternalLocationSummary,
   menuItemCustomizationGroupSchema,
   menuItemSchema,
@@ -288,6 +293,11 @@ type CatalogRepository = {
   listInternalLocations(): Promise<InternalLocationSummary[]>;
   getInternalLocationSummary(locationId: string): Promise<InternalLocationSummary | undefined>;
   bootstrapInternalLocation(input: InternalLocationBootstrap): Promise<InternalLocationSummary>;
+  getInternalLocationPaymentProfile(locationId: string): Promise<ClientPaymentProfile | undefined>;
+  updateInternalLocationPaymentProfile(
+    locationId: string,
+    input: InternalLocationPaymentProfileUpdate
+  ): Promise<ClientPaymentProfile>;
   getAdminMenu(): Promise<AdminMenuResponseWithCustomizations>;
   getHomeNewsCards(): Promise<HomeNewsCardsResponse>;
   getAdminHomeNewsCards(): Promise<AdminHomeNewsCardsResponse>;
@@ -475,6 +485,37 @@ function buildStoreConfigResponse(input: StoreConfigRecord) {
   });
 }
 
+function buildPaymentProfile(input: InternalLocationPaymentProfileUpdate & { createdAt?: string; updatedAt?: string }) {
+  return clientPaymentProfileSchema.parse(input);
+}
+
+function buildPaymentReadiness(profile: ClientPaymentProfile | undefined) {
+  if (!profile) {
+    return paymentReadinessSchema.parse({
+      ready: false,
+      onboardingState: "unconfigured",
+      missingRequiredFields: ["stripeAccountId", "stripeChargesEnabled", "stripePayoutsEnabled"]
+    });
+  }
+
+  const missingRequiredFields: string[] = [];
+  if (!profile.stripeAccountId) {
+    missingRequiredFields.push("stripeAccountId");
+  }
+  if (!profile.stripeChargesEnabled) {
+    missingRequiredFields.push("stripeChargesEnabled");
+  }
+  if (!profile.stripePayoutsEnabled) {
+    missingRequiredFields.push("stripePayoutsEnabled");
+  }
+
+  return paymentReadinessSchema.parse({
+    ready: missingRequiredFields.length === 0 && profile.stripeOnboardingStatus === "completed",
+    onboardingState: profile.stripeOnboardingStatus,
+    missingRequiredFields
+  });
+}
+
 function buildInternalLocationSummary(input: {
   brandId: string;
   brandName: string;
@@ -486,9 +527,13 @@ function buildInternalLocationSummary(input: {
   pickupInstructions: string;
   taxRateBasisPoints: number;
   capabilities: AppConfigStoreCapabilities;
+  paymentProfile?: ClientPaymentProfile;
   action?: "created" | "updated";
 }) {
-  return internalLocationSummarySchema.parse(input);
+  return internalLocationSummarySchema.parse({
+    ...input,
+    paymentReadiness: buildPaymentReadiness(input.paymentProfile)
+  });
 }
 
 function buildProvisionedMenuPayload(locationId: string) {
@@ -534,6 +579,7 @@ function createInMemoryRepository(): CatalogRepository {
       })
     ]
   ]);
+  const paymentProfilesByLocation = new Map<string, ClientPaymentProfile>();
 
   return {
     backend: "memory",
@@ -560,7 +606,8 @@ function createInMemoryRepository(): CatalogRepository {
               hours: adminStoreConfig.hours,
               pickupInstructions: adminStoreConfig.pickupInstructions,
               taxRateBasisPoints: storeConfig?.taxRateBasisPoints ?? defaultStoreConfigRecord.taxRateBasisPoints,
-              capabilities: appConfig.storeCapabilities
+              capabilities: appConfig.storeCapabilities,
+              paymentProfile: paymentProfilesByLocation.get(locationId)
             })
           ];
         })
@@ -584,7 +631,8 @@ function createInMemoryRepository(): CatalogRepository {
         hours: adminStoreConfig.hours,
         pickupInstructions: adminStoreConfig.pickupInstructions,
         taxRateBasisPoints: storeConfig?.taxRateBasisPoints ?? defaultStoreConfigRecord.taxRateBasisPoints,
-        capabilities: appConfig.storeCapabilities
+        capabilities: appConfig.storeCapabilities,
+        paymentProfile: paymentProfilesByLocation.get(locationId)
       });
     },
     async bootstrapInternalLocation(rawInput) {
@@ -621,6 +669,17 @@ function createInMemoryRepository(): CatalogRepository {
       appConfigsByLocation.set(input.locationId, nextAppConfig);
       adminStoreConfigsByLocation.set(input.locationId, nextAdminStoreConfig);
       storeConfigsByLocation.set(input.locationId, nextStoreConfig);
+      if (input.paymentProfile) {
+        paymentProfilesByLocation.set(
+          input.locationId,
+          buildPaymentProfile({
+            ...input.paymentProfile,
+            locationId: input.locationId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          })
+        );
+      }
       if (!menusByLocation.has(input.locationId)) {
         menusByLocation.set(input.locationId, buildProvisionedMenuPayload(input.locationId));
       }
@@ -636,8 +695,26 @@ function createInMemoryRepository(): CatalogRepository {
         pickupInstructions: nextAdminStoreConfig.pickupInstructions,
         taxRateBasisPoints: nextStoreConfig.taxRateBasisPoints,
         capabilities: nextAppConfig.storeCapabilities,
+        paymentProfile: paymentProfilesByLocation.get(input.locationId),
         action: existing ? "updated" : "created"
       });
+    },
+    async getInternalLocationPaymentProfile(locationId) {
+      return paymentProfilesByLocation.get(locationId);
+    },
+    async updateInternalLocationPaymentProfile(locationId, rawInput) {
+      const input = internalLocationPaymentProfileUpdateSchema.parse({
+        ...rawInput,
+        locationId
+      });
+      const existing = paymentProfilesByLocation.get(locationId);
+      const next = buildPaymentProfile({
+        ...input,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      paymentProfilesByLocation.set(locationId, next);
+      return next;
     },
     async getAdminMenu() {
       const menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
@@ -1093,6 +1170,13 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       const appConfigByLocation = new Map(
         appConfigRows.map((row) => [row.location_id, appConfigSchema.parse(row.app_config_json)] as const)
       );
+      const paymentProfileRows = await db
+        .selectFrom("catalog_payment_profiles")
+        .select(["location_id", "payment_profile_json"])
+        .execute();
+      const paymentProfileByLocation = new Map(
+        paymentProfileRows.map((row) => [row.location_id, clientPaymentProfileSchema.parse(row.payment_profile_json)] as const)
+      );
 
       return storeRows
         .flatMap((storeRow) => {
@@ -1112,7 +1196,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
               hours: storeRow.hours_text,
               pickupInstructions: storeRow.pickup_instructions,
               taxRateBasisPoints: storeRow.tax_rate_basis_points,
-              capabilities: appConfig.storeCapabilities
+              capabilities: appConfig.storeCapabilities,
+              paymentProfile: paymentProfileByLocation.get(storeRow.location_id)
             })
           ];
         })
@@ -1134,6 +1219,11 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         .select("app_config_json")
         .where("location_id", "=", locationId)
         .executeTakeFirst();
+      const paymentProfileRow = await db
+        .selectFrom("catalog_payment_profiles")
+        .select("payment_profile_json")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
 
       const appConfig = appConfigSchema.parse(appConfigRow?.app_config_json ?? defaultAppConfigPayload);
 
@@ -1147,7 +1237,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         hours: storeRow.hours_text,
         pickupInstructions: storeRow.pickup_instructions,
         taxRateBasisPoints: storeRow.tax_rate_basis_points,
-        capabilities: appConfig.storeCapabilities
+        capabilities: appConfig.storeCapabilities,
+        paymentProfile: paymentProfileRow ? clientPaymentProfileSchema.parse(paymentProfileRow.payment_profile_json) : undefined
       });
     },
     async bootstrapInternalLocation(rawInput) {
@@ -1215,6 +1306,34 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
           )
           .execute();
 
+        if (input.paymentProfile) {
+          const now = new Date().toISOString();
+          await trx
+            .insertInto("catalog_payment_profiles")
+            .values({
+              brand_id: persistedBrandId,
+              location_id: input.locationId,
+              payment_profile_json: buildPaymentProfile({
+                ...input.paymentProfile,
+                locationId: input.locationId,
+                createdAt: now,
+                updatedAt: now
+              })
+            })
+            .onConflict((oc) =>
+              oc.column("location_id").doUpdateSet({
+                brand_id: persistedBrandId,
+                payment_profile_json: buildPaymentProfile({
+                  ...input.paymentProfile,
+                  locationId: input.locationId,
+                  createdAt: now,
+                  updatedAt: now
+                })
+              })
+            )
+            .execute();
+        }
+
         await trx
           .insertInto("catalog_menu_categories")
           .values(
@@ -1265,8 +1384,63 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         pickupInstructions,
         taxRateBasisPoints,
         capabilities: nextAppConfig.storeCapabilities,
+        paymentProfile: input.paymentProfile
+          ? buildPaymentProfile({
+              ...input.paymentProfile,
+              locationId: input.locationId,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            })
+          : undefined,
         action: existingStoreConfigRow ? "updated" : "created"
       });
+    },
+    async getInternalLocationPaymentProfile(locationId) {
+      const row = await db
+        .selectFrom("catalog_payment_profiles")
+        .select("payment_profile_json")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
+      return row ? clientPaymentProfileSchema.parse(row.payment_profile_json) : undefined;
+    },
+    async updateInternalLocationPaymentProfile(locationId, rawInput) {
+      const input = internalLocationPaymentProfileUpdateSchema.parse({
+        ...rawInput,
+        locationId
+      });
+      const existing = await db
+        .selectFrom("catalog_payment_profiles")
+        .select(["brand_id", "payment_profile_json"])
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
+      const appConfigRow = await db
+        .selectFrom("catalog_app_configs")
+        .select("brand_id")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
+      const existingProfile = existing ? clientPaymentProfileSchema.parse(existing.payment_profile_json) : undefined;
+      const next = buildPaymentProfile({
+        ...input,
+        createdAt: existingProfile?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      await db
+        .insertInto("catalog_payment_profiles")
+        .values({
+          brand_id: existing?.brand_id ?? appConfigRow?.brand_id ?? DEFAULT_BRAND_ID,
+          location_id: locationId,
+          payment_profile_json: next
+        })
+        .onConflict((oc) =>
+          oc.column("location_id").doUpdateSet({
+            brand_id: existing?.brand_id ?? appConfigRow?.brand_id ?? DEFAULT_BRAND_ID,
+            payment_profile_json: next
+          })
+        )
+        .execute();
+
+      return next;
     },
     async getAdminMenu() {
       const categories = await db

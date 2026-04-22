@@ -45,6 +45,16 @@ export interface PaymentsWebhookDeduplicationTable {
   created_at: Generated<string>;
 }
 
+export interface PaymentsStripeWebhookEventTable {
+  event_id: string;
+  event_type: string;
+  stripe_account: string | null;
+  livemode: boolean;
+  payload_json: unknown;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface PaymentsCloverConnectionTable {
   merchant_id: string;
   access_token: string;
@@ -327,10 +337,19 @@ export interface CatalogAppConfigTable {
   updated_at: Generated<string>;
 }
 
+export interface CatalogPaymentProfileTable {
+  brand_id: string;
+  location_id: string;
+  payment_profile_json: unknown;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface PersistenceDatabase {
   payments_charges: PaymentsChargeTable;
   payments_refunds: PaymentsRefundTable;
   payments_webhook_deduplication: PaymentsWebhookDeduplicationTable;
+  payments_stripe_webhook_events: PaymentsStripeWebhookEventTable;
   payments_clover_connections: PaymentsCloverConnectionTable;
   loyalty_balances: LoyaltyBalanceTable;
   loyalty_ledger_entries: LoyaltyLedgerEntryTable;
@@ -357,6 +376,7 @@ export interface PersistenceDatabase {
   catalog_home_news_cards: CatalogHomeNewsCardTable;
   catalog_store_configs: CatalogStoreConfigTable;
   catalog_app_configs: CatalogAppConfigTable;
+  catalog_payment_profiles: CatalogPaymentProfileTable;
 }
 
 export type PersistenceDb = Kysely<PersistenceDatabase>;
@@ -471,6 +491,18 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
       status TEXT NOT NULL,
       order_applied BOOLEAN NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS payments_stripe_webhook_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      stripe_account TEXT,
+      livemode BOOLEAN NOT NULL,
+      payload_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `.execute(trx);
 
@@ -861,6 +893,21 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
   await sql`
     CREATE INDEX IF NOT EXISTS catalog_app_configs_location_idx
     ON catalog_app_configs (location_id, brand_id)
+  `.execute(trx);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS catalog_payment_profiles (
+      brand_id TEXT NOT NULL,
+      location_id TEXT PRIMARY KEY,
+      payment_profile_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `.execute(trx);
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS catalog_payment_profiles_location_idx
+    ON catalog_payment_profiles (location_id, brand_id)
   `.execute(trx);
   });
 }
