@@ -10,7 +10,13 @@ import {
   runMigrations
 } from "@lattelink/persistence";
 import {
+  clientPaymentProfileSchema,
+  internalLocationPaymentProfileUpdateSchema,
   internalLocationSummarySchema,
+  paymentReadinessSchema,
+  stripeConnectDashboardLinkRequestSchema,
+  stripeConnectLinkResponseSchema,
+  stripeConnectOnboardingLinkRequestSchema
 } from "@lattelink/contracts-catalog";
 import {
   applePayWalletSchema,
@@ -2238,6 +2244,59 @@ async function fetchInternalLocationSummary(params: {
   };
 }
 
+async function updateInternalLocationPaymentProfile(params: {
+  catalogBaseUrl: string;
+  gatewayToken?: string;
+  requestId: string;
+  locationId: string;
+  paymentProfile: z.input<typeof internalLocationPaymentProfileUpdateSchema>;
+}): Promise<
+  | { ok: true; response: z.output<typeof clientPaymentProfileSchema> }
+  | { ok: false; status?: number; body?: unknown }
+> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-request-id": params.requestId
+  };
+  if (params.gatewayToken) {
+    headers["x-gateway-token"] = params.gatewayToken;
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${params.catalogBaseUrl}/v1/catalog/internal/locations/${params.locationId}/payment-profile`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(params.paymentProfile)
+    });
+  } catch {
+    return { ok: false };
+  }
+
+  const body = parseJsonSafely(await upstream.text());
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      status: upstream.status,
+      body
+    };
+  }
+
+  const parsed = clientPaymentProfileSchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: upstream.status,
+      body
+    };
+  }
+
+  return {
+    ok: true,
+    response: parsed.data
+  };
+}
+
 function createSimulatedChargeResponse(input: ChargeRequest): ChargeResponse {
   const simulationSignal = (input.paymentSourceToken ?? input.applePayToken ?? input.applePayWallet?.data ?? "").toLowerCase();
 
@@ -2435,6 +2494,86 @@ function resolveStripeMerchantDisplayName(locationSummary: z.output<typeof inter
     trimToUndefined(locationSummary.brandName) ??
     "Gazelle"
   );
+}
+
+function normalizeStripeAccountCurrency(currency: string | null | undefined): "USD" | undefined {
+  return currency?.toUpperCase() === "USD" ? "USD" : undefined;
+}
+
+function isDeletedStripeAccount(
+  account: Stripe.Account | Stripe.DeletedAccount
+): account is Stripe.DeletedAccount {
+  return "deleted" in account && account.deleted === true;
+}
+
+function resolveStripeOnboardingStatus(account: Stripe.Account) {
+  if (account.charges_enabled && account.payouts_enabled) {
+    return "completed" as const;
+  }
+
+  const requirements = account.requirements;
+  const hasRestrictions = Boolean(requirements?.disabled_reason) || Boolean(requirements?.currently_due?.length) || Boolean(requirements?.past_due?.length);
+  if (hasRestrictions && account.details_submitted) {
+    return "restricted" as const;
+  }
+
+  if (
+    account.details_submitted ||
+    Boolean(requirements?.eventually_due?.length) ||
+    Boolean(requirements?.pending_verification?.length)
+  ) {
+    return "pending" as const;
+  }
+
+  return "pending" as const;
+}
+
+function resolveStripeDashboardEnabled(account: Stripe.Account) {
+  return account.type === "express";
+}
+
+function buildPaymentReadiness(profile: z.output<typeof clientPaymentProfileSchema>) {
+  const missingRequiredFields: string[] = [];
+  if (!profile.stripeAccountId) {
+    missingRequiredFields.push("stripeAccountId");
+  }
+  if (!profile.stripeChargesEnabled) {
+    missingRequiredFields.push("stripeChargesEnabled");
+  }
+  if (!profile.stripePayoutsEnabled) {
+    missingRequiredFields.push("stripePayoutsEnabled");
+  }
+
+  return paymentReadinessSchema.parse({
+    ready: missingRequiredFields.length === 0 && profile.stripeOnboardingStatus === "completed",
+    onboardingState: profile.stripeOnboardingStatus,
+    missingRequiredFields
+  });
+}
+
+function buildStripePaymentProfile(params: {
+  locationSummary: z.output<typeof internalLocationSummarySchema>;
+  stripeAccount: Stripe.Account;
+}) {
+  const { locationSummary, stripeAccount } = params;
+  const existingProfile = locationSummary.paymentProfile;
+
+  return internalLocationPaymentProfileUpdateSchema.parse({
+    locationId: locationSummary.locationId,
+    stripeAccountId: stripeAccount.id,
+    stripeAccountType: "express",
+    stripeOnboardingStatus: resolveStripeOnboardingStatus(stripeAccount),
+    stripeDetailsSubmitted: Boolean(stripeAccount.details_submitted),
+    stripeChargesEnabled: Boolean(stripeAccount.charges_enabled),
+    stripePayoutsEnabled: Boolean(stripeAccount.payouts_enabled),
+    stripeDashboardEnabled: resolveStripeDashboardEnabled(stripeAccount),
+    country: "US",
+    currency: normalizeStripeAccountCurrency(stripeAccount.default_currency) ?? existingProfile?.currency ?? "USD",
+    cardEnabled: existingProfile?.cardEnabled ?? true,
+    applePayEnabled: existingProfile?.applePayEnabled ?? true,
+    refundsEnabled: existingProfile?.refundsEnabled ?? true,
+    cloverPosEnabled: existingProfile?.cloverPosEnabled ?? false
+  });
 }
 
 async function executeLiveCharge(params: {
@@ -2772,6 +2911,232 @@ export async function registerRoutes(app: FastifyInstance) {
       );
     }
   });
+
+  app.post(
+    "/v1/payments/stripe/connect/onboarding-link",
+    { preHandler: app.rateLimit(paymentsWriteRateLimit) },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayInternalToken)) {
+        return;
+      }
+      if (!requireStripeSecretKey(request, reply, stripeSecretKey)) {
+        return;
+      }
+
+      const input = stripeConnectOnboardingLinkRequestSchema.parse(request.body);
+      const locationSummaryResult = await fetchInternalLocationSummary({
+        catalogBaseUrl,
+        gatewayToken: gatewayInternalToken,
+        requestId: request.id,
+        locationId: input.locationId
+      });
+
+      if (!locationSummaryResult.ok) {
+        const upstreamError = serviceErrorSchema.safeParse(locationSummaryResult.body);
+        return reply.status(locationSummaryResult.status ?? 502).send(
+          upstreamError.success
+            ? upstreamError.data
+            : serviceErrorSchema.parse({
+                code: "CATALOG_LOCATION_UNAVAILABLE",
+                message: "Unable to load location payment profile",
+                requestId: request.id
+              })
+        );
+      }
+
+      let stripeAccount: Stripe.Account;
+      try {
+        const existingAccountId = locationSummaryResult.response.paymentProfile?.stripeAccountId;
+        if (existingAccountId) {
+          const existingAccount = await stripeClient.accounts.retrieve(existingAccountId);
+          stripeAccount = isDeletedStripeAccount(existingAccount)
+            ? await stripeClient.accounts.create({
+                type: "express",
+                country: "US",
+                capabilities: {
+                  card_payments: { requested: true },
+                  transfers: { requested: true }
+                },
+                metadata: {
+                  locationId: input.locationId
+                }
+              })
+            : existingAccount;
+        } else {
+          stripeAccount = await stripeClient.accounts.create({
+            type: "express",
+            country: "US",
+            capabilities: {
+              card_payments: { requested: true },
+              transfers: { requested: true }
+            },
+            metadata: {
+              locationId: input.locationId
+            }
+          });
+        }
+
+        const nextPaymentProfile = buildStripePaymentProfile({
+          locationSummary: locationSummaryResult.response,
+          stripeAccount
+        });
+        const updatedProfileResult = await updateInternalLocationPaymentProfile({
+          catalogBaseUrl,
+          gatewayToken: gatewayInternalToken,
+          requestId: request.id,
+          locationId: input.locationId,
+          paymentProfile: nextPaymentProfile
+        });
+
+        if (!updatedProfileResult.ok) {
+          const upstreamError = serviceErrorSchema.safeParse(updatedProfileResult.body);
+          return reply.status(updatedProfileResult.status ?? 502).send(
+            upstreamError.success
+              ? upstreamError.data
+              : serviceErrorSchema.parse({
+                  code: "CATALOG_PAYMENT_PROFILE_UPDATE_FAILED",
+                  message: "Unable to persist Stripe payment profile",
+                  requestId: request.id
+                })
+          );
+        }
+
+        const accountLink = await stripeClient.accountLinks.create({
+          account: updatedProfileResult.response.stripeAccountId ?? stripeAccount.id,
+          type: "account_onboarding",
+          return_url: input.returnUrl,
+          refresh_url: input.refreshUrl
+        });
+
+        return stripeConnectLinkResponseSchema.parse({
+          locationId: input.locationId,
+          stripeAccountId: updatedProfileResult.response.stripeAccountId ?? stripeAccount.id,
+          url: accountLink.url,
+          expiresAt: new Date(accountLink.expires_at * 1000).toISOString(),
+          paymentProfile: updatedProfileResult.response,
+          paymentReadiness: buildPaymentReadiness(updatedProfileResult.response)
+        });
+      } catch (error) {
+        request.log.error({ error, requestId: request.id, locationId: input.locationId }, "Stripe onboarding link creation failed");
+        return reply.status(502).send(
+          serviceErrorSchema.parse({
+            code: "STRIPE_ONBOARDING_LINK_ERROR",
+            message: error instanceof Error ? error.message : "Stripe onboarding link creation failed",
+            requestId: request.id
+          })
+        );
+      }
+    }
+  );
+
+  app.post(
+    "/v1/payments/stripe/connect/dashboard-link",
+    { preHandler: app.rateLimit(paymentsWriteRateLimit) },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayInternalToken)) {
+        return;
+      }
+      if (!requireStripeSecretKey(request, reply, stripeSecretKey)) {
+        return;
+      }
+
+      const input = stripeConnectDashboardLinkRequestSchema.parse(request.body);
+      const locationSummaryResult = await fetchInternalLocationSummary({
+        catalogBaseUrl,
+        gatewayToken: gatewayInternalToken,
+        requestId: request.id,
+        locationId: input.locationId
+      });
+
+      if (!locationSummaryResult.ok) {
+        const upstreamError = serviceErrorSchema.safeParse(locationSummaryResult.body);
+        return reply.status(locationSummaryResult.status ?? 502).send(
+          upstreamError.success
+            ? upstreamError.data
+            : serviceErrorSchema.parse({
+                code: "CATALOG_LOCATION_UNAVAILABLE",
+                message: "Unable to load location payment profile",
+                requestId: request.id
+              })
+        );
+      }
+
+      const stripeAccountId = locationSummaryResult.response.paymentProfile?.stripeAccountId;
+      if (!stripeAccountId) {
+        return reply.status(409).send(
+          serviceErrorSchema.parse({
+            code: "STRIPE_ACCOUNT_NOT_CONFIGURED",
+            message: "Location does not have a Stripe account configured yet",
+            requestId: request.id,
+            details: {
+              locationId: input.locationId
+            }
+          })
+        );
+      }
+
+      try {
+        const stripeAccount = await stripeClient.accounts.retrieve(stripeAccountId);
+        if (isDeletedStripeAccount(stripeAccount)) {
+          return reply.status(409).send(
+            serviceErrorSchema.parse({
+              code: "STRIPE_ACCOUNT_NOT_CONFIGURED",
+              message: "Stored Stripe account could not be used",
+              requestId: request.id,
+              details: {
+                locationId: input.locationId,
+                stripeAccountId
+              }
+            })
+          );
+        }
+
+        const nextPaymentProfile = buildStripePaymentProfile({
+          locationSummary: locationSummaryResult.response,
+          stripeAccount
+        });
+        const updatedProfileResult = await updateInternalLocationPaymentProfile({
+          catalogBaseUrl,
+          gatewayToken: gatewayInternalToken,
+          requestId: request.id,
+          locationId: input.locationId,
+          paymentProfile: nextPaymentProfile
+        });
+
+        if (!updatedProfileResult.ok) {
+          const upstreamError = serviceErrorSchema.safeParse(updatedProfileResult.body);
+          return reply.status(updatedProfileResult.status ?? 502).send(
+            upstreamError.success
+              ? upstreamError.data
+              : serviceErrorSchema.parse({
+                  code: "CATALOG_PAYMENT_PROFILE_UPDATE_FAILED",
+                  message: "Unable to persist Stripe payment profile",
+                  requestId: request.id
+                })
+          );
+        }
+
+        const loginLink = await stripeClient.accounts.createLoginLink(stripeAccountId);
+        return stripeConnectLinkResponseSchema.parse({
+          locationId: input.locationId,
+          stripeAccountId,
+          url: loginLink.url,
+          paymentProfile: updatedProfileResult.response,
+          paymentReadiness: buildPaymentReadiness(updatedProfileResult.response)
+        });
+      } catch (error) {
+        request.log.error({ error, requestId: request.id, locationId: input.locationId, stripeAccountId }, "Stripe dashboard link creation failed");
+        return reply.status(502).send(
+          serviceErrorSchema.parse({
+            code: "STRIPE_DASHBOARD_LINK_ERROR",
+            message: error instanceof Error ? error.message : "Stripe dashboard link creation failed",
+            requestId: request.id
+          })
+        );
+      }
+    }
+  );
+
   app.get("/v1/payments/clover/webhooks/verification-code", async (request, reply) => {
     const latestVerificationCode = readLatestCloverWebhookVerificationCode();
 

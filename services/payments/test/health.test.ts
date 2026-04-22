@@ -268,6 +268,257 @@ describe("payments service", () => {
     await app.close();
   });
 
+  it("creates and persists a Stripe Connect account before returning an onboarding link", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const stripeAccountCreateSpy = vi.spyOn(Object.getPrototypeOf(stripe.accounts), "create").mockResolvedValue({
+      id: "acct_1TOk7VE0L5J7W3jY",
+      type: "express",
+      details_submitted: false,
+      charges_enabled: false,
+      payouts_enabled: false,
+      country: "US",
+      default_currency: "usd",
+      requirements: {
+        currently_due: ["business_profile.mcc"],
+        eventually_due: [],
+        past_due: [],
+        pending_verification: []
+      }
+    } as unknown as Stripe.Account);
+    const accountLinkCreateSpy = vi.spyOn(Object.getPrototypeOf(stripe.accountLinks), "create").mockResolvedValue({
+      object: "account_link",
+      created: 1776829800,
+      expires_at: 1776830400,
+      url: "https://connect.stripe.com/setup/s/test_123"
+    } as Stripe.AccountLink);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const headers = new Headers(init?.headers);
+
+      if (url === "http://127.0.0.1:3002/v1/catalog/internal/locations/flagship-01") {
+        expect(headers.get("x-gateway-token")).toBe("gateway-payments-token");
+        return new Response(
+          JSON.stringify({
+            brandId: "gazelle",
+            brandName: "Gazelle Coffee",
+            locationId: "flagship-01",
+            locationName: "Flagship",
+            marketLabel: "Detroit, MI",
+            storeName: "Gazelle Flagship",
+            hours: "Daily · 7:00 AM - 6:00 PM",
+            pickupInstructions: "Pickup at the espresso counter.",
+            taxRateBasisPoints: 600,
+            capabilities: {
+              menu: { source: "platform_managed" },
+              operations: {
+                fulfillmentMode: "staff",
+                liveOrderTrackingEnabled: true,
+                dashboardEnabled: true
+              },
+              loyalty: { visible: true }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "http://127.0.0.1:3002/v1/catalog/internal/locations/flagship-01/payment-profile") {
+        expect(headers.get("x-gateway-token")).toBe("gateway-payments-token");
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        expect(body).toMatchObject({
+          locationId: "flagship-01",
+          stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+          stripeOnboardingStatus: "pending",
+          stripeDetailsSubmitted: false,
+          stripeChargesEnabled: false,
+          stripePayoutsEnabled: false,
+          stripeDashboardEnabled: true
+        });
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      throw new Error(`unexpected Stripe onboarding URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/stripe/connect/onboarding-link",
+      headers: {
+        "x-gateway-token": "gateway-payments-token"
+      },
+      payload: {
+        locationId: "flagship-01",
+        returnUrl: "https://admin.example.com/clients/flagship-01/payments",
+        refreshUrl: "https://admin.example.com/clients/flagship-01/payments?refresh=1"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      locationId: "flagship-01",
+      stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+      url: "https://connect.stripe.com/setup/s/test_123",
+      paymentReadiness: {
+        ready: false,
+        onboardingState: "pending",
+        missingRequiredFields: ["stripeChargesEnabled", "stripePayoutsEnabled"]
+      }
+    });
+
+    expect(stripeAccountCreateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "express",
+        country: "US",
+        metadata: {
+          locationId: "flagship-01"
+        }
+      })
+    );
+    expect(accountLinkCreateSpy).toHaveBeenCalledWith({
+      account: "acct_1TOk7VE0L5J7W3jY",
+      type: "account_onboarding",
+      return_url: "https://admin.example.com/clients/flagship-01/payments",
+      refresh_url: "https://admin.example.com/clients/flagship-01/payments?refresh=1"
+    });
+
+    stripeAccountCreateSpy.mockRestore();
+    accountLinkCreateSpy.mockRestore();
+    await app.close();
+  });
+
+  it("returns a Stripe Express dashboard link for an existing connected account", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const stripeAccountRetrieveSpy = vi.spyOn(Object.getPrototypeOf(stripe.accounts), "retrieve").mockResolvedValue({
+      id: "acct_1TOk7VE0L5J7W3jY",
+      type: "express",
+      details_submitted: true,
+      charges_enabled: true,
+      payouts_enabled: true,
+      country: "US",
+      default_currency: "usd",
+      requirements: {
+        currently_due: [],
+        eventually_due: [],
+        past_due: [],
+        pending_verification: []
+      }
+    } as unknown as Stripe.Account);
+    const createLoginLinkSpy = vi.spyOn(Object.getPrototypeOf(stripe.accounts), "createLoginLink").mockResolvedValue({
+      object: "login_link",
+      created: 1776829900,
+      url: "https://connect.stripe.com/express/test_dashboard"
+    } as unknown as Stripe.LoginLink);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const headers = new Headers(init?.headers);
+
+      if (url === "http://127.0.0.1:3002/v1/catalog/internal/locations/flagship-01") {
+        expect(headers.get("x-gateway-token")).toBe("gateway-payments-token");
+        return new Response(
+          JSON.stringify({
+            brandId: "gazelle",
+            brandName: "Gazelle Coffee",
+            locationId: "flagship-01",
+            locationName: "Flagship",
+            marketLabel: "Detroit, MI",
+            storeName: "Gazelle Flagship",
+            hours: "Daily · 7:00 AM - 6:00 PM",
+            pickupInstructions: "Pickup at the espresso counter.",
+            taxRateBasisPoints: 600,
+            capabilities: {
+              menu: { source: "platform_managed" },
+              operations: {
+                fulfillmentMode: "staff",
+                liveOrderTrackingEnabled: true,
+                dashboardEnabled: true
+              },
+              loyalty: { visible: true }
+            },
+            paymentProfile: {
+              locationId: "flagship-01",
+              stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+              stripeAccountType: "express",
+              stripeOnboardingStatus: "pending",
+              stripeDetailsSubmitted: false,
+              stripeChargesEnabled: false,
+              stripePayoutsEnabled: false,
+              stripeDashboardEnabled: true,
+              country: "US",
+              currency: "USD",
+              cardEnabled: true,
+              applePayEnabled: true,
+              refundsEnabled: true,
+              cloverPosEnabled: true
+            },
+            paymentReadiness: {
+              ready: false,
+              onboardingState: "pending",
+              missingRequiredFields: ["stripeChargesEnabled", "stripePayoutsEnabled"]
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "http://127.0.0.1:3002/v1/catalog/internal/locations/flagship-01/payment-profile") {
+        expect(headers.get("x-gateway-token")).toBe("gateway-payments-token");
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        expect(body).toMatchObject({
+          locationId: "flagship-01",
+          stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+          stripeOnboardingStatus: "completed",
+          stripeChargesEnabled: true,
+          stripePayoutsEnabled: true
+        });
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      throw new Error(`unexpected Stripe dashboard URL: ${url}`);
+    });
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/stripe/connect/dashboard-link",
+      headers: {
+        "x-gateway-token": "gateway-payments-token"
+      },
+      payload: {
+        locationId: "flagship-01"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      locationId: "flagship-01",
+      stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+      url: "https://connect.stripe.com/express/test_dashboard",
+      paymentReadiness: {
+        ready: true,
+        onboardingState: "completed",
+        missingRequiredFields: []
+      }
+    });
+
+    expect(stripeAccountRetrieveSpy).toHaveBeenCalledWith("acct_1TOk7VE0L5J7W3jY");
+    expect(createLoginLinkSpy).toHaveBeenCalledWith("acct_1TOk7VE0L5J7W3jY");
+
+    stripeAccountRetrieveSpy.mockRestore();
+    createLoginLinkSpy.mockRestore();
+    await app.close();
+  });
+
   it("reports ready when live Clover has a stored OAuth connection", async () => {
     vi.stubEnv("PAYMENTS_PROVIDER_MODE", "live");
     vi.stubEnv("CLOVER_APP_ID", "clover-app-id");

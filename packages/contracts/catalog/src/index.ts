@@ -657,6 +657,25 @@ export const paymentReadinessSchema = z.object({
   missingRequiredFields: z.array(z.string())
 });
 
+export const stripeConnectOnboardingLinkRequestSchema = z.object({
+  locationId: z.string().trim().min(1),
+  returnUrl: z.string().trim().url(),
+  refreshUrl: z.string().trim().url()
+});
+
+export const stripeConnectDashboardLinkRequestSchema = z.object({
+  locationId: z.string().trim().min(1)
+});
+
+export const stripeConnectLinkResponseSchema = z.object({
+  locationId: z.string().trim().min(1),
+  stripeAccountId: z.string().trim().regex(/^acct_[A-Za-z0-9]+$/),
+  url: z.string().trim().url(),
+  expiresAt: z.string().datetime().optional(),
+  paymentProfile: clientPaymentProfileSchema,
+  paymentReadiness: paymentReadinessSchema
+});
+
 export const internalLocationSummarySchema = z.object({
   brandId: z.string().min(1),
   brandName: z.string().min(1),
@@ -710,6 +729,9 @@ export type AppConfig = z.output<typeof appConfigSchema>;
 export type ClientPaymentProfile = z.output<typeof clientPaymentProfileSchema>;
 export type InternalLocationPaymentProfileUpdate = z.output<typeof internalLocationPaymentProfileUpdateSchema>;
 export type PaymentReadiness = z.output<typeof paymentReadinessSchema>;
+export type StripeConnectOnboardingLinkRequest = z.output<typeof stripeConnectOnboardingLinkRequestSchema>;
+export type StripeConnectDashboardLinkRequest = z.output<typeof stripeConnectDashboardLinkRequestSchema>;
+export type StripeConnectLinkResponse = z.output<typeof stripeConnectLinkResponseSchema>;
 export type InternalLocationBootstrap = z.output<typeof internalLocationBootstrapSchema>;
 export type InternalLocationSummary = z.output<typeof internalLocationSummarySchema>;
 export type InternalLocationListResponse = z.output<typeof internalLocationListResponseSchema>;

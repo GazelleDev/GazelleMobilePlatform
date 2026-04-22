@@ -1339,6 +1339,79 @@ describe("gateway", () => {
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
+      if (url.endsWith("/v1/payments/stripe/connect/onboarding-link") && method === "POST") {
+        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          locationId?: string;
+          returnUrl?: string;
+          refreshUrl?: string;
+        };
+        expect(headers.get("x-gateway-token")).toBe("gateway-test-token");
+        return new Response(
+          JSON.stringify({
+            locationId: body.locationId ?? "northside-01",
+            stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+            url: "https://connect.stripe.com/setup/s/test_123",
+            expiresAt: "2026-04-22T12:00:00.000Z",
+            paymentProfile: {
+              locationId: body.locationId ?? "northside-01",
+              stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+              stripeAccountType: "express",
+              stripeOnboardingStatus: "pending",
+              stripeDetailsSubmitted: false,
+              stripeChargesEnabled: false,
+              stripePayoutsEnabled: false,
+              stripeDashboardEnabled: true,
+              country: "US",
+              currency: "USD",
+              cardEnabled: true,
+              applePayEnabled: true,
+              refundsEnabled: true,
+              cloverPosEnabled: true
+            },
+            paymentReadiness: {
+              ready: false,
+              onboardingState: "pending",
+              missingRequiredFields: ["stripeChargesEnabled", "stripePayoutsEnabled"]
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/v1/payments/stripe/connect/dashboard-link") && method === "POST") {
+        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+        const body = JSON.parse(String(init?.body ?? "{}")) as { locationId?: string };
+        expect(headers.get("x-gateway-token")).toBe("gateway-test-token");
+        return new Response(
+          JSON.stringify({
+            locationId: body.locationId ?? "northside-01",
+            stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+            url: "https://connect.stripe.com/express/test_dashboard",
+            paymentProfile: {
+              locationId: body.locationId ?? "northside-01",
+              stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+              stripeAccountType: "express",
+              stripeOnboardingStatus: "completed",
+              stripeDetailsSubmitted: true,
+              stripeChargesEnabled: true,
+              stripePayoutsEnabled: true,
+              stripeDashboardEnabled: true,
+              country: "US",
+              currency: "USD",
+              cardEnabled: true,
+              applePayEnabled: true,
+              refundsEnabled: true,
+              cloverPosEnabled: true
+            },
+            paymentReadiness: {
+              ready: true,
+              onboardingState: "completed",
+              missingRequiredFields: []
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
       if (url.endsWith("/v1/payments/clover/webhooks/verification-code") && method === "GET") {
         return new Response(
           JSON.stringify({
@@ -2841,6 +2914,80 @@ describe("gateway", () => {
 
     await app.close();
   });
+
+  it("forwards Stripe onboarding-link creation through the internal gateway", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/internal/locations/northside-01/stripe/onboarding-link",
+      headers: ownerInternalAdminHeaders,
+      payload: {
+        returnUrl: "https://admin.example.com/clients/northside-01/payments",
+        refreshUrl: "https://admin.example.com/clients/northside-01/payments?refresh=1"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      locationId: "northside-01",
+      stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+      paymentReadiness: {
+        ready: false
+      }
+    });
+
+    const onboardingCall = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://payments.internal/v1/payments/stripe/connect/onboarding-link";
+    });
+    expect(onboardingCall).toBeDefined();
+    if (onboardingCall) {
+      const upstreamHeaders = new Headers((onboardingCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
+      expect(JSON.parse(String(onboardingCall[1]?.body ?? "{}"))).toMatchObject({
+        locationId: "northside-01",
+        returnUrl: "https://admin.example.com/clients/northside-01/payments",
+        refreshUrl: "https://admin.example.com/clients/northside-01/payments?refresh=1"
+      });
+    }
+
+    await app.close();
+  });
+
+  it("forwards Stripe dashboard-link creation through the internal gateway", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/internal/locations/northside-01/stripe/dashboard-link",
+      headers: ownerInternalAdminHeaders,
+      payload: {}
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      locationId: "northside-01",
+      stripeAccountId: "acct_1TOk7VE0L5J7W3jY",
+      paymentReadiness: {
+        ready: true
+      }
+    });
+
+    const dashboardCall = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input.url;
+      return url === "http://payments.internal/v1/payments/stripe/connect/dashboard-link";
+    });
+    expect(dashboardCall).toBeDefined();
+    if (dashboardCall) {
+      const upstreamHeaders = new Headers((dashboardCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
+      expect(JSON.parse(String(dashboardCall[1]?.body ?? "{}"))).toMatchObject({
+        locationId: "northside-01"
+      });
+    }
+
+    await app.close();
+  });
+
   it("forwards Clover webhook verification-code reads through the gateway", async () => {
     const app = await buildApp();
     const response = await app.inject({

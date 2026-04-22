@@ -10,6 +10,9 @@ import {
   clientPaymentProfileSchema,
   describeCustomizationSelection,
   internalLocationBootstrapSchema,
+  stripeConnectDashboardLinkRequestSchema,
+  stripeConnectLinkResponseSchema,
+  stripeConnectOnboardingLinkRequestSchema,
   internalLocationListResponseSchema,
   internalLocationPaymentProfileUpdateSchema,
   internalLocationSummarySchema,
@@ -387,6 +390,50 @@ describe("contracts-catalog", () => {
 
     expect(update.locationId).toBe("northside-01");
     expect(readiness.ready).toBe(true);
+  });
+
+  it("validates Stripe Connect link payloads", () => {
+    const onboardingRequest = stripeConnectOnboardingLinkRequestSchema.parse({
+      locationId: "northside-01",
+      returnUrl: "https://admin.example.com/clients/northside-01/payments",
+      refreshUrl: "https://admin.example.com/clients/northside-01/payments?refresh=1"
+    });
+
+    const dashboardRequest = stripeConnectDashboardLinkRequestSchema.parse({
+      locationId: "northside-01"
+    });
+
+    const response = stripeConnectLinkResponseSchema.parse({
+      locationId: "northside-01",
+      stripeAccountId: "acct_123456789",
+      url: "https://connect.stripe.com/setup/s/test_123",
+      expiresAt: "2026-04-22T12:00:00.000Z",
+      paymentProfile: {
+        locationId: "northside-01",
+        stripeAccountId: "acct_123456789",
+        stripeAccountType: "express",
+        stripeOnboardingStatus: "pending",
+        stripeDetailsSubmitted: false,
+        stripeChargesEnabled: false,
+        stripePayoutsEnabled: false,
+        stripeDashboardEnabled: true,
+        country: "US",
+        currency: "USD",
+        cardEnabled: true,
+        applePayEnabled: true,
+        refundsEnabled: true,
+        cloverPosEnabled: false
+      },
+      paymentReadiness: {
+        ready: false,
+        onboardingState: "pending",
+        missingRequiredFields: ["stripeChargesEnabled", "stripePayoutsEnabled"]
+      }
+    });
+
+    expect(onboardingRequest.locationId).toBe("northside-01");
+    expect(dashboardRequest.locationId).toBe("northside-01");
+    expect(response.paymentProfile.stripeDashboardEnabled).toBe(true);
   });
 
   it("rejects invalid store tax rate", () => {

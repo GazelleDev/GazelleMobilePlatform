@@ -11,7 +11,13 @@ import {
   setAdminSession,
   signInInternalAdmin
 } from "@/lib/auth";
-import { bootstrapInternalLocation, buildCapabilities, provisionLocationOwner } from "@/lib/internal-api";
+import {
+  bootstrapInternalLocation,
+  buildCapabilities,
+  createStripeDashboardLink,
+  createStripeOnboardingLink,
+  provisionLocationOwner
+} from "@/lib/internal-api";
 
 function readString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -180,4 +186,37 @@ export async function reprovisionOwnerAction(formData: FormData) {
   }
 
   redirect(`/clients/${locationId}/owner?updated=1`);
+}
+
+export async function startStripeOnboardingAction(formData: FormData) {
+  const locationId = readString(formData, "locationId");
+  if (!locationId) {
+    redirect("/clients?error=Location ID is required.");
+  }
+
+  try {
+    await requireAdminCapability("clients:write");
+    const link = await createStripeOnboardingLink(locationId, {
+      returnUrl: readString(formData, "returnUrl"),
+      refreshUrl: readString(formData, "refreshUrl")
+    });
+    redirect(link.url);
+  } catch (error) {
+    redirect(`/clients/${locationId}/payments?error=${encodeURIComponent(toRedirectError(error))}`);
+  }
+}
+
+export async function openStripeDashboardAction(formData: FormData) {
+  const locationId = readString(formData, "locationId");
+  if (!locationId) {
+    redirect("/clients?error=Location ID is required.");
+  }
+
+  try {
+    await requireAdminCapability("clients:read");
+    const link = await createStripeDashboardLink(locationId);
+    redirect(link.url);
+  } catch (error) {
+    redirect(`/clients/${locationId}/payments?error=${encodeURIComponent(toRedirectError(error))}`);
+  }
 }

@@ -30,6 +30,7 @@ export default async function ClientDetailPage({ params, searchParams }: ClientD
 
     const readiness = [
       { label: "Location configured", ready: true },
+      { label: "Stripe mobile payments ready", ready: location.paymentReadiness?.ready ?? false },
       { label: "Client dashboard enabled", ready: location.capabilities.operations.dashboardEnabled },
       { label: "Owner access configured", ready: Boolean(ownerSummary.owner) },
       { label: "Live order tracking configured", ready: location.capabilities.operations.liveOrderTrackingEnabled }
@@ -74,14 +75,18 @@ export default async function ClientDetailPage({ params, searchParams }: ClientD
             </p>
           </article>
           <article className="stat-card">
+            <span className="eyebrow">Payments</span>
+            <strong>{location.paymentReadiness?.ready ? "Ready" : "Needs setup"}</strong>
+            <p>
+              {location.paymentProfile?.stripeAccountId
+                ? `Stripe account ${location.paymentProfile.stripeAccountId}`
+                : "No Stripe account linked to this location yet."}
+            </p>
+          </article>
+          <article className="stat-card">
             <span className="eyebrow">Fulfillment</span>
             <strong>{location.capabilities.operations.fulfillmentMode === "staff" ? "Staff" : "Time based"}</strong>
             <p>Operational handoff should match the configured store fulfillment model.</p>
-          </article>
-          <article className="stat-card">
-            <span className="eyebrow">Loyalty</span>
-            <strong>{location.capabilities.loyalty.visible ? "Visible" : "Hidden"}</strong>
-            <p>Reflects whether loyalty surfaces in the customer-facing experience.</p>
           </article>
         </div>
 
@@ -186,6 +191,10 @@ export default async function ClientDetailPage({ params, searchParams }: ClientD
               <Link href={`/clients/${locationId}/owner`} className="action-card">
                 <strong>Provision owner</strong>
                 <p className="subtle-copy">Create or rotate the first client dashboard account for this location.</p>
+              </Link>
+              <Link href={`/clients/${locationId}/payments`} className="action-card">
+                <strong>Manage payments</strong>
+                <p className="subtle-copy">Create Stripe onboarding links, confirm readiness, and open Express.</p>
               </Link>
               <Link href="/launch-readiness" className="action-card">
                 <strong>Open readiness board</strong>

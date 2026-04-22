@@ -5,9 +5,11 @@ import type {
 } from "@lattelink/contracts-auth";
 import type {
   AppConfigStoreCapabilities,
+  ClientPaymentProfile,
   InternalLocationBootstrap,
   InternalLocationListResponse,
-  InternalLocationSummary
+  InternalLocationSummary,
+  StripeConnectLinkResponse
 } from "@lattelink/contracts-catalog";
 import { requireAdminSession } from "@/lib/auth";
 import { getInternalAdminApiBaseUrl, getOptionalClientDashboardUrl, hasInternalAdminApiBaseUrl } from "@/lib/config";
@@ -74,6 +76,10 @@ export async function getInternalLocation(locationId: string) {
   return requestInternalApi<InternalLocationSummary>(`/v1/internal/locations/${locationId}`);
 }
 
+export async function getInternalLocationPaymentProfile(locationId: string) {
+  return requestInternalApi<ClientPaymentProfile>(`/v1/internal/locations/${locationId}/payment-profile`);
+}
+
 export async function getInternalLocationOwner(locationId: string) {
   return requestInternalApi<InternalOwnerSummary>(`/v1/internal/locations/${locationId}/owner`);
 }
@@ -89,6 +95,20 @@ export async function provisionLocationOwner(locationId: string, input: Internal
   return requestInternalApi<InternalOwnerProvisionResponse>(`/v1/internal/locations/${locationId}/owner/provision`, {
     method: "POST",
     body: JSON.stringify(input)
+  });
+}
+
+export async function createStripeOnboardingLink(locationId: string, input: { returnUrl: string; refreshUrl: string }) {
+  return requestInternalApi<StripeConnectLinkResponse>(`/v1/internal/locations/${locationId}/stripe/onboarding-link`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function createStripeDashboardLink(locationId: string) {
+  return requestInternalApi<StripeConnectLinkResponse>(`/v1/internal/locations/${locationId}/stripe/dashboard-link`, {
+    method: "POST",
+    body: JSON.stringify({})
   });
 }
 

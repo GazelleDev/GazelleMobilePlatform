@@ -56,6 +56,9 @@ import {
   internalLocationPaymentProfileUpdateSchema,
   internalLocationParamsSchema,
   internalLocationSummarySchema,
+  stripeConnectDashboardLinkRequestSchema,
+  stripeConnectLinkResponseSchema,
+  stripeConnectOnboardingLinkRequestSchema,
   menuResponseSchema,
   storeConfigResponseSchema
 } from "@lattelink/contracts-catalog";
@@ -1253,6 +1256,64 @@ export async function registerRoutes(app: FastifyInstance) {
           "x-gateway-token": gatewayInternalApiToken
         },
         responseSchema: stripeMobilePaymentSessionResponseSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/internal/locations/:locationId/stripe/onboarding-link",
+    {
+      preHandler: [app.rateLimit(authWriteRateLimit), requireInternalAdminCapability("clients:write")]
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+      const input = stripeConnectOnboardingLinkRequestSchema.parse({
+        ...(typeof request.body === "object" && request.body !== null ? request.body : {}),
+        locationId
+      });
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: paymentsBaseUrl,
+        serviceLabel: "Payments",
+        method: "POST",
+        path: "/v1/payments/stripe/connect/onboarding-link",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: stripeConnectLinkResponseSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/internal/locations/:locationId/stripe/dashboard-link",
+    {
+      preHandler: [app.rateLimit(authReadRateLimit), requireInternalAdminCapability("clients:read")]
+    },
+    async (request, reply) => {
+      const { locationId } = internalLocationParamsSchema.parse(request.params);
+      const input = stripeConnectDashboardLinkRequestSchema.parse({
+        ...(typeof request.body === "object" && request.body !== null ? request.body : {}),
+        locationId
+      });
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: paymentsBaseUrl,
+        serviceLabel: "Payments",
+        method: "POST",
+        path: "/v1/payments/stripe/connect/dashboard-link",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken
+        },
+        forwardUserIdHeader: false,
+        responseSchema: stripeConnectLinkResponseSchema
       });
     }
   );
