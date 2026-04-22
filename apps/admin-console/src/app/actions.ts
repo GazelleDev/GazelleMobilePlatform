@@ -194,16 +194,19 @@ export async function startStripeOnboardingAction(formData: FormData) {
     redirect("/clients?error=Location ID is required.");
   }
 
+  let destinationUrl: string;
   try {
     await requireAdminCapability("clients:write");
     const link = await createStripeOnboardingLink(locationId, {
       returnUrl: readString(formData, "returnUrl"),
       refreshUrl: readString(formData, "refreshUrl")
     });
-    redirect(link.url);
+    destinationUrl = link.url;
   } catch (error) {
     redirect(`/clients/${locationId}/payments?error=${encodeURIComponent(toRedirectError(error))}`);
   }
+
+  redirect(destinationUrl);
 }
 
 export async function openStripeDashboardAction(formData: FormData) {
@@ -212,11 +215,14 @@ export async function openStripeDashboardAction(formData: FormData) {
     redirect("/clients?error=Location ID is required.");
   }
 
+  let destinationUrl: string;
   try {
     await requireAdminCapability("clients:read");
     const link = await createStripeDashboardLink(locationId);
-    redirect(link.url);
+    destinationUrl = link.url;
   } catch (error) {
     redirect(`/clients/${locationId}/payments?error=${encodeURIComponent(toRedirectError(error))}`);
   }
+
+  redirect(destinationUrl);
 }
