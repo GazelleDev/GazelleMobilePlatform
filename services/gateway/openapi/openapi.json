@@ -154,6 +154,15 @@
         }
       }
     },
+    "/payments/webhooks/stripe": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/auth/apple/exchange": {
       "post": {
         "responses": {
