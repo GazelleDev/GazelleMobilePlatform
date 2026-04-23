@@ -20,11 +20,46 @@ function resolveDisplayName(variant: AppVariant) {
     case "production":
       return process.env.APP_DISPLAY_NAME ?? baseName;
     case "beta":
-      return process.env.APP_DISPLAY_NAME ?? "Rawaq Beta";
+      return process.env.APP_DISPLAY_NAME ?? `${baseName} Beta`;
     case "internal":
     default:
       return process.env.APP_DISPLAY_NAME ?? `${baseName} Internal`;
   }
+}
+
+function resolveReleaseApiBaseUrl(variant: AppVariant) {
+  const value = process.env.EXPO_PUBLIC_API_BASE_URL?.trim() ?? "";
+  if (value.length === 0) {
+    if (variant === "beta" || variant === "production") {
+      throw new Error(`EXPO_PUBLIC_API_BASE_URL must be configured for ${variant} mobile releases.`);
+    }
+
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`EXPO_PUBLIC_API_BASE_URL must be a valid URL. Received: ${value}`);
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const isLocalHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "0.0.0.0" ||
+    hostname.endsWith(".local");
+
+  if ((variant === "beta" || variant === "production") && parsed.protocol !== "https:") {
+    throw new Error(`${variant} mobile releases must use an https API base URL. Received: ${value}`);
+  }
+
+  if ((variant === "beta" || variant === "production") && isLocalHost) {
+    throw new Error(`${variant} mobile releases cannot point at localhost. Received: ${value}`);
+  }
+
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 function resolveBundleIdentifier(variant: AppVariant) {
@@ -66,6 +101,7 @@ const variant = resolveAppVariant();
 const bundleIdentifier = resolveBundleIdentifier(variant);
 const applePayMerchantIdentifier = resolveApplePayMerchantIdentifier(variant, bundleIdentifier);
 const applePayMerchantIdentifiers = applePayMerchantIdentifier ? [applePayMerchantIdentifier] : [];
+const releaseApiBaseUrl = resolveReleaseApiBaseUrl(variant);
 const stripePlugin =
   applePayMerchantIdentifiers.length > 0
     ? ([
@@ -119,7 +155,7 @@ const config: ExpoConfig = {
   extra: {
     appVariant: variant,
     easBuildProfile: process.env.EAS_BUILD_PROFILE ?? null,
-    apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? null,
+    apiBaseUrl: releaseApiBaseUrl,
     applePayMerchantIdentifier,
     privacyPolicyUrl: process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL ?? DEFAULT_PRIVACY_POLICY_URL,
     eas: {

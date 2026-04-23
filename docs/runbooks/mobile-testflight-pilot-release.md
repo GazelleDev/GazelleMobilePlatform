@@ -1,6 +1,6 @@
 # Mobile TestFlight Pilot Release
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-23`
 
 ## Purpose
 
@@ -41,7 +41,7 @@ Reference values are defined in:
 - run `pnpm --filter @lattelink/mobile release:check -- beta`
 - confirm `APP_VARIANT=beta`
 - confirm `IOS_BUNDLE_IDENTIFIER` matches the pilot TestFlight app
-- confirm `EXPO_PUBLIC_API_BASE_URL` points to the pilot backend
+- confirm `EXPO_PUBLIC_API_BASE_URL` points to `https://api.nomly.us/v1`
 - confirm `EXPO_PUBLIC_APPLE_PAY_MERCHANT_ID` matches the pilot merchant setup
 - confirm `EXPO_PUBLIC_BRAND_NAME` matches the client-facing pilot branding
 
@@ -53,7 +53,7 @@ Run the full checklist in:
 
 Do not submit a build if:
 
-- menu/config outage behavior is still misleading
+- menu/config outage behavior is still misleading or still falls back to localhost
 - checkout fails without a recoverable path
 - order confirmation and Orders disagree on the final order state
 
@@ -81,7 +81,7 @@ Recommended first pilot mapping:
 
 - `APP_VARIANT=beta`
 - `IOS_BUNDLE_IDENTIFIER=com.lattelink.mobile.beta`
-- `EXPO_PUBLIC_API_BASE_URL=https://api.<pilot-domain>/v1`
+- `EXPO_PUBLIC_API_BASE_URL=https://api.nomly.us/v1`
 - `EXPO_PUBLIC_APPLE_PAY_MERCHANT_ID=merchant.com.lattelink.mobile.beta`
 
 ## Release Notes Template

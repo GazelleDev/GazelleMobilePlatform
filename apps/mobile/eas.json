@@ -15,7 +15,10 @@
       "distribution": "internal",
       "channel": "internal",
       "env": {
-        "APP_VARIANT": "internal"
+        "APP_VARIANT": "internal",
+        "APP_DISPLAY_NAME_BASE": "LatteLink",
+        "EXPO_PUBLIC_BRAND_NAME": "LatteLink",
+        "EXPO_PUBLIC_PRIVACY_POLICY_URL": "https://nomly.us/privacy-policy"
       }
     },
     "beta": {
@@ -24,7 +27,13 @@
       "distribution": "store",
       "channel": "beta",
       "env": {
-        "APP_VARIANT": "beta"
+        "APP_VARIANT": "beta",
+        "APP_DISPLAY_NAME_BASE": "LatteLink",
+        "EXPO_PUBLIC_BRAND_NAME": "LatteLink",
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.nomly.us/v1",
+        "EXPO_PUBLIC_CATALOG_SERVICE_BASE_URL": "https://api.nomly.us/v1",
+        "EXPO_PUBLIC_CATALOG_API_BASE_URL": "https://api.nomly.us/v1",
+        "EXPO_PUBLIC_PRIVACY_POLICY_URL": "https://nomly.us/privacy-policy"
       }
     },
     "production": {
@@ -33,7 +42,13 @@
       "distribution": "store",
       "channel": "production",
       "env": {
-        "APP_VARIANT": "production"
+        "APP_VARIANT": "production",
+        "APP_DISPLAY_NAME_BASE": "LatteLink",
+        "EXPO_PUBLIC_BRAND_NAME": "LatteLink",
+        "EXPO_PUBLIC_API_BASE_URL": "https://api.nomly.us/v1",
+        "EXPO_PUBLIC_CATALOG_SERVICE_BASE_URL": "https://api.nomly.us/v1",
+        "EXPO_PUBLIC_CATALOG_API_BASE_URL": "https://api.nomly.us/v1",
+        "EXPO_PUBLIC_PRIVACY_POLICY_URL": "https://nomly.us/privacy-policy"
       }
     }
   },

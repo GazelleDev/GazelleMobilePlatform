@@ -161,6 +161,7 @@ Account tab:
 
 Code that exists but is incomplete, stubbed, or fallback-heavy:
 - `apps/mobile/src/api/client.ts`
+  - No longer falls back to localhost when `EXPO_PUBLIC_API_BASE_URL` is missing; release builds now require an explicit backend target and surface `Unable to reach backend.` on fetch failure.
   - Order streaming still carries a TODO to replace the current polling-backed authenticated SSE approach with a more native path when Expo runtime support is reliable everywhere.
 - `apps/mobile/src/menu/catalog.ts`
   - Still carries fallback app config, store config, menu, and card data in code.
@@ -173,7 +174,7 @@ Known issues or gaps visible from code:
 - Passkey auth exists in backend contracts and services, but the mobile app still does not expose a passkey registration or sign-in UI.
 - `/account/alerts` is a profile editor, not an alerts/preferences surface.
 - The app still depends on runtime config for payment readiness; misconfigured Stripe/Clover states surface as unavailability.
-- Native beta identifiers are now generic (`com.lattelink.mobile.beta`, `merchant.com.lattelink.mobile.beta`), but production tenant-specific mobile build configuration is still env-driven rather than dynamically provisioned.
+- Native beta defaults are now generic (`LatteLink Beta`, `com.lattelink.mobile.beta`, `merchant.com.lattelink.mobile.beta`), but production tenant-specific mobile build configuration is still env-driven rather than dynamically provisioned.
 
 ### 3.3 Backend Services
 
@@ -418,10 +419,11 @@ Known issues or gaps:
 #### Workers
 
 `services/workers/menu-sync`:
-- Fetches `WEBAPP_MENU_SOURCE_URL`.
+- Fetches `WEBAPP_MENU_SOURCE_URL` when that env is configured.
 - Parses the external payload into the shared menu schema.
 - Retries with exponential backoff and dead-letters failures to JSONL.
 - Persists successful payloads into catalog via `PUT /v1/catalog/internal/locations/:locationId/menu` using `x-gateway-token`.
+- When `WEBAPP_MENU_SOURCE_URL` is blank, the worker stays deployed but idles in a disabled state instead of crash-looping.
 - Gap: the parser is still tailored to one external payload shape and not yet a general ingestion framework.
 
 `services/workers/notifications-dispatch`:
@@ -580,6 +582,12 @@ Major env families visible in code:
   - `NOTIFICATIONS_PROVIDER_MODE`
   - `EXPO_PUSH_API_URL`
   - `EXPO_ACCESS_TOKEN`
+- Menu sync:
+  - `WEBAPP_MENU_SOURCE_URL`
+  - `MENU_SYNC_LOCATION_ID`
+  - `MENU_SYNC_INTERVAL_MS`
+  - `MENU_SYNC_MAX_RETRIES`
+  - `MENU_SYNC_RETRY_DELAY_MS`
 - Mobile:
   - `EXPO_PUBLIC_API_BASE_URL`
   - `EXPO_PUBLIC_CATALOG_API_BASE_URL`
@@ -662,7 +670,8 @@ Migration state visible in code:
   - `0015_home_news_cards.ts`
   - `0018_internal_admin_access.ts`
   - `0020_stripe_phase1_foundations.ts`
-  - `0021_normalize_catalog_default_brand.ts`
+  - `0023_normalize_catalog_default_brand.ts`
+  - `0024_remove_magic_link_auth.ts`
 
 ### Payment Integration
 
@@ -740,4 +749,4 @@ Items explicitly visible from code:
 - Admin owner-page copy references future reset flows that are not implemented.
 - Mobile includes dev-preview scaffolding in checkout success and refund detail screens.
 - Notifications provider mode can be real Expo or simulated, but there is no receipt polling, provider analytics, or richer delivery observability.
-- Menu sync now persists into catalog, but it is still a single-source parser rather than a generalized import system.
+- Menu sync now persists into catalog and idles cleanly when unconfigured, but it is still a single-source parser rather than a generalized import system.

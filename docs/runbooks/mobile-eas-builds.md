@@ -1,6 +1,6 @@
 # Mobile EAS Build Matrix
 
-Last updated: `2026-04-01`
+Last updated: `2026-04-23`
 
 ## Purpose
 
@@ -24,10 +24,12 @@ The mobile app now uses `apps/mobile/eas.json` with three profiles:
   - distribution: `store`
   - intended backend: pilot environment
   - default variant: `APP_VARIANT=beta`
+  - repo default API target: `https://api.nomly.us/v1`
 - `production`
   - distribution: `store`
   - intended backend: production environment
   - default variant: `APP_VARIANT=production`
+  - repo default API target: `https://api.nomly.us/v1`
 
 ## Required Environment Values
 
@@ -55,7 +57,7 @@ Optional values:
 - `EXPO_PUBLIC_CATALOG_SERVICE_BASE_URL`
 - `EXPO_PUBLIC_CATALOG_API_BASE_URL`
 - `EXPO_PUBLIC_PRIVACY_POLICY_URL`
-  - defaults to `https://lattelink.da0ud.me/privacy-policy`
+  - defaults to `https://nomly.us/privacy-policy`
   - set it only if a tenant or release needs a different public policy URL
 
 ## Recommended Matrix
@@ -73,7 +75,7 @@ Optional values:
 - `APP_VARIANT=beta`
 - `APP_DISPLAY_NAME_BASE=LatteLink`
 - `IOS_BUNDLE_IDENTIFIER=com.lattelink.mobile.beta`
-- `EXPO_PUBLIC_API_BASE_URL=<pilot backend>/v1`
+- `EXPO_PUBLIC_API_BASE_URL=https://api.nomly.us/v1`
 - `EXPO_PUBLIC_APPLE_PAY_MERCHANT_ID=<pilot merchant id>`
 
 ### Production
@@ -81,7 +83,7 @@ Optional values:
 - `APP_VARIANT=production`
 - `APP_DISPLAY_NAME_BASE=LatteLink`
 - `IOS_BUNDLE_IDENTIFIER=com.lattelink.mobile`
-- `EXPO_PUBLIC_API_BASE_URL=<production backend>/v1`
+- `EXPO_PUBLIC_API_BASE_URL=https://api.nomly.us/v1`
 - `EXPO_PUBLIC_APPLE_PAY_MERCHANT_ID=<production merchant id>`
 
 ## Build Commands
@@ -99,6 +101,7 @@ pnpm --filter @lattelink/mobile release:check -- production
 The preflight validates that the env is complete and catches common mistakes such as:
 
 - missing API base URL
+- falling back to a repo-local or localhost API target
 - wrong bundle identifier for the profile
 - `beta` or `production` pointing to localhost or non-HTTPS API URLs
 - malformed Apple Pay merchant identifiers
@@ -110,6 +113,13 @@ Then run the actual EAS build:
 eas build --platform ios --profile internal
 eas build --platform ios --profile beta
 eas build --platform ios --profile production
+```
+
+For OTA updates, use the matching channel and environment:
+
+```bash
+eas update --channel beta --environment beta --message "<release note>"
+eas update --channel production --environment production --message "<release note>"
 ```
 
 ## TestFlight Checklist

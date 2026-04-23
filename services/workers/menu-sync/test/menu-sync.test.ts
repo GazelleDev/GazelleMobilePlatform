@@ -33,6 +33,7 @@ const validMenuPayload = {
 };
 
 const baseConfig: MenuSyncConfig = {
+  enabled: true,
   sourceUrl: "https://webapp.gazellecoffee.com/api/content/public",
   catalogBaseUrl: "http://127.0.0.1:3002",
   gatewayApiToken: "test-gateway-token",
@@ -70,11 +71,28 @@ describe("menu-sync worker", () => {
     vi.useRealTimers();
   });
 
-  it("builds config from environment defaults", () => {
+  it("disables itself when no source url is configured", () => {
     const config = buildMenuSyncConfig({
       GATEWAY_INTERNAL_API_TOKEN: "test-gateway-token"
     } as NodeJS.ProcessEnv);
 
+    expect(config.enabled).toBe(false);
+    expect(config.sourceUrl).toBe("");
+    expect(config.catalogBaseUrl).toBe("http://127.0.0.1:3002");
+    expect(config.gatewayApiToken).toBe("test-gateway-token");
+    expect(config.intervalMs).toBe(300000);
+    expect(config.maxRetries).toBe(3);
+    expect(config.retryDelayMs).toBe(2000);
+    expect(config.locationId).toBe("rawaqcoffee01");
+  });
+
+  it("builds enabled config when a source url is provided", () => {
+    const config = buildMenuSyncConfig({
+      GATEWAY_INTERNAL_API_TOKEN: "test-gateway-token",
+      WEBAPP_MENU_SOURCE_URL: "https://webapp.gazellecoffee.com/api/content/public"
+    } as NodeJS.ProcessEnv);
+
+    expect(config.enabled).toBe(true);
     expect(config.sourceUrl).toBe("https://webapp.gazellecoffee.com/api/content/public");
     expect(config.catalogBaseUrl).toBe("http://127.0.0.1:3002");
     expect(config.gatewayApiToken).toBe("test-gateway-token");

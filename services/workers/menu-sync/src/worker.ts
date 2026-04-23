@@ -4,6 +4,7 @@ import { menuResponseSchema } from "@lattelink/contracts-catalog";
 import { z } from "zod";
 
 export type MenuSyncConfig = {
+  enabled: boolean;
   sourceUrl: string;
   catalogBaseUrl: string;
   gatewayApiToken: string;
@@ -58,7 +59,6 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_DELAY_MS = 2_000;
 const DEFAULT_LOCATION_ID = "rawaqcoffee01";
 const DEFAULT_DEAD_LETTER_PATH = "./dead-letter/menu-sync.jsonl";
-const DEFAULT_SOURCE_URL = "https://webapp.gazellecoffee.com/api/content/public";
 const DEFAULT_CATALOG_BASE_URL = "http://127.0.0.1:3002";
 
 function parseIntegerEnv(input: {
@@ -88,6 +88,11 @@ function toError(error: unknown): Error {
   return new Error(typeof error === "string" ? error : "Unknown menu sync error");
 }
 
+function trimToUndefined(value: string | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
+
 function countMenuItems(menu: MenuPayload): number {
   return menu.categories.reduce((total, category) => total + category.items.length, 0);
 }
@@ -107,19 +112,23 @@ function extractCategories(payload: unknown): unknown {
 }
 
 export function buildMenuSyncConfig(env: NodeJS.ProcessEnv = process.env): MenuSyncConfig {
-  const sourceUrl = env.WEBAPP_MENU_SOURCE_URL ?? DEFAULT_SOURCE_URL;
-  const catalogBaseUrl = env.CATALOG_SERVICE_BASE_URL ?? DEFAULT_CATALOG_BASE_URL;
-  const locationId = env.MENU_SYNC_LOCATION_ID ?? DEFAULT_LOCATION_ID;
-  const deadLetterPath = env.MENU_SYNC_DEAD_LETTER_PATH ?? DEFAULT_DEAD_LETTER_PATH;
-  const gatewayApiToken = env.GATEWAY_INTERNAL_API_TOKEN?.trim();
+  const sourceUrl = trimToUndefined(env.WEBAPP_MENU_SOURCE_URL) ?? "";
+  const enabled = sourceUrl.length > 0;
+  const catalogBaseUrl = trimToUndefined(env.CATALOG_SERVICE_BASE_URL) ?? DEFAULT_CATALOG_BASE_URL;
+  const locationId = trimToUndefined(env.MENU_SYNC_LOCATION_ID) ?? DEFAULT_LOCATION_ID;
+  const deadLetterPath = trimToUndefined(env.MENU_SYNC_DEAD_LETTER_PATH) ?? DEFAULT_DEAD_LETTER_PATH;
+  const gatewayApiToken = trimToUndefined(env.GATEWAY_INTERNAL_API_TOKEN) ?? "";
 
-  new URL(sourceUrl);
+  if (enabled) {
+    new URL(sourceUrl);
+  }
   new URL(catalogBaseUrl);
-  if (!gatewayApiToken) {
+  if (enabled && !gatewayApiToken) {
     throw new Error("GATEWAY_INTERNAL_API_TOKEN must be set");
   }
 
   return {
+    enabled,
     sourceUrl,
     catalogBaseUrl,
     gatewayApiToken,
