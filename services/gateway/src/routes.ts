@@ -81,6 +81,7 @@ import {
 
 declare module "fastify" {
   interface FastifyRequest {
+    rawBody?: string;
     authenticatedUserId?: string;
     authenticatedOperator?: z.output<typeof operatorMeResponseSchema>;
     authenticatedInternalAdmin?: z.output<typeof internalAdminMeResponseSchema>;
@@ -697,6 +698,7 @@ async function proxyOpaqueUpstream(params: {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
+  rawBody?: string;
   additionalHeaders?: Record<string, string | undefined>;
   forwardUserIdHeader?: boolean;
   timeoutMs?: number;
@@ -710,6 +712,7 @@ async function proxyOpaqueUpstream(params: {
     method,
     path,
     body,
+    rawBody,
     additionalHeaders,
     forwardUserIdHeader = true,
     timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs),
@@ -736,7 +739,9 @@ async function proxyOpaqueUpstream(params: {
     }
   }
 
-  if (body !== undefined) {
+  if (rawBody !== undefined) {
+    headers["content-type"] = toHeaderValue(request.headers["content-type"]) ?? "application/json";
+  } else if (body !== undefined) {
     headers["content-type"] = "application/json";
   }
 
@@ -748,7 +753,7 @@ async function proxyOpaqueUpstream(params: {
     upstreamResponse = await fetch(`${baseUrl}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
       redirect,
       signal: timeoutController.signal
     });
@@ -782,7 +787,7 @@ async function proxyOpaqueUpstream(params: {
     clearTimeout(timeoutHandle);
   }
 
-  const rawBody = await upstreamResponse.text();
+  const upstreamRawBody = await upstreamResponse.text();
   const contentType = upstreamResponse.headers.get("content-type");
   const location = upstreamResponse.headers.get("location");
   const cacheControl = upstreamResponse.headers.get("cache-control");
@@ -799,15 +804,15 @@ async function proxyOpaqueUpstream(params: {
 
   reply.status(upstreamResponse.status);
 
-  if (rawBody.length === 0) {
+  if (upstreamRawBody.length === 0) {
     return reply.send();
   }
 
   if (contentType?.toLowerCase().includes("application/json")) {
-    return reply.send(parseJsonSafely(rawBody));
+    return reply.send(parseJsonSafely(upstreamRawBody));
   }
 
-  return reply.send(rawBody);
+  return reply.send(upstreamRawBody);
 }
 
 async function fetchOrderForStream(params: {
@@ -1379,6 +1384,22 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "POST",
       path: "/v1/payments/webhooks/clover",
       body: request.body,
+      forwardUserIdHeader: false
+    })
+  );
+
+  app.post("/v1/payments/webhooks/stripe", { preHandler: app.rateLimit(paymentsWebhookRateLimit) }, async (request, reply) =>
+    proxyOpaqueUpstream({
+      request,
+      reply,
+      baseUrl: paymentsBaseUrl,
+      serviceLabel: "Payments",
+      method: "POST",
+      path: "/v1/payments/webhooks/stripe",
+      rawBody: request.rawBody,
+      additionalHeaders: {
+        "stripe-signature": toHeaderValue(request.headers["stripe-signature"])
+      },
       forwardUserIdHeader: false
     })
   );

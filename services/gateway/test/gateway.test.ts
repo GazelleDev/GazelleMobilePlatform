@@ -1503,6 +1503,21 @@ describe("gateway", () => {
         );
       }
 
+      if (url.endsWith("/v1/payments/webhooks/stripe") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            accepted: true,
+            provider: "STRIPE",
+            eventId: "evt_stripe_gateway_1",
+            eventType: "payment_intent.succeeded",
+            duplicate: false,
+            livemode: false,
+            account: "acct_123456789"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
       if (url.endsWith("/v1/loyalty/balance") && method === "GET") {
         return new Response(
           JSON.stringify({
@@ -3056,6 +3071,53 @@ describe("gateway", () => {
       expect(typeof webhookCall[0] === "string" ? webhookCall[0] : webhookCall[0].url).toBe(
         "http://payments.internal/v1/payments/webhooks/clover"
       );
+    }
+
+    await app.close();
+  });
+
+  it("forwards Stripe webhook requests with the raw body and signature through the gateway", async () => {
+    const app = await buildApp();
+    const payload = JSON.stringify({
+      id: "evt_stripe_gateway_1",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_gateway_1"
+        }
+      }
+    });
+    const stripeSignature = "t=123,v1=test-signature";
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/payments/webhooks/stripe",
+      headers: {
+        "content-type": "application/json",
+        "stripe-signature": stripeSignature
+      },
+      payload
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      accepted: true,
+      provider: "STRIPE",
+      eventId: "evt_stripe_gateway_1"
+    });
+
+    const webhookCall = fetchMock.mock.calls.find(([input]) =>
+      (typeof input === "string" ? input : input.url).endsWith("/v1/payments/webhooks/stripe")
+    );
+    expect(webhookCall).toBeDefined();
+    if (webhookCall) {
+      expect(typeof webhookCall[0] === "string" ? webhookCall[0] : webhookCall[0].url).toBe(
+        "http://payments.internal/v1/payments/webhooks/stripe"
+      );
+      expect(webhookCall[1]?.body).toBe(payload);
+      const upstreamHeaders = new Headers((webhookCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("stripe-signature")).toBe(stripeSignature);
+      expect(upstreamHeaders.get("content-type")).toBe("application/json");
     }
 
     await app.close();

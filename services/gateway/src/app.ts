@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
@@ -105,6 +106,20 @@ export async function buildApp() {
 
   app.addHook("onRequest", async (request, reply) => {
     reply.header("x-request-id", request.id);
+  });
+  app.addHook("preParsing", async (request, _reply, payload) => {
+    if (request.method !== "POST" || !request.url.startsWith("/v1/payments/webhooks/stripe")) {
+      return payload;
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of payload) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    const body = Buffer.concat(chunks);
+    request.rawBody = body.toString("utf8");
+    return Readable.from(body);
   });
   app.addHook("onResponse", async (request, reply) => {
     requestMetrics.total += 1;
