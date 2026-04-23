@@ -438,7 +438,7 @@ Purpose:
 Required content:
 
 - brand-aligned sign-in shell
-- email/username plus password or magic-link flow
+- email/username plus password flow
 - clear store/workspace context
 - trusted-device/session messaging
 - polished error and locked-state handling

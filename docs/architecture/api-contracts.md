@@ -11,8 +11,6 @@
 - `POST /auth/passkey/register/verify`
 - `POST /auth/passkey/auth/challenge`
 - `POST /auth/passkey/auth/verify`
-- `POST /auth/magic-link/request`
-- `POST /auth/magic-link/verify`
 - `POST /auth/refresh`
 - `POST /auth/logout`
 - `GET /me`

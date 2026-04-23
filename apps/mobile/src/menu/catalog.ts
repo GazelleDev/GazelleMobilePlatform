@@ -194,7 +194,7 @@ export const exampleCustomizationByItemId: Record<string, MenuItemCustomizationG
 };
 
 const fallbackMenu = menuResponseSchema.parse({
-  locationId: "flagship-01",
+  locationId: "rawaqcoffee01",
   currency: "USD",
   categories: [
     {
@@ -246,7 +246,7 @@ const fallbackMenu = menuResponseSchema.parse({
 });
 
 const fallbackStoreConfig = storeConfigResponseSchema.parse({
-  locationId: "flagship-01",
+  locationId: "rawaqcoffee01",
   hoursText: "Daily · 7:00 AM - 6:00 PM",
   isOpen: true,
   nextOpenAt: null,
@@ -257,10 +257,10 @@ const fallbackStoreConfig = storeConfigResponseSchema.parse({
 
 const fallbackAppConfig = appConfigSchema.parse({
   brand: {
-    brandId: "gazelle-default",
-    brandName: "Gazelle Coffee",
-    locationId: "flagship-01",
-    locationName: "Ann Arbor, MI",
+    brandId: "rawaqcoffee",
+    brandName: "Rawaq Coffee",
+    locationId: "rawaqcoffee01",
+    locationName: "Rawaq Coffee Flagship",
     marketLabel: "Ann Arbor, MI"
   },
   theme: {
@@ -302,7 +302,7 @@ const fallbackAppConfig = appConfigSchema.parse({
     },
     clover: {
       enabled: true,
-      merchantRef: "flagship-01"
+      merchantRef: "rawaqcoffee01"
     }
   },
   fulfillment: {

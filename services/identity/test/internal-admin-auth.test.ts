@@ -1,17 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { MailSender } from "../src/mail.js";
 import { buildApp } from "../src/app.js";
 import { createInMemoryIdentityRepository } from "../src/repository.js";
-
-function createCapturingMailSender() {
-  const sender: MailSender = {
-    async sendMagicLink() {
-      // internal-admin password/session tests do not rely on outbound delivery
-    }
-  };
-
-  return { sender };
-}
 
 async function signInInternalAdmin(app: Awaited<ReturnType<typeof buildApp>>, email: string, password: string) {
   const response = await app.inject({
@@ -30,8 +19,7 @@ async function signInInternalAdmin(app: Awaited<ReturnType<typeof buildApp>>, em
 describe("internal admin auth", () => {
   it("supports refresh rotation and invalidates prior internal admin access tokens after logout", async () => {
     const repository = createInMemoryIdentityRepository();
-    const { sender } = createCapturingMailSender();
-    const app = await buildApp({ repository, mailSender: sender });
+    const app = await buildApp({ repository });
 
     const session = await signInInternalAdmin(app, "admin@gazellecoffee.com", "GazelleAdmin123!");
 
@@ -101,8 +89,7 @@ describe("internal admin auth", () => {
 
   it("rejects invalid internal admin credentials", async () => {
     const repository = createInMemoryIdentityRepository();
-    const { sender } = createCapturingMailSender();
-    const app = await buildApp({ repository, mailSender: sender });
+    const app = await buildApp({ repository });
 
     const response = await app.inject({
       method: "POST",

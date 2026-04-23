@@ -5,6 +5,8 @@ import { z } from "zod";
 
 export type MenuSyncConfig = {
   sourceUrl: string;
+  catalogBaseUrl: string;
+  gatewayApiToken: string;
   intervalMs: number;
   maxRetries: number;
   retryDelayMs: number;
@@ -54,9 +56,10 @@ export type MenuSyncLoopHandle = {
 const DEFAULT_INTERVAL_MS = 300_000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_DELAY_MS = 2_000;
-const DEFAULT_LOCATION_ID = "flagship-01";
+const DEFAULT_LOCATION_ID = "rawaqcoffee01";
 const DEFAULT_DEAD_LETTER_PATH = "./dead-letter/menu-sync.jsonl";
 const DEFAULT_SOURCE_URL = "https://webapp.gazellecoffee.com/api/content/public";
+const DEFAULT_CATALOG_BASE_URL = "http://127.0.0.1:3002";
 
 function parseIntegerEnv(input: {
   name: string;
@@ -105,13 +108,21 @@ function extractCategories(payload: unknown): unknown {
 
 export function buildMenuSyncConfig(env: NodeJS.ProcessEnv = process.env): MenuSyncConfig {
   const sourceUrl = env.WEBAPP_MENU_SOURCE_URL ?? DEFAULT_SOURCE_URL;
+  const catalogBaseUrl = env.CATALOG_SERVICE_BASE_URL ?? DEFAULT_CATALOG_BASE_URL;
   const locationId = env.MENU_SYNC_LOCATION_ID ?? DEFAULT_LOCATION_ID;
   const deadLetterPath = env.MENU_SYNC_DEAD_LETTER_PATH ?? DEFAULT_DEAD_LETTER_PATH;
+  const gatewayApiToken = env.GATEWAY_INTERNAL_API_TOKEN?.trim();
 
   new URL(sourceUrl);
+  new URL(catalogBaseUrl);
+  if (!gatewayApiToken) {
+    throw new Error("GATEWAY_INTERNAL_API_TOKEN must be set");
+  }
 
   return {
     sourceUrl,
+    catalogBaseUrl,
+    gatewayApiToken,
     locationId,
     deadLetterPath,
     intervalMs: parseIntegerEnv({
@@ -145,8 +156,24 @@ export function createMenuSyncRuntime(config: MenuSyncConfig, logger: Logger = c
   return {
     fetchMenu: async (url) => fetch(url),
     persistMenu: async (menu) => {
+      const response = await fetch(`${config.catalogBaseUrl}/v1/catalog/internal/locations/${config.locationId}/menu`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-gateway-token": config.gatewayApiToken
+        },
+        body: JSON.stringify({
+          ...menu,
+          locationId: config.locationId
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`catalog menu persist request failed with status ${response.status}`);
+      }
+
       const itemCount = countMenuItems(menu);
-      logger.info(`[menu-sync] staged payload (${menu.categories.length} categories, ${itemCount} items)`);
+      logger.info(`[menu-sync] persisted payload (${menu.categories.length} categories, ${itemCount} items)`);
     },
     writeDeadLetter: async (record) => appendDeadLetterRecord(config.deadLetterPath, record),
     sleep: async (delayMs) =>

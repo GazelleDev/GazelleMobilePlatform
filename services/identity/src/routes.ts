@@ -21,8 +21,6 @@ import {
   internalOwnerSummarySchema,
   customerProfileRequestSchema,
   logoutRequestSchema,
-  magicLinkRequestSchema,
-  magicLinkVerifySchema,
   meResponseSchema,
   operatorAuthProvidersSchema,
   operatorDevAccessRequestSchema,
@@ -48,7 +46,6 @@ import {
   verifyAppleIdentityToken
 } from "./apple.js";
 import { createIdentityRepository, type IdentityRepository } from "./repository.js";
-import { createMailSender, type MailSender } from "./mail.js";
 import { provisionOwnerAccess } from "./provisioning.js";
 
 type CustomerSession = NonNullable<Awaited<ReturnType<IdentityRepository["getSessionByAccessToken"]>>>;
@@ -107,12 +104,6 @@ function toPositiveInteger(value: string | undefined, fallback: number) {
   return Math.floor(parsed);
 }
 
-function buildMagicLinkUrl(baseUrl: string, token: string) {
-  const url = new URL("/auth/magic-link", baseUrl);
-  url.searchParams.set("token", token);
-  return url.toString();
-}
-
 function buildCustomerMeResponse(input: {
   userId: string;
   user: {
@@ -125,7 +116,7 @@ function buildCustomerMeResponse(input: {
     createdAt: string;
     updatedAt: string;
   } | undefined;
-  methods: Array<"apple" | "passkey" | "magic-link">;
+  methods: Array<"apple" | "passkey">;
 }) {
   return meResponseSchema.parse({
     userId: input.userId,
@@ -175,12 +166,6 @@ async function getAuthenticatedCustomerSession(input: {
   }
 
   return session;
-}
-
-function buildOperatorMagicLinkUrl(baseUrl: string, token: string) {
-  const url = new URL("/", baseUrl);
-  url.searchParams.set("operator_token", token);
-  return url.toString();
 }
 
 function secretsMatch(expected: string, provided: string) {
@@ -449,7 +434,7 @@ async function issueSession(params: {
   repository: IdentityRepository;
   seed: string;
   userId: string;
-  authMethod: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh";
+  authMethod: "apple" | "passkey-register" | "passkey-auth" | "refresh";
 }) {
   const session = buildStoredSession(params.seed, params.userId);
   await params.repository.saveSession(session, params.authMethod);
@@ -460,7 +445,7 @@ async function issueOperatorSession(params: {
   repository: IdentityRepository;
   seed: string;
   operatorUserId: string;
-  authMethod: "magic-link" | "password" | "google" | "refresh";
+  authMethod: "password" | "google" | "refresh";
 }) {
   const session = buildStoredOperatorSession(params.seed, params.operatorUserId);
   await params.repository.saveOperatorSession(session, params.authMethod);
@@ -614,19 +599,14 @@ async function resolveInternalAdminFromBearer(params: {
 export type RegisterRoutesOptions = {
   allowDevCustomerAccess?: boolean;
   allowDevOperatorAccess?: boolean;
-  mailSender?: MailSender;
   repository?: IdentityRepository;
 };
 
 export async function registerRoutes(app: FastifyInstance, options: RegisterRoutesOptions = {}) {
   const repository = options.repository ?? (await createIdentityRepository(app.log));
-  const mailSender = options.mailSender ?? createMailSender({ logger: app.log });
   const gatewayApiToken = process.env.GATEWAY_INTERNAL_API_TOKEN?.trim() || undefined;
   const passkeyConfig = loadPasskeyConfig();
   const rateLimitWindowMs = toPositiveInteger(process.env.IDENTITY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
-  const magicLinkExpiryMinutes = toPositiveInteger(process.env.MAGIC_LINK_EXPIRY_MINUTES, 15);
-  const magicLinkBaseUrl = process.env.MAGIC_LINK_BASE_URL?.trim() || "http://localhost:8080";
-  const operatorMagicLinkBaseUrl = process.env.OPERATOR_MAGIC_LINK_BASE_URL?.trim() || "http://localhost:5173";
   const allowDevCustomerAccess =
     options.allowDevCustomerAccess ??
     (process.env.ALLOW_DEV_CUSTOMER_LOGIN === "true" || process.env.NODE_ENV !== "production");
@@ -1059,76 +1039,6 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
   );
 
   app.post(
-    "/v1/auth/magic-link/request",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-      const input = magicLinkRequestSchema.parse(request.body);
-      const token = randomUUID();
-      const expiresAt = new Date(Date.now() + magicLinkExpiryMinutes * 60 * 1000).toISOString();
-      const magicLinkUrl = buildMagicLinkUrl(magicLinkBaseUrl, token);
-
-      await repository.saveMagicLink({
-        token,
-        email: input.email,
-        expiresAt
-      });
-
-      try {
-        await mailSender.sendMagicLink({
-          to: input.email,
-          magicLinkUrl
-        });
-      } catch (error) {
-        app.log.error({ error, email: input.email, requestId: request.id }, "magic link delivery failed");
-        return reply.status(503).send(
-          buildApiError(
-            request.id,
-            "MAGIC_LINK_DELIVERY_FAILED",
-            "Unable to deliver magic link at this time"
-          )
-        );
-      }
-
-      return { success: true as const };
-    }
-  );
-
-  app.post(
-    "/v1/auth/magic-link/verify",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-      const input = magicLinkVerifySchema.parse(request.body);
-
-      const magicLink = await repository.getMagicLink(input.token);
-      if (!magicLink) {
-        return reply
-          .status(401)
-          .send(buildApiError(request.id, "INVALID_MAGIC_LINK", "Magic link is invalid or unavailable"));
-      }
-
-      if (magicLink.consumedAt || Date.parse(magicLink.expiresAt) <= Date.now()) {
-        return reply
-          .status(401)
-          .send(buildApiError(request.id, "MAGIC_LINK_EXPIRED", "Magic link has expired or was already used"));
-      }
-
-      const userId = magicLink.userId ?? (await repository.findOrCreateUserByEmail(magicLink.email));
-      await repository.consumeMagicLink(input.token, userId);
-
-      return issueSession({
-        repository,
-        seed: input.token,
-        userId,
-        authMethod: "magic-link"
-      });
-    }
-  );
-
-  app.post(
     "/v1/auth/dev-access",
     {
       preHandler: app.rateLimit(authWriteRateLimit)
@@ -1548,87 +1458,6 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
         authMethod: "google"
       });
       return session;
-    }
-  );
-
-  app.post(
-    "/v1/operator/auth/magic-link/request",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-      const input = magicLinkRequestSchema.parse(request.body);
-      const operator = await repository.getOperatorUserByEmail(input.email);
-      if (!operator || !operator.active) {
-        return reply.status(404).send(
-          buildApiError(request.id, "OPERATOR_ACCESS_NOT_GRANTED", "No operator access exists for that email address")
-        );
-      }
-
-      const token = randomUUID();
-      const expiresAt = new Date(Date.now() + magicLinkExpiryMinutes * 60 * 1000).toISOString();
-      const magicLinkUrl = buildOperatorMagicLinkUrl(operatorMagicLinkBaseUrl, token);
-
-      await repository.saveOperatorMagicLink({
-        token,
-        email: operator.email,
-        expiresAt
-      });
-
-      try {
-        await mailSender.sendMagicLink({
-          to: operator.email,
-          magicLinkUrl
-        });
-      } catch (error) {
-        app.log.error({ error, email: operator.email, requestId: request.id }, "operator magic link delivery failed");
-        return reply
-          .status(503)
-          .send(buildApiError(request.id, "MAGIC_LINK_DELIVERY_FAILED", "Unable to deliver magic link at this time"));
-      }
-
-      return { success: true as const };
-    }
-  );
-
-  app.post(
-    "/v1/operator/auth/magic-link/verify",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-      const input = magicLinkVerifySchema.parse(request.body);
-      const magicLink = await repository.getOperatorMagicLink(input.token);
-
-      if (!magicLink) {
-        return reply
-          .status(401)
-          .send(buildApiError(request.id, "INVALID_MAGIC_LINK", "Magic link is invalid or unavailable"));
-      }
-
-      if (magicLink.consumedAt || Date.parse(magicLink.expiresAt) <= Date.now()) {
-        return reply
-          .status(401)
-          .send(buildApiError(request.id, "MAGIC_LINK_EXPIRED", "Magic link has expired or was already used"));
-      }
-
-      const operator = magicLink.operatorUserId
-        ? await repository.getOperatorUserById(magicLink.operatorUserId)
-        : await repository.getOperatorUserByEmail(magicLink.email);
-
-      if (!operator || !operator.active) {
-        return reply
-          .status(404)
-          .send(buildApiError(request.id, "OPERATOR_ACCESS_NOT_GRANTED", "Operator access is not active"));
-      }
-
-      await repository.consumeOperatorMagicLink(input.token, operator.operatorUserId);
-      return issueOperatorSession({
-        repository,
-        seed: input.token,
-        operatorUserId: operator.operatorUserId,
-        authMethod: "magic-link"
-      });
     }
   );
 

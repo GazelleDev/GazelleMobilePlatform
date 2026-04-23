@@ -96,7 +96,7 @@ export async function requestNativeApplePayWallet(input: {
     amountCents: input.amountCents,
     currencyCode,
     countryCode,
-    label: input.label ?? process.env.EXPO_PUBLIC_BRAND_NAME ?? "Gazelle Coffee",
+    label: input.label ?? process.env.EXPO_PUBLIC_BRAND_NAME ?? "Rawaq Coffee",
     merchantIdentifier,
     supportedNetworks
   });

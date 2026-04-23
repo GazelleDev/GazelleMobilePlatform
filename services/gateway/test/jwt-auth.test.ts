@@ -179,7 +179,7 @@ describe("gateway JWT customer auth", () => {
             email: "owner@gazellecoffee.com",
             displayName: "Avery Quinn",
             profileCompleted: false,
-            methods: ["apple", "passkey", "magic-link"]
+            methods: ["apple", "passkey"]
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );

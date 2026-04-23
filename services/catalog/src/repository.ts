@@ -293,6 +293,7 @@ type CatalogRepository = {
   listInternalLocations(): Promise<InternalLocationSummary[]>;
   getInternalLocationSummary(locationId: string): Promise<InternalLocationSummary | undefined>;
   bootstrapInternalLocation(input: InternalLocationBootstrap): Promise<InternalLocationSummary>;
+  replaceInternalLocationMenu(locationId: string, input: MenuResponse): Promise<MenuResponse>;
   getInternalLocationPaymentProfile(locationId: string): Promise<ClientPaymentProfile | undefined>;
   updateInternalLocationPaymentProfile(
     locationId: string,
@@ -745,6 +746,14 @@ function createInMemoryRepository(): CatalogRepository {
       });
       paymentProfilesByLocation.set(locationId, next);
       return next;
+    },
+    async replaceInternalLocationMenu(locationId, input) {
+      const nextMenu = menuResponseSchema.parse({
+        ...input,
+        locationId
+      });
+      menusByLocation.set(locationId, nextMenu);
+      return nextMenu;
     },
     async getAdminMenu() {
       const menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
@@ -1473,6 +1482,78 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         .execute();
 
       return next;
+    },
+    async replaceInternalLocationMenu(locationId, input) {
+      const nextMenu = menuResponseSchema.parse({
+        ...input,
+        locationId
+      });
+      const appConfigRow = await db
+        .selectFrom("catalog_app_configs")
+        .select("brand_id")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
+      const existingCategoryRow = await db
+        .selectFrom("catalog_menu_categories")
+        .select("brand_id")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
+      const brandId = appConfigRow?.brand_id ?? existingCategoryRow?.brand_id ?? DEFAULT_BRAND_ID;
+
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .deleteFrom("catalog_menu_items")
+          .where("brand_id", "=", brandId)
+          .where("location_id", "=", locationId)
+          .execute();
+
+        await trx
+          .deleteFrom("catalog_menu_categories")
+          .where("brand_id", "=", brandId)
+          .where("location_id", "=", locationId)
+          .execute();
+
+        if (nextMenu.categories.length > 0) {
+          await trx
+            .insertInto("catalog_menu_categories")
+            .values(
+              nextMenu.categories.map((category, categoryIndex) => ({
+                brand_id: brandId,
+                location_id: locationId,
+                category_id: category.id,
+                title: category.title,
+                sort_order: categoryIndex
+              }))
+            )
+            .execute();
+
+          const menuItems = nextMenu.categories.flatMap((category) =>
+            category.items.map((item, itemIndex) => ({
+              brand_id: brandId,
+              location_id: locationId,
+              item_id: item.id,
+              category_id: category.id,
+              name: item.name,
+              description: item.description,
+              image_url: item.imageUrl ?? null,
+              price_cents: item.priceCents,
+              badge_codes_json: JSON.stringify(item.badgeCodes ?? []),
+              customization_groups_json: JSON.stringify(item.customizationGroups ?? []),
+              visible: item.visible,
+              sort_order: itemIndex
+            }))
+          );
+
+          if (menuItems.length > 0) {
+            await trx
+              .insertInto("catalog_menu_items")
+              .values(menuItems)
+              .execute();
+          }
+        }
+      });
+
+      return nextMenu;
     },
     async getAdminMenu() {
       const categories = await db

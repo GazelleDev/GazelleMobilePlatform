@@ -1,16 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MailSender } from "../src/mail.js";
 import { buildApp } from "../src/app.js";
 import { createInMemoryIdentityRepository } from "../src/repository.js";
 import { provisionOwnerAccess } from "../src/provisioning.js";
-
-function createNoopMailSender(): MailSender {
-  return {
-    async sendMagicLink() {
-      // no-op
-    }
-  };
-}
 
 describe("operator Google SSO", () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -70,8 +61,7 @@ describe("operator Google SSO", () => {
       password: "PilotOwner123!"
     });
     const app = await buildApp({
-      repository,
-      mailSender: createNoopMailSender()
+      repository
     });
 
     const startResponse = await app.inject({
@@ -139,8 +129,7 @@ describe("operator Google SSO", () => {
 
   it("reports Google provider readiness separately from the sign-in flow", async () => {
     const app = await buildApp({
-      repository: createInMemoryIdentityRepository(),
-      mailSender: createNoopMailSender()
+      repository: createInMemoryIdentityRepository()
     });
 
     const providersResponse = await app.inject({
@@ -160,10 +149,7 @@ describe("operator Google SSO", () => {
 
   it("rejects Google sign-in when the verified email is not provisioned for operator access", async () => {
     const repository = createInMemoryIdentityRepository();
-    const app = await buildApp({
-      repository,
-      mailSender: createNoopMailSender()
-    });
+    const app = await buildApp({ repository });
 
     const startResponse = await app.inject({
       method: "GET",

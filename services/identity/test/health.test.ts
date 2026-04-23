@@ -635,7 +635,7 @@ describe("identity service", () => {
     try {
       const firstResponse = await app.inject({
         method: "POST",
-        url: "/v1/auth/magic-link/request",
+        url: "/v1/auth/dev-access",
         payload: {
           email: "owner@gazellecoffee.com"
         }
@@ -644,7 +644,7 @@ describe("identity service", () => {
 
       const secondResponse = await app.inject({
         method: "POST",
-        url: "/v1/auth/magic-link/request",
+        url: "/v1/auth/dev-access",
         payload: {
           email: "owner@gazellecoffee.com"
         }

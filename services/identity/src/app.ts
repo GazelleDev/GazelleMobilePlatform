@@ -3,14 +3,12 @@ import Fastify from "fastify";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import rateLimit from "@fastify/rate-limit";
-import type { MailSender } from "./mail.js";
 import type { IdentityRepository } from "./repository.js";
 import { registerRoutes } from "./routes.js";
 
 export type BuildAppOptions = {
   allowDevCustomerAccess?: boolean;
   allowDevOperatorAccess?: boolean;
-  mailSender?: MailSender;
   repository?: IdentityRepository;
 };
 

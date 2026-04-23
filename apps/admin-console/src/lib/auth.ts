@@ -8,7 +8,9 @@ import {
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import {
+  getAdminConsoleSessionSecretStatus,
   getInternalAdminApiBaseUrl,
+  getInternalAdminApiBaseUrlStatus,
   hasAdminConsoleSessionSecret,
   hasInternalAdminApiBaseUrl,
   readAdminConsoleSessionSecret
@@ -115,11 +117,15 @@ async function requestAdminAuthApi<TResponse>(path: string, init?: RequestInit):
 export function getAdminConsoleAuthStatus() {
   const hasSessionSecret = hasAdminConsoleSessionSecret();
   const hasBaseUrl = hasInternalAdminApiBaseUrl();
+  const sessionSecret = getAdminConsoleSessionSecretStatus();
+  const apiBaseUrl = getInternalAdminApiBaseUrlStatus();
 
   return {
-    configured: hasSessionSecret && hasBaseUrl,
+    configured: hasSessionSecret && hasBaseUrl && apiBaseUrl.valid,
     hasSessionSecret,
-    hasBaseUrl
+    hasBaseUrl,
+    sessionSecretStrong: sessionSecret.strong,
+    apiBaseUrl
   };
 }
 

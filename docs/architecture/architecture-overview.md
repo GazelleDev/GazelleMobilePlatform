@@ -9,7 +9,7 @@
 ## Services
 
 - `gateway`: public API gateway, auth enforcement, rate-limiting boundary
-- `identity`: Apple auth, passkeys, magic-link fallback
+- `identity`: Apple auth, passkeys, operator auth, and internal admin auth
 - `catalog`: menu + store config
 - `orders`: quote/create/cancel/order history/status
 - `payments`: Apple Pay + Clover orchestration

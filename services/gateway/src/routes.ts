@@ -17,8 +17,6 @@ import {
   internalOwnerSummarySchema,
   customerProfileRequestSchema,
   logoutRequestSchema,
-  magicLinkRequestSchema,
-  magicLinkVerifySchema,
   meResponseSchema,
   operatorAuthContract,
   operatorDevAccessRequestSchema,
@@ -1534,48 +1532,6 @@ export async function registerRoutes(app: FastifyInstance) {
   );
 
   app.post(
-    "/v1/auth/magic-link/request",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-    const input = magicLinkRequestSchema.parse(request.body);
-
-    return proxyUpstream({
-      request,
-      reply,
-      baseUrl: identityBaseUrl,
-      serviceLabel: "Identity",
-      method: "POST",
-      path: "/v1/auth/magic-link/request",
-      body: input,
-      responseSchema: authSuccessSchema
-    });
-    }
-  );
-
-  app.post(
-    "/v1/auth/magic-link/verify",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-    const input = magicLinkVerifySchema.parse(request.body);
-
-    return proxyUpstream({
-      request,
-      reply,
-      baseUrl: identityBaseUrl,
-      serviceLabel: "Identity",
-      method: "POST",
-      path: "/v1/auth/magic-link/verify",
-      body: input,
-      responseSchema: authSessionSchema
-    });
-    }
-  );
-
-  app.post(
     "/v1/auth/dev-access",
     {
       preHandler: app.rateLimit(authWriteRateLimit)
@@ -1774,48 +1730,6 @@ export async function registerRoutes(app: FastifyInstance) {
         path: "/v1/operator/auth/google/exchange",
         body: input,
         responseSchema: operatorAuthContract.routes.googleExchange.response
-      });
-    }
-  );
-
-  app.post(
-    "/v1/operator/auth/magic-link/request",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-      const input = magicLinkRequestSchema.parse(request.body);
-
-      return proxyUpstream({
-        request,
-        reply,
-        baseUrl: identityBaseUrl,
-        serviceLabel: "Identity",
-        method: "POST",
-        path: "/v1/operator/auth/magic-link/request",
-        body: input,
-        responseSchema: authSuccessSchema
-      });
-    }
-  );
-
-  app.post(
-    "/v1/operator/auth/magic-link/verify",
-    {
-      preHandler: app.rateLimit(authWriteRateLimit)
-    },
-    async (request, reply) => {
-      const input = magicLinkVerifySchema.parse(request.body);
-
-      return proxyUpstream({
-        request,
-        reply,
-        baseUrl: identityBaseUrl,
-        serviceLabel: "Identity",
-        method: "POST",
-        path: "/v1/operator/auth/magic-link/verify",
-        body: input,
-        responseSchema: operatorAuthContract.routes.magicLinkVerify.response
       });
     }
   );

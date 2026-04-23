@@ -69,14 +69,6 @@ export const passkeyVerifyRequestSchema = z.object({
   clientExtensionResults: z.record(z.unknown()).optional()
 });
 
-export const magicLinkRequestSchema = z.object({
-  email: z.string().trim().email()
-});
-
-export const magicLinkVerifySchema = z.object({
-  token: z.string().min(1)
-});
-
 export const customerDevAccessRequestSchema = z.object({
   email: z.string().trim().email(),
   name: z.string().trim().min(1).optional()
@@ -111,7 +103,7 @@ export const meResponseSchema = z.object({
   memberSince: z.string().datetime().optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
-  methods: z.array(z.enum(["apple", "passkey", "magic-link"]))
+  methods: z.array(z.enum(["apple", "passkey"]))
 });
 
 export const operatorRoleSchema = z.enum(["owner", "manager", "staff"]);
@@ -323,18 +315,6 @@ export const authContract = {
       request: passkeyVerifyRequestSchema,
       response: authSessionSchema
     },
-    magicLinkRequest: {
-      method: "POST",
-      path: "/magic-link/request",
-      request: magicLinkRequestSchema,
-      response: authSuccessSchema
-    },
-    magicLinkVerify: {
-      method: "POST",
-      path: "/magic-link/verify",
-      request: magicLinkVerifySchema,
-      response: authSessionSchema
-    },
     devAccess: {
       method: "POST",
       path: "/dev-access",
@@ -393,18 +373,6 @@ export const operatorAuthContract = {
       method: "POST",
       path: "/google/exchange",
       request: operatorGoogleExchangeRequestSchema,
-      response: operatorSessionSchema
-    },
-    magicLinkRequest: {
-      method: "POST",
-      path: "/magic-link/request",
-      request: magicLinkRequestSchema,
-      response: z.object({ success: z.literal(true) })
-    },
-    magicLinkVerify: {
-      method: "POST",
-      path: "/magic-link/verify",
-      request: magicLinkVerifySchema,
       response: operatorSessionSchema
     },
     signIn: {

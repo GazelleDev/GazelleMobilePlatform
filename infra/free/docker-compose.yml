@@ -152,6 +152,9 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - GATEWAY_INTERNAL_API_TOKEN=${GATEWAY_INTERNAL_API_TOKEN:-}
       - NOTIFICATIONS_INTERNAL_API_TOKEN=${NOTIFICATIONS_INTERNAL_API_TOKEN:-}
+      - NOTIFICATIONS_PROVIDER_MODE=${NOTIFICATIONS_PROVIDER_MODE:-expo}
+      - EXPO_PUSH_API_URL=${EXPO_PUSH_API_URL:-}
+      - EXPO_ACCESS_TOKEN=${EXPO_ACCESS_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,6 +176,8 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
+      - CATALOG_SERVICE_BASE_URL=http://catalog:3002
+      - GATEWAY_INTERNAL_API_TOKEN=${GATEWAY_INTERNAL_API_TOKEN:-}
       - WEBAPP_MENU_SOURCE_URL=${WEBAPP_MENU_SOURCE_URL:-}
       - MENU_SYNC_LOCATION_ID=${MENU_SYNC_LOCATION_ID:-}
       - MENU_SYNC_INTERVAL_MS=${MENU_SYNC_INTERVAL_MS:-300000}
@@ -180,6 +185,8 @@ services:
       - MENU_SYNC_RETRY_DELAY_MS=${MENU_SYNC_RETRY_DELAY_MS:-2000}
     volumes:
       - menu_sync_dead_letter:/app/dead-letter
+    depends_on:
+      - catalog
 
   postgres:
     image: postgres:16-alpine

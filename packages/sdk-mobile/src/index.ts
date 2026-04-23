@@ -4,8 +4,6 @@ import {
   customerDevAccessRequestSchema,
   customerProfileRequestSchema,
   logoutRequestSchema,
-  magicLinkRequestSchema,
-  magicLinkVerifySchema,
   meResponseSchema,
   passkeyChallengeRequestSchema,
   passkeyChallengeResponseSchema,
@@ -114,17 +112,6 @@ export class GazelleApiClient {
   ): Promise<z.output<typeof authSessionSchema>> {
     passkeyVerifyRequestSchema.parse(input);
     const data = await this.post<unknown>("/auth/passkey/auth/verify", input);
-    return authSessionSchema.parse(data);
-  }
-
-  async requestMagicLink(input: z.input<typeof magicLinkRequestSchema>): Promise<{ success: true }> {
-    magicLinkRequestSchema.parse(input);
-    return this.post<{ success: true }>("/auth/magic-link/request", input);
-  }
-
-  async verifyMagicLink(input: z.input<typeof magicLinkVerifySchema>): Promise<z.output<typeof authSessionSchema>> {
-    magicLinkVerifySchema.parse(input);
-    const data = await this.post<unknown>("/auth/magic-link/verify", input);
     return authSessionSchema.parse(data);
   }
 

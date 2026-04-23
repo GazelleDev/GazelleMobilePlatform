@@ -2,8 +2,8 @@ import type { ExpoConfig } from "expo/config";
 
 type AppVariant = "internal" | "beta" | "production";
 const DEFAULT_APP_VARIANT: AppVariant = "beta";
-const DEFAULT_BETA_BUNDLE_IDENTIFIER = "com.lattelink.rawaq.beta";
-const DEFAULT_BETA_APPLE_PAY_MERCHANT_IDENTIFIER = "merchant.com.lattelink.rawaq.beta";
+const DEFAULT_BETA_BUNDLE_IDENTIFIER = "com.lattelink.mobile.beta";
+const DEFAULT_BETA_APPLE_PAY_MERCHANT_IDENTIFIER = "merchant.com.lattelink.mobile.beta";
 const DEFAULT_PRIVACY_POLICY_URL = "https://nomly.us/privacy-policy";
 
 function resolveAppVariant(): AppVariant {
@@ -15,7 +15,7 @@ function resolveAppVariant(): AppVariant {
 }
 
 function resolveDisplayName(variant: AppVariant) {
-  const baseName = process.env.APP_DISPLAY_NAME_BASE ?? "Rawaq Coffee";
+  const baseName = process.env.APP_DISPLAY_NAME_BASE ?? "LatteLink";
   switch (variant) {
     case "production":
       return process.env.APP_DISPLAY_NAME ?? baseName;

@@ -12,7 +12,13 @@ import type {
   StripeConnectLinkResponse
 } from "@lattelink/contracts-catalog";
 import { requireAdminSession } from "@/lib/auth";
-import { getInternalAdminApiBaseUrl, getOptionalClientDashboardUrl, hasInternalAdminApiBaseUrl } from "@/lib/config";
+import {
+  getClientDashboardUrlStatus,
+  getInternalAdminApiBaseUrl,
+  getInternalAdminApiBaseUrlStatus,
+  getOptionalClientDashboardUrl,
+  hasInternalAdminApiBaseUrl
+} from "@/lib/config";
 
 type InternalApiErrorBody = {
   code?: string;
@@ -61,10 +67,14 @@ async function requestInternalApi<TResponse>(path: string, init?: RequestInit): 
 }
 
 export function getInternalApiStatus() {
+  const baseUrlStatus = getInternalAdminApiBaseUrlStatus();
+  const clientDashboardUrlStatus = getClientDashboardUrlStatus();
   return {
     hasBaseUrl: hasInternalAdminApiBaseUrl(),
-    baseUrl: hasInternalAdminApiBaseUrl() ? getInternalAdminApiBaseUrl() : null,
-    clientDashboardUrl: getOptionalClientDashboardUrl() ?? null
+    baseUrl: hasInternalAdminApiBaseUrl() && baseUrlStatus.valid ? getInternalAdminApiBaseUrl() : null,
+    baseUrlStatus,
+    clientDashboardUrl: getOptionalClientDashboardUrl(),
+    clientDashboardUrlStatus
   };
 }
 

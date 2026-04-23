@@ -140,15 +140,6 @@ export interface IdentityUserTable {
   updated_at: Generated<string>;
 }
 
-export interface IdentityMagicLinkTable {
-  token: string;
-  email: string;
-  user_id: string | null;
-  expires_at: string;
-  consumed_at: string | null;
-  created_at: Generated<string>;
-}
-
 export interface IdentitySessionTable {
   access_token: string;
   refresh_token: string;
@@ -156,7 +147,7 @@ export interface IdentitySessionTable {
   access_expires_at: string | null;
   expires_at: string;
   revoked_at: string | null;
-  auth_method: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh";
+  auth_method: "apple" | "passkey-register" | "passkey-auth" | "refresh";
   created_at: Generated<string>;
   updated_at: Generated<string>;
 }
@@ -198,15 +189,6 @@ export interface OperatorUserTable {
   updated_at: Generated<string>;
 }
 
-export interface OperatorMagicLinkTable {
-  token: string;
-  email: string;
-  operator_user_id: string | null;
-  expires_at: string;
-  consumed_at: string | null;
-  created_at: Generated<string>;
-}
-
 export interface OperatorSessionTable {
   access_token: string;
   refresh_token: string;
@@ -214,7 +196,7 @@ export interface OperatorSessionTable {
   access_expires_at: string | null;
   expires_at: string;
   revoked_at: string | null;
-  auth_method: "magic-link" | "password" | "google" | "refresh";
+  auth_method: "password" | "google" | "refresh";
   created_at: Generated<string>;
   updated_at: Generated<string>;
 }
@@ -359,12 +341,10 @@ export interface PersistenceDatabase {
   orders_create_idempotency: OrdersCreateIdempotencyTable;
   orders_payment_idempotency: OrdersPaymentIdempotencyTable;
   identity_users: IdentityUserTable;
-  identity_magic_links: IdentityMagicLinkTable;
   identity_sessions: IdentitySessionTable;
   identity_passkey_challenges: IdentityPasskeyChallengeTable;
   identity_passkey_credentials: IdentityPasskeyCredentialTable;
   operator_users: OperatorUserTable;
-  operator_magic_links: OperatorMagicLinkTable;
   operator_sessions: OperatorSessionTable;
   internal_admin_users: InternalAdminUserTable;
   internal_admin_sessions: InternalAdminSessionTable;
@@ -630,23 +610,6 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
   `.execute(trx);
 
   await sql`
-    CREATE TABLE IF NOT EXISTS identity_magic_links (
-      token TEXT PRIMARY KEY,
-      email TEXT NOT NULL,
-      user_id UUID,
-      expires_at TIMESTAMPTZ NOT NULL,
-      consumed_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `.execute(trx);
-
-  await sql`
-    CREATE INDEX IF NOT EXISTS identity_magic_links_email_idx
-    ON identity_magic_links (email, created_at DESC)
-    WHERE consumed_at IS NULL
-  `.execute(trx);
-
-  await sql`
     CREATE TABLE IF NOT EXISTS identity_sessions (
       access_token TEXT PRIMARY KEY,
       refresh_token TEXT NOT NULL UNIQUE,
@@ -756,7 +719,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_menu_categories (
-      brand_id TEXT NOT NULL DEFAULT 'gazelle-default',
+      brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee',
       location_id TEXT NOT NULL,
       category_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -769,7 +732,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     ALTER TABLE catalog_menu_categories
-    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'gazelle-default'
+    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee'
   `.execute(trx);
 
   await sql`
@@ -779,7 +742,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_menu_items (
-      brand_id TEXT NOT NULL DEFAULT 'gazelle-default',
+      brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee',
       location_id TEXT NOT NULL,
       item_id TEXT NOT NULL,
       category_id TEXT NOT NULL,
@@ -800,7 +763,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     ALTER TABLE catalog_menu_items
-    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'gazelle-default'
+    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee'
   `.execute(trx);
 
   await sql`
@@ -820,7 +783,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_home_news_cards (
-      brand_id TEXT NOT NULL DEFAULT 'gazelle-default',
+      brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee',
       location_id TEXT NOT NULL,
       card_id TEXT NOT NULL,
       label TEXT NOT NULL,
@@ -837,7 +800,7 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     ALTER TABLE catalog_home_news_cards
-    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'gazelle-default'
+    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee'
   `.execute(trx);
 
   await sql`
@@ -852,9 +815,9 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     CREATE TABLE IF NOT EXISTS catalog_store_configs (
-      brand_id TEXT NOT NULL DEFAULT 'gazelle-default',
+      brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee',
       location_id TEXT PRIMARY KEY,
-      store_name TEXT NOT NULL DEFAULT 'Gazelle Coffee Flagship',
+      store_name TEXT NOT NULL DEFAULT 'Rawaq Coffee Flagship',
       hours_text TEXT NOT NULL DEFAULT 'Daily · 7:00 AM - 6:00 PM',
       prep_eta_minutes INTEGER NOT NULL,
       tax_rate_basis_points INTEGER NOT NULL,
@@ -866,12 +829,12 @@ export async function ensurePersistenceTables(db: PersistenceDb) {
 
   await sql`
     ALTER TABLE catalog_store_configs
-    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'gazelle-default'
+    ADD COLUMN IF NOT EXISTS brand_id TEXT NOT NULL DEFAULT 'rawaqcoffee'
   `.execute(trx);
 
   await sql`
     ALTER TABLE catalog_store_configs
-    ADD COLUMN IF NOT EXISTS store_name TEXT NOT NULL DEFAULT 'Gazelle Coffee Flagship'
+    ADD COLUMN IF NOT EXISTS store_name TEXT NOT NULL DEFAULT 'Rawaq Coffee Flagship'
   `.execute(trx);
 
   await sql`

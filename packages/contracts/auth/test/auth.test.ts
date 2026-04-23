@@ -7,7 +7,6 @@ import {
   internalOwnerProvisionRequestSchema,
   internalOwnerProvisionResponseSchema,
   internalOwnerSummarySchema,
-  magicLinkRequestSchema,
   meResponseSchema,
   operatorGoogleExchangeRequestSchema,
   operatorPasswordSignInSchema,
@@ -96,14 +95,6 @@ describe("contracts-auth", () => {
     ).toThrowError();
   });
 
-  it("trims magic-link email input before validation", () => {
-    const payload = magicLinkRequestSchema.parse({
-      email: " owner@gazellecoffee.com "
-    });
-
-    expect(payload.email).toBe("owner@gazellecoffee.com");
-  });
-
   it("accepts operator password sign-in payloads", () => {
     const payload = operatorPasswordSignInSchema.parse({
       email: " owner@gazellecoffee.com ",
@@ -126,7 +117,7 @@ describe("contracts-auth", () => {
       memberSince: "2026-04-01T00:00:00.000Z",
       createdAt: "2026-04-01T00:00:00.000Z",
       updatedAt: "2026-04-02T00:00:00.000Z",
-      methods: ["apple", "magic-link"]
+      methods: ["apple", "passkey"]
     });
 
     expect(payload.name).toBe("Avery Quinn");
@@ -134,7 +125,7 @@ describe("contracts-auth", () => {
     expect(payload.phoneNumber).toBe("+13135550123");
     expect(payload.birthday).toBe("1992-04-12");
     expect(payload.profileCompleted).toBe(true);
-    expect(payload.methods).toEqual(["apple", "magic-link"]);
+    expect(payload.methods).toEqual(["apple", "passkey"]);
   });
 
   it("validates customer profile completion payloads", () => {

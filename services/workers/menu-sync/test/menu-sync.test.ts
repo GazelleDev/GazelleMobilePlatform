@@ -34,10 +34,12 @@ const validMenuPayload = {
 
 const baseConfig: MenuSyncConfig = {
   sourceUrl: "https://webapp.gazellecoffee.com/api/content/public",
+  catalogBaseUrl: "http://127.0.0.1:3002",
+  gatewayApiToken: "test-gateway-token",
   intervalMs: 5_000,
   maxRetries: 2,
   retryDelayMs: 50,
-  locationId: "flagship-01",
+  locationId: "rawaqcoffee01",
   deadLetterPath: "./dead-letter/menu-sync.jsonl"
 };
 
@@ -69,13 +71,17 @@ describe("menu-sync worker", () => {
   });
 
   it("builds config from environment defaults", () => {
-    const config = buildMenuSyncConfig({} as NodeJS.ProcessEnv);
+    const config = buildMenuSyncConfig({
+      GATEWAY_INTERNAL_API_TOKEN: "test-gateway-token"
+    } as NodeJS.ProcessEnv);
 
     expect(config.sourceUrl).toBe("https://webapp.gazellecoffee.com/api/content/public");
+    expect(config.catalogBaseUrl).toBe("http://127.0.0.1:3002");
+    expect(config.gatewayApiToken).toBe("test-gateway-token");
     expect(config.intervalMs).toBe(300000);
     expect(config.maxRetries).toBe(3);
     expect(config.retryDelayMs).toBe(2000);
-    expect(config.locationId).toBe("flagship-01");
+    expect(config.locationId).toBe("rawaqcoffee01");
   });
 
   it("retries failed sync once and then succeeds", async () => {
@@ -136,7 +142,7 @@ describe("menu-sync worker", () => {
     expect(writeDeadLetter.mock.calls[0]?.[0]).toMatchObject({
       attempts: 3,
       sourceUrl: baseConfig.sourceUrl,
-      locationId: "flagship-01"
+      locationId: "rawaqcoffee01"
     });
   });
 
@@ -166,7 +172,7 @@ describe("menu-sync worker", () => {
     await appendDeadLetterRecord(deadLetterPath, {
       occurredAt: "2026-03-10T00:00:00.000Z",
       sourceUrl: baseConfig.sourceUrl,
-      locationId: "flagship-01",
+      locationId: "rawaqcoffee01",
       attempts: 3,
       error: "network timeout"
     });

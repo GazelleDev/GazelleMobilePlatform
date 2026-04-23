@@ -86,14 +86,6 @@ type PersistedPasskeyCredentialRow = {
   backed_up: boolean;
 };
 
-type PersistedMagicLinkRow = {
-  token: string;
-  email: string;
-  user_id: string | null;
-  expires_at: string | Date;
-  consumed_at: string | Date | null;
-};
-
 type PersistedOperatorUserRow = {
   operator_user_id: string;
   email: string;
@@ -105,14 +97,6 @@ type PersistedOperatorUserRow = {
   active: boolean;
   created_at: string | Date;
   updated_at: string | Date;
-};
-
-type PersistedOperatorMagicLinkRow = {
-  token: string;
-  email: string;
-  operator_user_id: string | null;
-  expires_at: string | Date;
-  consumed_at: string | Date | null;
 };
 
 type PersistedOperatorSessionRow = {
@@ -178,7 +162,7 @@ export type IdentityUserRecord = {
   updatedAt: string;
 };
 
-type CustomerAuthMethod = "apple" | "passkey" | "magic-link";
+type CustomerAuthMethod = "apple" | "passkey";
 
 export type AppleAccountRecord = {
   appleSub: string;
@@ -186,30 +170,14 @@ export type AppleAccountRecord = {
   refreshToken?: string;
 };
 
-export type MagicLinkRecord = {
-  token: string;
-  email: string;
-  userId: string | null;
-  expiresAt: string;
-  consumedAt: string | null;
-};
-
 export type OperatorUserRecord = OperatorUser;
 export type InternalAdminUserRecord = InternalAdminUser;
-
-export type OperatorMagicLinkRecord = {
-  token: string;
-  email: string;
-  operatorUserId: string | null;
-  expiresAt: string;
-  consumedAt: string | null;
-};
 
 export type IdentityRepository = {
   backend: "memory" | "postgres";
   saveSession(
     session: StoredSession,
-    authMethod: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh"
+    authMethod: "apple" | "passkey-register" | "passkey-auth" | "refresh"
   ): Promise<void>;
   findOrCreateUserByAppleSub(input: {
     appleSub: string;
@@ -241,9 +209,6 @@ export type IdentityRepository = {
   getPasskeyCredential(credentialId: string): Promise<PasskeyCredentialRecord | undefined>;
   savePasskeyCredential(input: PasskeyCredentialRecord): Promise<void>;
   updatePasskeyCredentialCounter(credentialId: string, counter: number): Promise<void>;
-  saveMagicLink(input: { token: string; email: string; expiresAt: string }): Promise<void>;
-  getMagicLink(token: string): Promise<MagicLinkRecord | undefined>;
-  consumeMagicLink(token: string, userId: string): Promise<void>;
   listOperatorUsers(locationId?: string): Promise<OperatorUserRecord[]>;
   getOperatorUserById(operatorUserId: string): Promise<OperatorUserRecord | undefined>;
   getOperatorUserByEmail(email: string): Promise<OperatorUserRecord | undefined>;
@@ -265,10 +230,7 @@ export type IdentityRepository = {
     operatorUserId: string,
     input: { displayName?: string; email?: string; role?: OperatorRole; active?: boolean; password?: string }
   ): Promise<OperatorUserRecord | undefined>;
-  saveOperatorMagicLink(input: { token: string; email: string; expiresAt: string }): Promise<void>;
-  getOperatorMagicLink(token: string): Promise<OperatorMagicLinkRecord | undefined>;
-  consumeOperatorMagicLink(token: string, operatorUserId: string): Promise<void>;
-  saveOperatorSession(session: StoredOperatorSession, authMethod: "magic-link" | "password" | "google" | "refresh"): Promise<void>;
+  saveOperatorSession(session: StoredOperatorSession, authMethod: "password" | "google" | "refresh"): Promise<void>;
   rotateOperatorRefreshSession(
     refreshToken: string,
     createNextSession: (operatorUserId: string) => StoredOperatorSession,
@@ -394,16 +356,6 @@ function toPasskeyCredentialRecord(row: PersistedPasskeyCredentialRow): PasskeyC
   };
 }
 
-function toMagicLinkRecord(row: PersistedMagicLinkRow): MagicLinkRecord {
-  return {
-    token: row.token,
-    email: row.email,
-    userId: row.user_id ?? null,
-    expiresAt: parseIsoDate(row.expires_at),
-    consumedAt: row.consumed_at ? parseIsoDate(row.consumed_at) : null
-  };
-}
-
 function toIdentityUserRecord(row: PersistedIdentityUserRow): IdentityUserRecord {
   return {
     userId: row.user_id,
@@ -420,7 +372,7 @@ function toIdentityUserRecord(row: PersistedIdentityUserRow): IdentityUserRecord
 }
 
 function normalizeCustomerAuthMethod(
-  value: "apple" | "passkey-register" | "passkey-auth" | "magic-link" | "refresh"
+  value: "apple" | "passkey-register" | "passkey-auth" | "refresh"
 ): CustomerAuthMethod | undefined {
   switch (value) {
     case "apple":
@@ -428,8 +380,6 @@ function normalizeCustomerAuthMethod(
     case "passkey-register":
     case "passkey-auth":
       return "passkey";
-    case "magic-link":
-      return "magic-link";
     case "refresh":
     default:
       return undefined;
@@ -440,7 +390,7 @@ function toSortedCustomerAuthMethods(methods: Iterable<CustomerAuthMethod>): Cus
   const ordered: CustomerAuthMethod[] = [];
   const methodSet = new Set(methods);
 
-  for (const method of ["apple", "passkey", "magic-link"] as const) {
+  for (const method of ["apple", "passkey"] as const) {
     if (methodSet.has(method)) {
       ordered.push(method);
     }
@@ -516,16 +466,6 @@ function toInternalAdminUserRecord(row: PersistedInternalAdminUserRow): Internal
   };
 }
 
-function toOperatorMagicLinkRecord(row: PersistedOperatorMagicLinkRow): OperatorMagicLinkRecord {
-  return {
-    token: row.token,
-    email: normalizeEmail(row.email),
-    operatorUserId: row.operator_user_id ?? null,
-    expiresAt: parseIsoDate(row.expires_at),
-    consumedAt: row.consumed_at ? parseIsoDate(row.consumed_at) : null
-  };
-}
-
 function toStoredOperatorSession(row: PersistedOperatorSessionRow): StoredOperatorSession {
   return {
     accessToken: row.access_token,
@@ -561,12 +501,10 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
   const appleClientIdByUserId = new Map<string, string>();
   const userIdByAppleSub = new Map<string, string>();
   const userIdByEmail = new Map<string, string>();
-  const magicLinksByToken = new Map<string, MagicLinkRecord>();
   const operatorUsersById = new Map<string, OperatorUserRecord>();
   const operatorUserIdByEmail = new Map<string, string>();
   const operatorUserIdByGoogleSub = new Map<string, string>();
   const operatorPasswordHashByUserId = new Map<string, string>();
-  const operatorMagicLinksByToken = new Map<string, OperatorMagicLinkRecord>();
   const internalAdminUsersById = new Map<string, InternalAdminUserRecord>();
   const internalAdminUserIdByEmail = new Map<string, string>();
   const internalAdminPasswordHashByUserId = new Map<string, string>();
@@ -723,12 +661,6 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
         }
       }
 
-      for (const [token, record] of magicLinksByToken.entries()) {
-        if (record.userId === userId || (existing.email && record.email === existing.email)) {
-          magicLinksByToken.delete(token);
-        }
-      }
-
       return true;
     },
     async updateCustomerProfile(userId, input) {
@@ -860,31 +792,6 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
       passkeyCredentialsById.set(credentialId, {
         ...existing,
         counter
-      });
-    },
-    async saveMagicLink(input) {
-      magicLinksByToken.set(input.token, {
-        token: input.token,
-        email: normalizeEmail(input.email),
-        userId: null,
-        expiresAt: input.expiresAt,
-        consumedAt: null
-      });
-    },
-    async getMagicLink(token) {
-      const record = magicLinksByToken.get(token);
-      return record ? { ...record } : undefined;
-    },
-    async consumeMagicLink(token, userId) {
-      const record = magicLinksByToken.get(token);
-      if (!record) {
-        return;
-      }
-
-      magicLinksByToken.set(token, {
-        ...record,
-        userId,
-        consumedAt: new Date().toISOString()
       });
     },
     async listOperatorUsers(locationId) {
@@ -1029,32 +936,6 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
         operatorPasswordHashByUserId.set(operatorUserId, hashOperatorPassword(input.password));
       }
       return { ...updated };
-    },
-    async saveOperatorMagicLink(input) {
-      const operator = Array.from(operatorUsersById.values()).find((user) => user.email === normalizeEmail(input.email));
-      operatorMagicLinksByToken.set(input.token, {
-        token: input.token,
-        email: normalizeEmail(input.email),
-        operatorUserId: operator?.operatorUserId ?? null,
-        expiresAt: input.expiresAt,
-        consumedAt: null
-      });
-    },
-    async getOperatorMagicLink(token) {
-      const record = operatorMagicLinksByToken.get(token);
-      return record ? { ...record } : undefined;
-    },
-    async consumeOperatorMagicLink(token, operatorUserId) {
-      const record = operatorMagicLinksByToken.get(token);
-      if (!record) {
-        return;
-      }
-
-      operatorMagicLinksByToken.set(token, {
-        ...record,
-        operatorUserId,
-        consumedAt: new Date().toISOString()
-      });
     },
     async saveOperatorSession(session) {
       operatorSessionsByAccessToken.set(session.accessToken, { session });
@@ -1649,11 +1530,6 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
         await trx.deleteFrom("identity_passkey_credentials").where("user_id", "=", userId).execute();
         await trx.deleteFrom("identity_passkey_challenges").where("user_id", "=", userId).execute();
         await trx.deleteFrom("identity_sessions").where("user_id", "=", userId).execute();
-        await trx.deleteFrom("identity_magic_links").where("user_id", "=", userId).execute();
-
-        if (user.email) {
-          await trx.deleteFrom("identity_magic_links").where("email", "=", normalizeEmail(user.email)).execute();
-        }
 
         await trx.deleteFrom("identity_users").where("user_id", "=", userId).execute();
         return true;
@@ -1885,41 +1761,6 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
           updated_at: new Date().toISOString()
         })
         .where("credential_id", "=", credentialId)
-        .execute();
-    },
-    async saveMagicLink(input) {
-      await db
-        .insertInto("identity_magic_links")
-        .values({
-          token: input.token,
-          email: normalizeEmail(input.email),
-          user_id: null,
-          expires_at: input.expiresAt,
-          consumed_at: null
-        })
-        .execute();
-    },
-    async getMagicLink(token) {
-      const row = await db
-        .selectFrom("identity_magic_links")
-        .selectAll()
-        .where("token", "=", token)
-        .executeTakeFirst();
-
-      if (!row) {
-        return undefined;
-      }
-
-      return toMagicLinkRecord(row as PersistedMagicLinkRow);
-    },
-    async consumeMagicLink(token, userId) {
-      await db
-        .updateTable("identity_magic_links")
-        .set({
-          user_id: userId,
-          consumed_at: new Date().toISOString()
-        })
-        .where("token", "=", token)
         .execute();
     },
     async listOperatorUsers(locationId) {
@@ -2174,48 +2015,6 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
         .executeTakeFirstOrThrow();
 
       return toOperatorUserRecord(updated as PersistedOperatorUserRow);
-    },
-    async saveOperatorMagicLink(input) {
-      const normalizedEmail = normalizeEmail(input.email);
-      const operator = await db
-        .selectFrom("operator_users")
-        .select("operator_user_id")
-        .where("email", "=", normalizedEmail)
-        .executeTakeFirst();
-
-      await db
-        .insertInto("operator_magic_links")
-        .values({
-          token: input.token,
-          email: normalizedEmail,
-          operator_user_id: operator?.operator_user_id ?? null,
-          expires_at: input.expiresAt,
-          consumed_at: null
-        })
-        .execute();
-    },
-    async getOperatorMagicLink(token) {
-      const row = await db
-        .selectFrom("operator_magic_links")
-        .selectAll()
-        .where("token", "=", token)
-        .executeTakeFirst();
-
-      if (!row) {
-        return undefined;
-      }
-
-      return toOperatorMagicLinkRecord(row as PersistedOperatorMagicLinkRow);
-    },
-    async consumeOperatorMagicLink(token, operatorUserId) {
-      await db
-        .updateTable("operator_magic_links")
-        .set({
-          operator_user_id: operatorUserId,
-          consumed_at: new Date().toISOString()
-        })
-        .where("token", "=", token)
-        .execute();
     },
     async saveOperatorSession(session, authMethod) {
       try {

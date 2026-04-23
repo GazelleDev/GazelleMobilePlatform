@@ -52,6 +52,16 @@ const outboxProcessResponseSchema = z.object({
   retried: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative()
 });
+const expoPushSendResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      status: z.enum(["ok", "error"]),
+      id: z.string().optional(),
+      message: z.string().optional(),
+      details: z.record(z.unknown()).optional()
+    })
+  )
+});
 
 function resolveUserId(request: FastifyRequest, reply: FastifyReply) {
   const parsed = userHeadersSchema.safeParse(request.headers);
@@ -179,6 +189,56 @@ function toPositiveInteger(value: string | undefined, fallback: number) {
   return parsed;
 }
 
+function resolveNotificationProviderMode() {
+  const configured = trimToUndefined(process.env.NOTIFICATIONS_PROVIDER_MODE)?.toLowerCase();
+  return configured === "expo" ? "expo" : "simulated";
+}
+
+function resolveExpoPushApiUrl() {
+  return trimToUndefined(process.env.EXPO_PUSH_API_URL) ?? "https://exp.host/--/api/v2/push/send";
+}
+
+function getOrderStatusPushCopy(entry: OutboxEntry) {
+  const { payload } = entry;
+  switch (payload.status) {
+    case "PENDING_PAYMENT":
+      return {
+        title: "Complete payment to start your order",
+        body: `Order ${payload.pickupCode} is waiting for payment confirmation.`
+      };
+    case "PAID":
+      return {
+        title: "Order confirmed",
+        body: `Order ${payload.pickupCode} is confirmed and queued for prep.`
+      };
+    case "IN_PREP":
+      return {
+        title: "Order in prep",
+        body: `Order ${payload.pickupCode} is being prepared now.`
+      };
+    case "READY":
+      return {
+        title: "Order ready for pickup",
+        body: `Order ${payload.pickupCode} is ready at the counter.`
+      };
+    case "COMPLETED":
+      return {
+        title: "Order completed",
+        body: `Order ${payload.pickupCode} has been marked completed.`
+      };
+    case "CANCELED":
+      return {
+        title: "Order canceled",
+        body: payload.note?.trim() || `Order ${payload.pickupCode} was canceled.`
+      };
+    default:
+      return {
+        title: "Order updated",
+        body: payload.note?.trim() || `Order ${payload.pickupCode} has a new update.`
+      };
+  }
+}
+
 function simulatePushDispatch(entry: OutboxEntry) {
   const token = entry.expoPushToken.toLowerCase();
   if (token.includes("fail")) {
@@ -186,9 +246,50 @@ function simulatePushDispatch(entry: OutboxEntry) {
   }
 }
 
+async function dispatchExpoPushNotification(entry: OutboxEntry) {
+  const accessToken = trimToUndefined(process.env.EXPO_ACCESS_TOKEN);
+  const copy = getOrderStatusPushCopy(entry);
+  const response = await fetch(resolveExpoPushApiUrl(), {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "accept-encoding": "gzip, deflate",
+      "content-type": "application/json",
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {})
+    },
+    body: JSON.stringify([
+      {
+        to: entry.expoPushToken,
+        title: copy.title,
+        body: copy.body,
+        sound: "default",
+        data: {
+          orderId: entry.payload.orderId,
+          pickupCode: entry.payload.pickupCode,
+          locationId: entry.payload.locationId,
+          status: entry.payload.status,
+          occurredAt: entry.payload.occurredAt,
+          ...(entry.payload.note ? { note: entry.payload.note } : {})
+        }
+      }
+    ])
+  });
+
+  if (!response.ok) {
+    throw new Error(`expo push request failed with status ${response.status}`);
+  }
+
+  const parsed = expoPushSendResponseSchema.parse(await response.json());
+  const result = parsed.data[0];
+  if (!result || result.status !== "ok") {
+    throw new Error(result?.message ?? "expo push provider rejected the notification");
+  }
+}
+
 export async function registerRoutes(app: FastifyInstance) {
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const notificationsInternalApiToken = trimToUndefined(process.env.NOTIFICATIONS_INTERNAL_API_TOKEN);
+  const notificationProviderMode = resolveNotificationProviderMode();
   const repository = await createNotificationsRepository(app.log);
   const notificationsRateLimitWindowMs = toPositiveInteger(
     process.env.NOTIFICATIONS_RATE_LIMIT_WINDOW_MS,
@@ -334,7 +435,11 @@ export async function registerRoutes(app: FastifyInstance) {
 
       for (const entry of entries) {
         try {
-          simulatePushDispatch(entry);
+          if (notificationProviderMode === "expo") {
+            await dispatchExpoPushNotification(entry);
+          } else {
+            simulatePushDispatch(entry);
+          }
           await repository.markOutboxDispatched(entry.id);
           dispatched += 1;
         } catch (error) {

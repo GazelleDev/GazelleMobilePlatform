@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MailSender } from "../src/mail.js";
 import { buildApp } from "../src/app.js";
 import { createInMemoryIdentityRepository } from "../src/repository.js";
 import { provisionOwnerAccess } from "../src/provisioning.js";
@@ -10,16 +9,6 @@ const ownerPassword = "LatteLinkOwner123!";
 const staffEmail = "staff@gazellecoffee.com";
 const staffPassword = "LatteLinkStaff123!";
 const locationId = "rawaqcoffee01";
-
-function createCapturingMailSender() {
-  const sender: MailSender = {
-    async sendMagicLink() {
-      // operator password/session tests do not rely on outbound delivery
-    }
-  };
-
-  return { sender };
-}
 
 async function signInOperator(app: Awaited<ReturnType<typeof buildApp>>, email: string, password: string) {
   const response = await app.inject({
@@ -70,8 +59,7 @@ describe("operator auth", () => {
   it("supports refresh rotation and invalidates prior operator access tokens after logout", async () => {
     const repository = createInMemoryIdentityRepository();
     await provisionOwner(repository);
-    const { sender } = createCapturingMailSender();
-    const app = await buildApp({ repository, mailSender: sender });
+    const app = await buildApp({ repository });
 
     const session = await signInOperator(app, ownerEmail, ownerPassword);
 
@@ -157,8 +145,7 @@ describe("operator auth", () => {
 
     const repository = createInMemoryIdentityRepository();
     await provisionOwner(repository);
-    const { sender } = createCapturingMailSender();
-    const app = await buildApp({ repository, mailSender: sender });
+    const app = await buildApp({ repository });
     const session = await signInOperator(app, ownerEmail, ownerPassword);
 
     vi.setSystemTime(new Date("2030-01-01T00:31:00.000Z"));
@@ -198,8 +185,7 @@ describe("operator auth", () => {
     const repository = createInMemoryIdentityRepository();
     await provisionOwner(repository);
     await provisionStaff(repository);
-    const { sender } = createCapturingMailSender();
-    const app = await buildApp({ repository, mailSender: sender });
+    const app = await buildApp({ repository });
 
     const ownerSession = await signInOperator(app, ownerEmail, ownerPassword);
     const staffSession = await signInOperator(app, staffEmail, staffPassword);
@@ -323,8 +309,7 @@ describe("operator auth", () => {
   it("provisions a first owner through the gateway-protected internal route", async () => {
     process.env.GATEWAY_INTERNAL_API_TOKEN = "identity-gateway-token";
     const repository = createInMemoryIdentityRepository();
-    const { sender } = createCapturingMailSender();
-    const app = await buildApp({ repository, mailSender: sender });
+    const app = await buildApp({ repository });
 
     const emptySummaryResponse = await app.inject({
       method: "GET",
@@ -381,8 +366,7 @@ describe("operator auth", () => {
   it("updates the current location owner through the gateway-protected internal route", async () => {
     process.env.GATEWAY_INTERNAL_API_TOKEN = "identity-gateway-token";
     const repository = createInMemoryIdentityRepository();
-    const { sender } = createCapturingMailSender();
-    const app = await buildApp({ repository, mailSender: sender });
+    const app = await buildApp({ repository });
 
     const initialResponse = await app.inject({
       method: "POST",

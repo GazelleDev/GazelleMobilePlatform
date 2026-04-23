@@ -117,13 +117,6 @@ describe("gateway", () => {
         );
       }
 
-      if (url.endsWith("/v1/auth/magic-link/request") && method === "POST") {
-        return new Response(JSON.stringify({ success: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
       if (url.endsWith("/v1/auth/dev-access") && method === "POST") {
         return new Response(
           JSON.stringify({
@@ -273,7 +266,7 @@ describe("gateway", () => {
             email: "owner@gazellecoffee.com",
             displayName: "Avery Quinn",
             profileCompleted: false,
-            methods: ["apple", "passkey", "magic-link"]
+            methods: ["apple", "passkey"]
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -300,7 +293,7 @@ describe("gateway", () => {
             phoneNumber: "+13135550123",
             birthday: "1992-04-12",
             profileCompleted: true,
-            methods: ["apple", "passkey", "magic-link"]
+            methods: ["apple", "passkey"]
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         );
@@ -1826,19 +1819,6 @@ describe("gateway", () => {
     await app.close();
   });
 
-  it("requests magic link", async () => {
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/auth/magic-link/request",
-      payload: { email: "owner@gazellecoffee.com" }
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ success: true });
-    await app.close();
-  });
-
   it("forwards operator password sign-in to identity", async () => {
     const app = await buildApp();
     const response = await app.inject({
@@ -1980,14 +1960,14 @@ describe("gateway", () => {
     try {
       const firstResponse = await app.inject({
         method: "POST",
-        url: "/v1/auth/magic-link/request",
+        url: "/v1/auth/dev-access",
         payload: { email: "owner@gazellecoffee.com" }
       });
       expect(firstResponse.statusCode).toBe(200);
 
       const secondResponse = await app.inject({
         method: "POST",
-        url: "/v1/auth/magic-link/request",
+        url: "/v1/auth/dev-access",
         payload: { email: "owner@gazellecoffee.com" }
       });
       expect(secondResponse.statusCode).toBe(429);
@@ -3312,14 +3292,14 @@ describe("gateway", () => {
     try {
       const firstRequest = await app.inject({
         method: "POST",
-        url: "/v1/auth/magic-link/request",
+        url: "/v1/auth/dev-access",
         payload: { email: "owner@gazellecoffee.com" }
       });
       expect(firstRequest.statusCode).toBe(200);
 
       const secondRequest = await app.inject({
         method: "POST",
-        url: "/v1/auth/magic-link/request",
+        url: "/v1/auth/dev-access",
         payload: { email: "owner@gazellecoffee.com" }
       });
       expect(secondRequest.statusCode).toBe(429);

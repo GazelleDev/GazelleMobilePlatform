@@ -217,24 +217,6 @@
         }
       }
     },
-    "/auth/magic-link/request": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/auth/magic-link/verify": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
     "/auth/dev-access": {
       "post": {
         "responses": {
@@ -317,24 +299,6 @@
       }
     },
     "/operator/auth/google/exchange": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/operator/auth/magic-link/request": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/operator/auth/magic-link/verify": {
       "post": {
         "responses": {
           "200": {
