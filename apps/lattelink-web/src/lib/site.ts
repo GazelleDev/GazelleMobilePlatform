@@ -3,7 +3,7 @@ export const parentCompany = "Nomly";
 export const productByline = "LatteLink by Nomly";
 export const parentTagline =
   "Nomly builds infrastructure for modern local commerce.";
-export const siteUrl = "https://lattelink.da0ud.me";
+export const siteUrl = "https://nomly.us";
 export const privacyPolicyPath = "/privacy-policy";
 export const privacyPolicyUrl = `${siteUrl}${privacyPolicyPath}`;
 export const siteTitle =

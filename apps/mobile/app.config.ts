@@ -4,7 +4,7 @@ type AppVariant = "internal" | "beta" | "production";
 const DEFAULT_APP_VARIANT: AppVariant = "beta";
 const DEFAULT_BETA_BUNDLE_IDENTIFIER = "com.lattelink.rawaq.beta";
 const DEFAULT_BETA_APPLE_PAY_MERCHANT_IDENTIFIER = "merchant.com.lattelink.rawaq.beta";
-const DEFAULT_PRIVACY_POLICY_URL = "https://lattelink.da0ud.me/privacy-policy";
+const DEFAULT_PRIVACY_POLICY_URL = "https://nomly.us/privacy-policy";
 
 function resolveAppVariant(): AppVariant {
   const rawVariant = process.env.APP_VARIANT;

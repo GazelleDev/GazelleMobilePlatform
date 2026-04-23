@@ -1,8 +1,9 @@
 # Layer-based ownership
-/apps/mobile/ @GazelleDev/mobile
-/services/ @GazelleDev/platform
-/packages/contracts/ @GazelleDev/platform @GazelleDev/mobile
-/packages/design-tokens/ @GazelleDev/mobile
-/infra/ @GazelleDev/infra @GazelleDev/security
-/.github/ @GazelleDev/platform @GazelleDev/security
-/docs/ @GazelleDev/platform
+# TODO: assign team owners when the team grows
+# /apps/mobile/ @nomlyus/mobile
+# /services/ @nomlyus/platform
+# /packages/contracts/ @nomlyus/platform @nomlyus/mobile
+# /packages/design-tokens/ @nomlyus/mobile
+# /infra/ @nomlyus/infra @nomlyus/security
+# /.github/ @nomlyus/platform @nomlyus/security
+# /docs/ @nomlyus/platform

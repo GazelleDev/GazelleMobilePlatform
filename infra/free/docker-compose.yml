@@ -156,9 +156,34 @@ services:
       postgres:
         condition: service_healthy
 
+  worker-notifications-dispatch:
+    image: ${IMAGE_REGISTRY_PREFIX:-ghcr.io/anxiousdaoud/lattelink-platform}/workers/notifications-dispatch:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NOTIFICATIONS_SERVICE_BASE_URL=http://notifications:3005
+      - NOTIFICATIONS_INTERNAL_API_TOKEN=${NOTIFICATIONS_INTERNAL_API_TOKEN:-}
+      - NOTIFICATIONS_DISPATCH_INTERVAL_MS=${NOTIFICATIONS_DISPATCH_INTERVAL_MS:-5000}
+      - NOTIFICATIONS_DISPATCH_BATCH_SIZE=${NOTIFICATIONS_DISPATCH_BATCH_SIZE:-50}
+    depends_on:
+      - notifications
+
+  worker-menu-sync:
+    image: ${IMAGE_REGISTRY_PREFIX:-ghcr.io/anxiousdaoud/lattelink-platform}/workers/menu-sync:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - WEBAPP_MENU_SOURCE_URL=${WEBAPP_MENU_SOURCE_URL:-}
+      - MENU_SYNC_LOCATION_ID=${MENU_SYNC_LOCATION_ID:-}
+      - MENU_SYNC_INTERVAL_MS=${MENU_SYNC_INTERVAL_MS:-300000}
+      - MENU_SYNC_MAX_RETRIES=${MENU_SYNC_MAX_RETRIES:-3}
+      - MENU_SYNC_RETRY_DELAY_MS=${MENU_SYNC_RETRY_DELAY_MS:-2000}
+    volumes:
+      - menu_sync_dead_letter:/app/dead-letter
+
   postgres:
     image: postgres:16-alpine
-    container_name: gazelle-postgres
+    container_name: lattelink-postgres
     restart: unless-stopped
     environment:
       - POSTGRES_USER=gazelle
@@ -174,7 +199,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    container_name: gazelle-valkey
+    container_name: lattelink-valkey
     restart: unless-stopped
     volumes:
       - valkey_data:/data
@@ -184,3 +209,4 @@ volumes:
   valkey_data:
   caddy_data:
   caddy_config:
+  menu_sync_dead_letter:

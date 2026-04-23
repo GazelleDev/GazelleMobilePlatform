@@ -51,6 +51,10 @@ jobs:
             service_package: "@lattelink/loyalty"
           - service_name: notifications
             service_package: "@lattelink/notifications"
+          - service_name: workers/menu-sync
+            service_package: "@lattelink/menu-sync-worker"
+          - service_name: workers/notifications-dispatch
+            service_package: "@lattelink/notifications-dispatch-worker"
     steps:
       - uses: actions/checkout@v4
 

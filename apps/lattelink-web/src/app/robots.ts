@@ -6,6 +6,6 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
     },
-    sitemap: "https://lattelink.da0ud.me/sitemap.xml",
+    sitemap: "https://nomly.us/sitemap.xml",
   };
 }

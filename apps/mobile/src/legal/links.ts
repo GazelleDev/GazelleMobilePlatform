@@ -1,6 +1,6 @@
 import Constants from "expo-constants";
 
-const DEFAULT_PRIVACY_POLICY_URL = "https://lattelink.da0ud.me/privacy-policy";
+const DEFAULT_PRIVACY_POLICY_URL = "https://nomly.us/privacy-policy";
 
 function readExpoExtraValue(key: "privacyPolicyUrl") {
   const extra = Constants.expoConfig?.extra as Record<string, unknown> | undefined;

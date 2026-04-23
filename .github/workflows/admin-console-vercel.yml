@@ -1,0 +1,165 @@
+name: admin-console-vercel
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/admin-console/**"
+      - "packages/contracts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/admin-console-vercel.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/admin-console/**"
+      - "packages/contracts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/admin-console-vercel.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: admin-console-vercel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.ADMIN_CONSOLE_VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.ADMIN_CONSOLE_VERCEL_PROJECT_ID }}
+  VERCEL_WORKING_DIR: apps/admin-console
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec turbo run typecheck --filter=@lattelink/admin-console
+      - run: pnpm exec turbo run lint --filter=@lattelink/admin-console
+      - run: pnpm exec turbo run build --filter=@lattelink/admin-console
+
+  deploy-preview:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Vercel preview deploy prerequisites
+        id: preview-check
+        env:
+          VERCEL_TOKEN: ${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+        run: |
+          missing=0
+          for required in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID ADMIN_CONSOLE_ENV; do
+            if [ -z "${!required}" ]; then
+              echo "missing: ${required}"
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -eq 0 ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Vercel preview deploy because one or more required secrets are missing."
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.preview-check.outputs.enabled == 'true'
+        with:
+          node-version: 22
+      - name: Install Vercel CLI
+        if: steps.preview-check.outputs.enabled == 'true'
+        run: npm install --global vercel@latest
+      - name: Write admin console preview env files
+        if: steps.preview-check.outputs.enabled == 'true'
+        working-directory: ${{ env.VERCEL_WORKING_DIR }}
+        env:
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+        run: |
+          printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.local
+          printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.production.local
+      - name: Pull Vercel preview configuration
+        if: steps.preview-check.outputs.enabled == 'true'
+        run: vercel pull --cwd "${VERCEL_WORKING_DIR}" --yes --environment=preview --token=${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+      - name: Build admin console preview artifacts for Vercel
+        if: steps.preview-check.outputs.enabled == 'true'
+        run: vercel build --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+      - name: Deploy admin console preview to Vercel
+        if: steps.preview-check.outputs.enabled == 'true'
+        run: vercel deploy --cwd "${VERCEL_WORKING_DIR}" --prebuilt --token=${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+      - name: Remove admin console env files
+        if: always()
+        working-directory: ${{ env.VERCEL_WORKING_DIR }}
+        run: rm -f .env.local .env.production.local
+      - name: Skip Vercel preview deploy
+        if: steps.preview-check.outputs.enabled != 'true'
+        run: echo "Preview deploy skipped until ADMIN_CONSOLE_VERCEL_TOKEN, ADMIN_CONSOLE_VERCEL_ORG_ID, ADMIN_CONSOLE_VERCEL_PROJECT_ID, and ADMIN_CONSOLE_VERCEL_ENV are configured."
+
+  deploy-production:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Vercel production deploy prerequisites
+        id: production-check
+        env:
+          VERCEL_TOKEN: ${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+        run: |
+          missing=0
+          for required in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID ADMIN_CONSOLE_ENV; do
+            if [ -z "${!required}" ]; then
+              echo "missing: ${required}"
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -eq 0 ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Vercel production deploy because one or more required secrets are missing."
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.production-check.outputs.enabled == 'true'
+        with:
+          node-version: 22
+      - name: Install Vercel CLI
+        if: steps.production-check.outputs.enabled == 'true'
+        run: npm install --global vercel@latest
+      - name: Write admin console production env files
+        if: steps.production-check.outputs.enabled == 'true'
+        working-directory: ${{ env.VERCEL_WORKING_DIR }}
+        env:
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+        run: |
+          printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.local
+          printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.production.local
+      - name: Pull Vercel production configuration
+        if: steps.production-check.outputs.enabled == 'true'
+        run: vercel pull --cwd "${VERCEL_WORKING_DIR}" --yes --environment=production --token=${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+      - name: Build admin console production artifacts for Vercel
+        if: steps.production-check.outputs.enabled == 'true'
+        run: vercel build --prod --cwd "${VERCEL_WORKING_DIR}" --token=${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+      - name: Deploy admin console production to Vercel
+        if: steps.production-check.outputs.enabled == 'true'
+        run: vercel deploy --cwd "${VERCEL_WORKING_DIR}" --prebuilt --prod --token=${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
+      - name: Remove admin console env files
+        if: always()
+        working-directory: ${{ env.VERCEL_WORKING_DIR }}
+        run: rm -f .env.local .env.production.local
+      - name: Skip Vercel production deploy
+        if: steps.production-check.outputs.enabled != 'true'
+        run: echo "Production deploy skipped until ADMIN_CONSOLE_VERCEL_TOKEN, ADMIN_CONSOLE_VERCEL_ORG_ID, ADMIN_CONSOLE_VERCEL_PROJECT_ID, and ADMIN_CONSOLE_VERCEL_ENV are configured."

@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - id: turbo
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -47,7 +47,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - id: turbo
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -71,7 +71,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - id: turbo
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -93,7 +93,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - run: pnpm turbo run test --filter=@lattelink/contracts-*
       - name: verify contract compatibility and generation drift
         run: pnpm contracts:drift
@@ -110,7 +110,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - id: turbo
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then

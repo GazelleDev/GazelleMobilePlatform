@@ -130,7 +130,7 @@ if (merchantIdentifier) {
   }
 }
 
-const privacyPolicyUrl = process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL?.trim() ?? "https://lattelink.da0ud.me/privacy-policy";
+const privacyPolicyUrl = process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL?.trim() ?? "https://nomly.us/privacy-policy";
 if (privacyPolicyUrl) {
   let parsedPrivacyPolicyUrl;
 

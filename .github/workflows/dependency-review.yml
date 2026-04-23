@@ -1,4 +1,4 @@
-name: security
+name: security-deps
 
 on:
   pull_request:
@@ -17,6 +17,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - name: Audit dependencies (fail on critical vulnerabilities)
         run: pnpm audit --audit-level=critical

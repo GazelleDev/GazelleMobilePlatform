@@ -18,7 +18,12 @@
     },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "build/**"]
+      "outputs": ["dist/**", "build/**", ".next/**", "!.next/cache/**"],
+      "passThroughEnv": [
+        "INTERNAL_ADMIN_API_BASE_URL",
+        "ADMIN_CONSOLE_SESSION_SECRET",
+        "ADMIN_CONSOLE_CLIENT_DASHBOARD_URL"
+      ]
     },
     "openapi": {
       "dependsOn": ["^build"],

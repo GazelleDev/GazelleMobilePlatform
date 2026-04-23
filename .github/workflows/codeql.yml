@@ -1,4 +1,4 @@
-name: security
+name: security-codeql
 
 on:
   push:
