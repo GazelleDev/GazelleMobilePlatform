@@ -30,6 +30,7 @@ import {
   type MenuCategory,
   type MenuItem
 } from "../menu/catalog";
+import { isBackendReachabilityError } from "../api/client";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../navigation/tabBarMetrics";
 import { MenuItemRow, SectionHeader } from "../components";
 
@@ -206,6 +207,10 @@ export function MenuScreen() {
   const hasBlockingConfigError =
     (!!appConfigQuery.error && !appConfigQuery.data) || (!!storeConfigQuery.error && !storeConfigQuery.data);
   const hasBlockingMenuError = (!!menuQuery.error && !menuQuery.data) || hasBlockingConfigError;
+  const menuErrorMessage =
+    [menuQuery.error, appConfigQuery.error, storeConfigQuery.error].some(isBackendReachabilityError)
+      ? "Unable to reach backend. Pull to refresh or try again in a moment."
+      : "We couldn’t load the live menu and store details. Pull to refresh or try again in a moment.";
   const menu = isInitialLoading || hasBlockingMenuError ? null : resolveMenuData(menuQuery.data);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const loadingOpacity = useRef(new RNAnimated.Value(1)).current;
@@ -368,7 +373,7 @@ export function MenuScreen() {
         <View style={[styles.errorShell, { paddingTop: insets.top + 88, paddingBottom: contentBottomInset }]}>
           <SectionHeader label="Menu" />
           <Text style={styles.errorTitle}>Menu temporarily unavailable.</Text>
-          <Text style={styles.errorBody}>We couldn’t load the live menu and store details. Pull to refresh or try again in a moment.</Text>
+          <Text style={styles.errorBody}>{menuErrorMessage}</Text>
           <Button label="Retry" variant="secondary" onPress={handleRefresh} style={styles.errorAction} />
         </View>
         <TabBarDepthBackdrop />

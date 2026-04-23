@@ -1,16 +1,42 @@
 import { orderSchema, type Order } from "@lattelink/contracts-orders";
-import { GazelleApiClient } from "@lattelink/sdk-mobile";
+import {
+  GazelleApiClient,
+  UNABLE_TO_REACH_BACKEND_MESSAGE,
+  isBackendReachabilityError
+} from "@lattelink/sdk-mobile";
 import { z } from "zod";
 
-const DEFAULT_LOCAL_API_BASE_URL = "http://127.0.0.1:8080/v1";
-const DEFAULT_LOCAL_CATALOG_API_BASE_URL = "http://127.0.0.1:3002/v1";
 const fallbackOrderUpdatePollMs = 5_000;
 
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? DEFAULT_LOCAL_API_BASE_URL;
+function normalizeApiBaseUrl(value: string | undefined | null) {
+  return value?.trim().replace(/\/+$/, "") ?? "";
+}
+
+function toReachabilityError(error: unknown) {
+  if (isBackendReachabilityError(error)) {
+    return error;
+  }
+
+  return new Error(UNABLE_TO_REACH_BACKEND_MESSAGE, {
+    cause: error instanceof Error ? error : undefined
+  });
+}
+
+function resolveConfiguredApiUrl(baseUrl: string, path: string) {
+  const normalizedBaseUrl = normalizeApiBaseUrl(baseUrl);
+  if (!normalizedBaseUrl) {
+    throw toReachabilityError(new Error("EXPO_PUBLIC_API_BASE_URL is not configured."));
+  }
+
+  return `${normalizedBaseUrl}${path}`;
+}
+
+export const API_BASE_URL = normalizeApiBaseUrl(process.env.EXPO_PUBLIC_API_BASE_URL);
+export { UNABLE_TO_REACH_BACKEND_MESSAGE, isBackendReachabilityError };
 export const CATALOG_API_BASE_URL =
-  process.env.EXPO_PUBLIC_CATALOG_SERVICE_BASE_URL ??
-  process.env.EXPO_PUBLIC_CATALOG_API_BASE_URL ??
-  DEFAULT_LOCAL_CATALOG_API_BASE_URL;
+  normalizeApiBaseUrl(process.env.EXPO_PUBLIC_CATALOG_SERVICE_BASE_URL) ||
+  normalizeApiBaseUrl(process.env.EXPO_PUBLIC_CATALOG_API_BASE_URL) ||
+  API_BASE_URL;
 
 type OrderUpdateHandler = (order: Order) => void;
 type OrderUpdateErrorHandler = (error: unknown) => void;
@@ -73,14 +99,20 @@ async function streamOrderUpdates(params: {
   onUpdate: OrderUpdateHandler;
   signal: AbortSignal;
 }) {
-  const response = await fetch(`${API_BASE_URL}/orders/${params.orderId}/stream`, {
-    method: "GET",
-    headers: {
-      Accept: "text/event-stream",
-      Authorization: `Bearer ${params.accessToken}`
-    },
-    signal: params.signal
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(resolveConfiguredApiUrl(API_BASE_URL, `/orders/${params.orderId}/stream`), {
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${params.accessToken}`
+      },
+      signal: params.signal
+    });
+  } catch (error) {
+    throw toReachabilityError(error);
+  }
 
   if (!response.ok) {
     throw new Error(`Order stream request failed (${response.status})`);
@@ -169,13 +201,19 @@ export const apiClient = Object.assign(baseApiClient, {
       throw new Error("Sign in again to refresh payment configuration.");
     }
 
-    const response = await fetch(`${API_BASE_URL}/payments/clover/card-entry-config`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${currentAccessToken}`
-      }
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(resolveConfiguredApiUrl(API_BASE_URL, "/payments/clover/card-entry-config"), {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${currentAccessToken}`
+        }
+      });
+    } catch (error) {
+      throw toReachabilityError(error);
+    }
 
     if (!response.ok) {
       throw new Error(`Card configuration request failed (${response.status})`);

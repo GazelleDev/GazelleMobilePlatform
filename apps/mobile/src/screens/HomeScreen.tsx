@@ -23,8 +23,10 @@ import {
   useHomeNewsCardsQuery,
   useStoreConfigQuery
 } from "../menu/catalog";
+import { isBackendReachabilityError } from "../api/client";
+import { SectionHeader } from "../components";
 import { TAB_BAR_HEIGHT, getTabBarBottomOffset } from "../navigation/tabBarMetrics";
-import { GlassCard, ScreenBackdrop, TabBarDepthBackdrop, uiPalette, uiTypography } from "../ui/system";
+import { Button, GlassCard, ScreenBackdrop, TabBarDepthBackdrop, uiPalette, uiTypography } from "../ui/system";
 
 const HEADER_TOP_PADDING = 8;
 const HEADER_EXPANDED_HEIGHT = 144;
@@ -117,6 +119,14 @@ export function HomeScreen() {
   const headerBackgroundColor = appConfig.header.background || uiPalette.background;
   const homeNewsCards = homeNewsCardsQuery.data?.cards ?? [];
   const storeConfig = resolveStoreConfigData(storeConfigQuery.data);
+  const hasBlockingHomeError =
+    (!!appConfigQuery.error && !appConfigQuery.data) ||
+    (!!homeNewsCardsQuery.error && !homeNewsCardsQuery.data) ||
+    (!!storeConfigQuery.error && !storeConfigQuery.data);
+  const homeErrorMessage =
+    [appConfigQuery.error, homeNewsCardsQuery.error, storeConfigQuery.error].some(isBackendReachabilityError)
+      ? "Unable to reach backend. Pull to refresh or try again in a moment."
+      : "We couldn’t load the live store details. Pull to refresh or try again in a moment.";
   const nextOpenLabel = formatNextOpenLabel(storeConfig.nextOpenAt);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const scrollY = useSharedValue(0);
@@ -221,10 +231,25 @@ export function HomeScreen() {
     if (isManualRefresh) return;
 
     setIsManualRefresh(true);
-    void storeConfigQuery.refetch().finally(() => {
+    void Promise.allSettled([appConfigQuery.refetch(), homeNewsCardsQuery.refetch(), storeConfigQuery.refetch()]).finally(() => {
       setIsManualRefresh(false);
     });
-  }, [isManualRefresh, storeConfigQuery]);
+  }, [appConfigQuery, homeNewsCardsQuery, isManualRefresh, storeConfigQuery]);
+
+  if (hasBlockingHomeError) {
+    return (
+      <View style={styles.screen}>
+        <ScreenBackdrop />
+        <View style={[styles.errorShell, { paddingTop: insets.top + 88, paddingBottom: contentBottomInset }]}>
+          <SectionHeader label="Home" />
+          <Text style={styles.errorTitle}>Home temporarily unavailable.</Text>
+          <Text style={styles.errorBody}>{homeErrorMessage}</Text>
+          <Button label="Retry" variant="secondary" onPress={handleRefresh} style={styles.errorAction} />
+        </View>
+        <TabBarDepthBackdrop />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -386,6 +411,31 @@ const styles = StyleSheet.create({
   cardGrid: {
     paddingTop: 8,
     gap: 14
+  },
+  errorShell: {
+    flex: 1,
+    paddingHorizontal: 20,
+    justifyContent: "center"
+  },
+  errorTitle: {
+    marginTop: 20,
+    fontSize: 28,
+    lineHeight: 32,
+    color: uiPalette.text,
+    fontFamily: uiTypography.displayFamily,
+    fontWeight: "600",
+    letterSpacing: -0.8
+  },
+  errorBody: {
+    marginTop: 10,
+    fontSize: 15,
+    lineHeight: 22,
+    color: uiPalette.textSecondary,
+    maxWidth: 320
+  },
+  errorAction: {
+    marginTop: 20,
+    alignSelf: "flex-start"
   },
   newsCard: {
     width: "100%",

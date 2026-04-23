@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GazelleApiClient } from "../src";
+import { GazelleApiClient, UNABLE_TO_REACH_BACKEND_MESSAGE, isBackendReachabilityError } from "../src";
 
 describe("sdk-mobile", () => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -16,6 +16,14 @@ describe("sdk-mobile", () => {
   it("creates client instance", () => {
     const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
     expect(client).toBeInstanceOf(GazelleApiClient);
+  });
+
+  it("throws a stable reachability error when the api base url is missing", async () => {
+    const client = new GazelleApiClient({ baseUrl: "" });
+
+    await expect(client.menu()).rejects.toMatchObject({
+      message: UNABLE_TO_REACH_BACKEND_MESSAGE
+    });
   });
 
   it("requests a customer dev-access session", async () => {
@@ -228,6 +236,18 @@ describe("sdk-mobile", () => {
     expect(order.status).toBe("PENDING_PAYMENT");
     expect(paidOrder.status).toBe("PAID");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("surfaces a stable reachability error when fetch fails", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Network request failed"));
+
+    const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
+    const error = await client.storeConfig().catch((rejection) => rejection);
+
+    expect(error).toMatchObject({
+      message: UNABLE_TO_REACH_BACKEND_MESSAGE
+    });
+    expect(isBackendReachabilityError(error)).toBe(true);
   });
 
   it("supports customer profile completion updates", async () => {

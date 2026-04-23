@@ -29,12 +29,32 @@ const authSuccessSchema = z.object({
   success: z.literal(true)
 });
 
+export const UNABLE_TO_REACH_BACKEND_MESSAGE = "Unable to reach backend.";
+
 export type ApiClientOptions = {
   baseUrl: string;
   accessToken?: string;
 };
 
 type SessionRefreshHandler = () => Promise<z.output<typeof authSessionSchema> | null>;
+
+function normalizeBaseUrl(baseUrl: string) {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
+function toReachabilityError(error: unknown) {
+  if (error instanceof Error && error.message === UNABLE_TO_REACH_BACKEND_MESSAGE) {
+    return error;
+  }
+
+  return new Error(UNABLE_TO_REACH_BACKEND_MESSAGE, {
+    cause: error instanceof Error ? error : undefined
+  });
+}
+
+export function isBackendReachabilityError(error: unknown) {
+  return error instanceof Error && error.message === UNABLE_TO_REACH_BACKEND_MESSAGE;
+}
 
 export class GazelleApiClient {
   private accessToken?: string;
@@ -242,6 +262,11 @@ export class GazelleApiClient {
     body?: unknown,
     hasRetriedUnauthorized = false
   ): Promise<T> {
+    const baseUrl = normalizeBaseUrl(this.options.baseUrl);
+    if (!baseUrl) {
+      throw toReachabilityError(new Error("API base URL is not configured."));
+    }
+
     const effectiveToken = this.accessToken ?? this.options.accessToken;
     const headers: Record<string, string> = {};
     if (effectiveToken) {
@@ -251,11 +276,17 @@ export class GazelleApiClient {
       headers["Content-Type"] = "application/json";
     }
 
-    const response = await fetch(`${this.options.baseUrl}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+    } catch (error) {
+      throw toReachabilityError(error);
+    }
 
     const canRetryUnauthorized =
       response.status === 401 &&
