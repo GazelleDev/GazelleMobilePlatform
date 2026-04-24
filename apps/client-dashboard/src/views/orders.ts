@@ -20,6 +20,8 @@ import {
 import { getSelectedOrder, getVisibleOrders } from "../orders-runtime.js";
 import { renderLocationSelectionNotice, renderOrderStatusBadge, renderSectionHeading } from "./common.js";
 
+type StoreLaneTone = "needs-action" | "in-progress" | "ready";
+
 function renderOrderFilterRow(activeOrderCount: number, completedOrderCount: number) {
   return (
     [
@@ -57,6 +59,75 @@ function getOrderElapsedLabel(order: OperatorOrder) {
     return `${deltaMinutes}m ago`;
   }
   return `${Math.floor(deltaMinutes / 60)}h ago`;
+}
+
+function formatOrderTimeLabel(value: string | undefined) {
+  if (!value) {
+    return "Just now";
+  }
+
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(parsed));
+}
+
+function getOrderItemCount(order: OperatorOrder) {
+  return order.items.reduce((count, item) => count + item.quantity, 0);
+}
+
+function getOrderNotes(order: OperatorOrder) {
+  return order.items
+    .flatMap((item) => (item.customization?.notes?.trim() ? [item.customization.notes.trim()] : []))
+    .slice(0, 2);
+}
+
+function getStoreLaneTone(status: OperatorOrder["status"]): StoreLaneTone {
+  switch (status) {
+    case "IN_PREP":
+      return "in-progress";
+    case "READY":
+      return "ready";
+    case "PAID":
+    default:
+      return "needs-action";
+  }
+}
+
+function renderStoreModeSummary(orders: readonly OperatorOrder[], completedOrders: readonly OperatorOrder[]) {
+  const inProgressCount = orders.filter((order) => order.status === "IN_PREP").length;
+  const readyCount = orders.filter((order) => order.status === "READY").length;
+  const needsActionCount = orders.filter((order) => order.status === "PAID").length;
+
+  return `
+    <div class="dash-store-summary" aria-label="Store board summary">
+      <div class="dash-store-summary__pill dash-store-summary__pill--active">
+        <span>All</span>
+        <strong>${orders.length}</strong>
+      </div>
+      <div class="dash-store-summary__pill">
+        <span>Needs action</span>
+        <strong>${needsActionCount}</strong>
+      </div>
+      <div class="dash-store-summary__pill">
+        <span>In progress</span>
+        <strong>${inProgressCount}</strong>
+      </div>
+      <div class="dash-store-summary__pill">
+        <span>Ready</span>
+        <strong>${readyCount}</strong>
+      </div>
+      <div class="dash-store-summary__pill">
+        <span>Closed</span>
+        <strong>${completedOrders.length}</strong>
+      </div>
+    </div>
+  `;
 }
 
 function renderOrderItems(order: OperatorOrder, variant: "detail" | "ticket") {
@@ -209,11 +280,18 @@ function renderStoreTicket(order: OperatorOrder, appConfig: AppConfig | null) {
   const manualStatusControlsEnabled = canAdvanceOrderStatus(state.session?.operator ?? null, appConfig);
   const cancelControlsEnabled = canCancelOrder(state.session?.operator ?? null, appConfig, order);
   const nextAction = getOrderActions(order, resolveAppConfigFulfillmentMode(appConfig))[0];
+  const noteMarkup = getOrderNotes(order)
+    .map((note) => `<div class="dash-ticket-callout">${escapeHtml(note)}</div>`)
+    .join("");
+  const tone = getStoreLaneTone(order.status);
+  const itemCount = getOrderItemCount(order);
+  const createdAt = order.timeline[0]?.occurredAt;
+  const updatedAt = order.timeline[order.timeline.length - 1]?.occurredAt;
   const controls = [
     manualStatusControlsEnabled && nextAction
       ? `
           <button
-            class="button button--primary"
+            class="button button--primary dash-ticket-action"
             type="button"
             data-action="advance-order"
             data-order-id="${order.id}"
@@ -231,15 +309,33 @@ function renderStoreTicket(order: OperatorOrder, appConfig: AppConfig | null) {
     .join("");
 
   return `
-    <article class="dash-ticket-card">
-      <div class="dash-ticket-card__top">
+    <article class="dash-ticket-card dash-ticket-card--${tone}">
+      <div class="dash-ticket-card__band">
         <div>
-          <div class="dash-ticket-code">${escapeHtml(order.pickupCode)}</div>
+          <div class="dash-ticket-label">${escapeHtml(formatOrderStatus(order.status))}</div>
           <div class="dash-ticket-customer">${escapeHtml(getOrderCustomerLabel(order))}</div>
         </div>
         <div class="dash-ticket-meta">
-          ${renderOrderStatusBadge(order.status)}
           <span class="dash-ticket-age">${escapeHtml(getOrderElapsedLabel(order))}</span>
+          <span class="dash-ticket-updated">Updated ${escapeHtml(formatOrderTimeLabel(updatedAt))}</span>
+        </div>
+      </div>
+      <div class="dash-ticket-card__top">
+        <div class="dash-ticket-code">${escapeHtml(order.pickupCode)}</div>
+        <div class="dash-ticket-total">${formatMoney(order.total.amountCents)}</div>
+      </div>
+      <div class="dash-ticket-facts">
+        <div class="dash-ticket-fact">
+          <span>Created</span>
+          <strong>${escapeHtml(formatOrderTimeLabel(createdAt))}</strong>
+        </div>
+        <div class="dash-ticket-fact">
+          <span>Items</span>
+          <strong>${itemCount}</strong>
+        </div>
+        <div class="dash-ticket-fact">
+          <span>Status</span>
+          <strong>${escapeHtml(formatOrderStatus(order.status))}</strong>
         </div>
       </div>
 
@@ -247,10 +343,9 @@ function renderStoreTicket(order: OperatorOrder, appConfig: AppConfig | null) {
         ${renderOrderItems(order, "ticket")}
       </div>
 
-      <div class="dash-ticket-footer">
-        <div class="dash-ticket-total">${formatMoney(order.total.amountCents)}</div>
-        ${controls ? `<div class="button-row">${controls}</div>` : ""}
-      </div>
+      ${noteMarkup ? `<div class="dash-ticket-callouts">${noteMarkup}</div>` : ""}
+
+      <div class="dash-ticket-footer">${controls ? `<div class="dash-ticket-actions">${controls}</div>` : ""}</div>
     </article>
   `;
 }
@@ -280,7 +375,6 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
 
   const completedOrders = visibleOrders.filter((order) => order.status === "COMPLETED" || order.status === "CANCELED");
   const selectedLocation = getSelectedLocation();
-  const activeOrders = filterOrdersByView(state.orders, "active");
   const storeHeading = isAllLocationsSelected()
     ? state.storeConfig?.storeName ?? state.appConfig?.brand.brandName ?? "Store mode"
     : state.storeConfig?.storeName ??
@@ -300,11 +394,9 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
       ${renderSectionHeading({
         eyebrow: storeHeading,
         title: locationHeading,
-        description: "Every ticket shows the items and modifiers the team needs to make right now.",
+        description: "A compact prep board for active tickets, modifiers, and handoff actions.",
         actions: `
-          <div class="dash-segmented-control">
-            ${renderOrderFilterRow(activeOrders.length, completedOrders.length)}
-          </div>
+          ${renderStoreModeSummary(visibleOrders, completedOrders)}
           <button class="button button--ghost" type="button" data-action="refresh" ${state.loading ? "disabled" : ""}>
             ${state.loading ? '<span class="spinner"></span>' : "Refresh"}
           </button>
@@ -314,11 +406,14 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
         ${lanes
           .map(
             (lane) => `
-              <section class="dash-store-lane">
+              <section class="dash-store-lane dash-store-lane--${lane.key}">
                 <div class="dash-store-lane__head">
-                  <div>
-                    <div class="dash-panel-title">${escapeHtml(lane.title)}</div>
-                    <h3 class="dash-surface-title">${lane.orders.length} tickets</h3>
+                  <div class="dash-store-lane__heading">
+                    <div>
+                      <div class="dash-panel-title">${escapeHtml(lane.title)}</div>
+                      <h3 class="dash-surface-title">${lane.orders.length} tickets</h3>
+                    </div>
+                    <span class="dash-store-lane__count">${lane.orders.length}</span>
                   </div>
                   <p class="muted-copy">${escapeHtml(lane.description)}</p>
                 </div>
