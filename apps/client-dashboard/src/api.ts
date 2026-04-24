@@ -435,17 +435,7 @@ export async function fetchOperatorSnapshot(
             schema: adminStoreConfigSchema
           })
         : Promise.resolve(null)
-      : Promise.resolve(
-          locationId
-            ? adminStoreConfigSchema.parse({
-                locationId: fallbackLocationId,
-                storeName: "Store access unavailable",
-                locationName: "Location access unavailable",
-                hours: "Permissions required",
-                pickupInstructions: "Permissions required"
-              })
-            : null
-        ),
+      : Promise.resolve(null),
     capabilitySet.has("team:read")
       ? locationId
         ? requestJson({
