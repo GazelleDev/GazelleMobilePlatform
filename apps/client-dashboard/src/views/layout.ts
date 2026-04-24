@@ -75,39 +75,34 @@ export function renderDashboard() {
 
   return `
     <div class="dash-shell">
-      <aside class="dash-sidebar">
-        <div class="dash-logo-area">
+      <header class="dash-header">
+        <div class="dash-header__shell">
           <div class="dash-lockup">
-            <span class="dash-wordmark">LatteLink<span> by Nomly</span></span>
+            <span class="dash-wordmark">LatteLink</span>
+            <span class="dash-byline">by Nomly</span>
           </div>
-          <div class="dash-shop-block">
-            <div>
-              <div class="dash-shop-name">${escapeHtml(locationLabel)}</div>
-              <div class="dash-shop-sub">${escapeHtml(marketLabel)} · 1 location</div>
-            </div>
-            <div class="dash-chevron">▾</div>
-          </div>
-        </div>
 
-        <nav class="dash-nav" aria-label="Dashboard sections">
-          ${renderNavItems()}
-        </nav>
+          <nav class="dash-nav" aria-label="Dashboard sections">
+            ${renderNavItems()}
+          </nav>
 
-        <div class="dash-sidebar-footer">
           <div class="dash-user-row">
             <div class="dash-avatar">${escapeHtml(getOperatorInitials(state.session?.operator.displayName))}</div>
-            <div>
+            <div class="dash-user-meta">
               <div class="dash-user-name">${escapeHtml(state.session?.operator.displayName ?? "Operator")}</div>
               <div class="dash-user-role">${escapeHtml(getOperatorRoleLabel(state.session?.operator.role ?? "staff"))}</div>
             </div>
+            <button class="dash-signout" type="button" data-action="sign-out">Sign out</button>
           </div>
-          <button class="dash-signout" type="button" data-action="sign-out">Sign out</button>
         </div>
-      </aside>
+      </header>
 
       <div class="dash-main">
         <div class="dash-topbar">
-          <div class="dash-page-title">${escapeHtml(getDashboardSectionLabel(state.section))}</div>
+          <div class="dash-page-stack">
+            <div class="dash-page-title">${escapeHtml(getDashboardSectionLabel(state.section))}</div>
+            <div class="dash-shop-sub">${escapeHtml(locationLabel)} · ${escapeHtml(marketLabel)} · 1 location</div>
+          </div>
           <div class="dash-date">${escapeHtml(formatDashboardDate())}</div>
           <div class="dash-live-pill ${liveEnabled ? "" : "dash-live-pill--muted"}">
             <div class="dash-live-dot"></div>
