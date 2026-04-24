@@ -81,6 +81,10 @@ function getOrderItemCount(order: OperatorOrder) {
   return order.items.reduce((count, item) => count + item.quantity, 0);
 }
 
+function getStoreTicketCustomerName(order: OperatorOrder) {
+  return order.customer?.name ?? "Customer details unavailable";
+}
+
 function getOrderNotes(order: OperatorOrder) {
   return order.items
     .flatMap((item) => (item.customization?.notes?.trim() ? [item.customization.notes.trim()] : []))
@@ -342,18 +346,15 @@ function renderStoreTicket(order: OperatorOrder, appConfig: AppConfig | null) {
   return `
     <article class="dash-ticket-card dash-ticket-card--${tone}">
       <div class="dash-ticket-card__band">
-        <div>
+        <div class="dash-ticket-heading">
           <div class="dash-ticket-label">${escapeHtml(formatOrderStatus(order.status))}</div>
-          <div class="dash-ticket-customer">${escapeHtml(getOrderCustomerLabel(order))}</div>
+          <div class="dash-ticket-customer">${escapeHtml(getStoreTicketCustomerName(order))}</div>
         </div>
         <div class="dash-ticket-meta">
+          <div class="dash-ticket-code">${escapeHtml(order.pickupCode)}</div>
           <span class="dash-ticket-age">${escapeHtml(getOrderElapsedLabel(order))}</span>
           <span class="dash-ticket-updated">Updated ${escapeHtml(formatOrderTimeLabel(updatedAt))}</span>
         </div>
-      </div>
-      <div class="dash-ticket-card__top">
-        <div class="dash-ticket-code">${escapeHtml(order.pickupCode)}</div>
-        <div class="dash-ticket-total">${formatMoney(order.total.amountCents)}</div>
       </div>
       <div class="dash-ticket-facts">
         <div class="dash-ticket-fact">
@@ -365,8 +366,8 @@ function renderStoreTicket(order: OperatorOrder, appConfig: AppConfig | null) {
           <strong>${itemCount}</strong>
         </div>
         <div class="dash-ticket-fact">
-          <span>Status</span>
-          <strong>${escapeHtml(formatOrderStatus(order.status))}</strong>
+          <span>Total</span>
+          <strong>${formatMoney(order.total.amountCents)}</strong>
         </div>
       </div>
 
