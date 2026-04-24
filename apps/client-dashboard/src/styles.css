@@ -1109,10 +1109,12 @@ label.field > span {
   margin-top: 2px;
 }
 
+.dash-kpi-delta--positive,
 .dash-kpi-delta--up {
   color: var(--color-success);
 }
 
+.dash-kpi-delta--negative,
 .dash-kpi-delta--down {
   color: var(--color-danger);
 }
@@ -1127,6 +1129,13 @@ label.field > span {
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-xs);
   padding: 20px;
+}
+
+.dash-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .dash-chart-body {
@@ -1167,6 +1176,64 @@ label.field > span {
   font-size: 10px;
   color: var(--color-text-3);
   white-space: nowrap;
+}
+
+.dash-action-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-xs);
+  padding: 20px;
+}
+
+.dash-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.dash-action-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-md);
+  background: var(--color-surface-2);
+}
+
+.dash-action-card > div {
+  min-width: 0;
+}
+
+.dash-action-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-text-3);
+  margin-bottom: 4px;
+}
+
+.dash-action-card strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--color-text);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.dash-action-card p {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--color-text-2);
 }
 
 /* ============================================================
@@ -1669,13 +1736,26 @@ label.field > span {
 .dash-wizard-steps {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  overflow-x: auto;
 }
 
 .dash-wizard-step {
   display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: max-content;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-3);
+  transition: color var(--t);
+}
+
+.dash-wizard-step span {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 22px;
@@ -1683,13 +1763,19 @@ label.field > span {
   border-radius: 50%;
   font-size: 11px;
   font-weight: 700;
-  background: var(--color-surface-2);
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   color: var(--color-text-3);
-  transition: background var(--t), color var(--t);
+  transition: background var(--t), border-color var(--t), color var(--t);
 }
 
-.dash-wizard-step.active {
+.dash-wizard-step--active,
+.dash-wizard-step--complete {
+  color: var(--color-text);
+}
+
+.dash-wizard-step--active span,
+.dash-wizard-step--complete span {
   background: var(--color-accent);
   color: #fff;
   border-color: var(--color-accent);
@@ -1799,4 +1885,210 @@ label.field > span {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* ============================================================
+   RESPONSIVE DASHBOARD
+   ============================================================ */
+
+@media (max-width: 860px) {
+  :root {
+    --topbar-h: auto;
+  }
+
+  .dash-shell {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dash-sidebar {
+    position: sticky;
+    top: 0;
+    bottom: auto;
+    width: 100%;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .dash-logo-area {
+    padding: 12px 14px 10px;
+  }
+
+  .dash-lockup {
+    margin-bottom: 8px;
+  }
+
+  .dash-shop-block {
+    padding: 8px 10px;
+  }
+
+  .dash-nav {
+    flex: none;
+    flex-direction: row;
+    gap: 6px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .dash-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dash-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    min-height: 34px;
+  }
+
+  .dash-nav-dot {
+    display: none;
+  }
+
+  .dash-sidebar-footer {
+    display: none;
+  }
+
+  .dash-main {
+    margin-left: 0;
+  }
+
+  .dash-topbar {
+    position: static;
+    min-height: 54px;
+    height: auto;
+    padding: 10px 16px;
+    flex-wrap: wrap;
+  }
+
+  .dash-date {
+    margin-left: 0;
+  }
+
+  .dash-live-pill {
+    margin-left: auto;
+  }
+
+  .dash-content {
+    padding: 18px 14px 28px;
+    gap: 18px;
+  }
+
+  .dash-section-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dash-section-actions {
+    width: 100%;
+  }
+
+  .dash-segmented-control {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .dash-surface,
+  .dash-chart-panel,
+  .dash-action-panel {
+    border-radius: var(--r-md);
+    padding: 16px;
+  }
+
+  .dash-kpi-row,
+  .dash-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dash-action-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dash-action-card .button {
+    width: 100%;
+  }
+
+  .dash-order-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .dash-order-row__amount {
+    grid-column: 1 / -1;
+  }
+
+  .dash-detail-grid,
+  .dash-store-form,
+  .dash-data-row__fields,
+  .dash-data-row__fields--news-card,
+  .dash-customization-group-grid,
+  .dash-customization-option-row,
+  .dash-wizard-body--split {
+    grid-template-columns: 1fr;
+  }
+
+  .dash-detail-metric--wide,
+  .dash-field-span-full {
+    grid-column: auto;
+  }
+
+  .dash-data-row__actions,
+  .dash-data-row__actions--news-card,
+  .dash-form-actions {
+    justify-content: flex-start;
+  }
+
+  .dash-inline-form,
+  .dash-inline-form--news-card {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .dash-menu-image-field {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
+
+  .dash-menu-image-preview {
+    width: 88px;
+    height: 88px;
+  }
+}
+
+@media (max-width: 520px) {
+  .auth-nav__shell {
+    padding: 0 16px;
+  }
+
+  .auth-nav__tag {
+    display: none;
+  }
+
+  .auth-stage {
+    padding: 84px 16px 32px;
+  }
+
+  .dash-topbar {
+    gap: 8px;
+  }
+
+  .dash-page-title {
+    width: 100%;
+  }
+
+  .dash-live-pill {
+    margin-left: 0;
+  }
+
+  .dash-surface-head,
+  .dash-detail-header,
+  .dash-data-group__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dash-menu-image-field {
+    grid-template-columns: 1fr;
+  }
 }
