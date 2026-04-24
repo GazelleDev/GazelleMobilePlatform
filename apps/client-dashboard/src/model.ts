@@ -70,6 +70,7 @@ export type OperatorMenuItemFormInput = {
   name?: string;
   priceCents?: string | number;
   visible?: boolean | string;
+  imageUrl?: string | null;
   customizationGroups?: unknown;
 };
 
@@ -77,6 +78,7 @@ export type OperatorMenuItemCreateFormInput = {
   categoryId?: string;
   name?: string;
   description?: string;
+  imageUrl?: string | null;
   priceCents?: string | number;
   visible?: boolean | string;
 };
@@ -115,6 +117,23 @@ function normalizeText(value: unknown) {
 function normalizeOptionalText(value: unknown) {
   const next = normalizeText(value);
   return next.length > 0 ? next : undefined;
+}
+
+function normalizeNullableOptionalUrl(value: unknown) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const next = value.trim();
+    return next.length > 0 ? next : null;
+  }
+
+  return undefined;
 }
 
 function normalizeCents(value: unknown) {
@@ -472,6 +491,7 @@ export function normalizeMenuItemForm(input: OperatorMenuItemFormInput | unknown
     name: normalizeText(value.name),
     priceCents: normalizeCents(value.priceCents),
     visible: normalizeBoolean(value.visible),
+    ...(value.imageUrl !== undefined ? { imageUrl: normalizeNullableOptionalUrl(value.imageUrl) } : {}),
     ...(customizationGroups === undefined ? {} : { customizationGroups })
   });
 }
@@ -483,6 +503,7 @@ export function normalizeMenuItemCreateForm(input: OperatorMenuItemCreateFormInp
     categoryId: normalizeText(value.categoryId),
     name: normalizeText(value.name),
     description: normalizeOptionalText(value.description),
+    ...(value.imageUrl !== undefined ? { imageUrl: normalizeNullableOptionalUrl(value.imageUrl) } : {}),
     priceCents: normalizeCents(value.priceCents),
     visible: normalizeBoolean(value.visible)
   });

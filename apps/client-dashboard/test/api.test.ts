@@ -5,7 +5,8 @@ import {
   extractApiErrorMessage,
   isApiRequestError,
   normalizeApiBaseUrl,
-  signInOperatorWithPassword
+  signInOperatorWithPassword,
+  uploadOperatorMenuItemImage
 } from "../src/api";
 
 describe("client dashboard api helpers", () => {
@@ -75,6 +76,74 @@ describe("client dashboard api helpers", () => {
       "https://api.nomly.us/v1/operator/auth/sign-in",
       expect.objectContaining({
         method: "POST"
+      })
+    );
+  });
+
+  it("requests a signed upload then uploads the file to storage", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            uploadMethod: "PUT",
+            uploadUrl: "https://uploads.example.com/menu/item-1",
+            uploadHeaders: {
+              "content-type": "image/png"
+            },
+            assetUrl: "https://media.example.com/menu/item-1.png",
+            expiresAt: "2026-04-23T22:00:00.000Z"
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const file = new File(["binary"], "item.png", { type: "image/png" });
+    const assetUrl = await uploadOperatorMenuItemImage(
+      {
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+        apiBaseUrl: "https://api.nomly.us/v1",
+        expiresAt: "2026-04-23T23:00:00.000Z",
+        operator: {
+          operatorUserId: "11111111-1111-4111-8111-111111111111",
+          displayName: "Avery Quinn",
+          email: "avery@store.com",
+          role: "manager",
+          locationId: "flagship-01",
+          active: true,
+          capabilities: ["menu:write"],
+          createdAt: "2026-04-23T20:00:00.000Z",
+          updatedAt: "2026-04-23T20:00:00.000Z"
+        }
+      },
+      "item-1",
+      file
+    );
+
+    expect(assetUrl).toBe("https://media.example.com/menu/item-1.png");
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      1,
+      "https://api.nomly.us/v1/admin/menu/item-1/image-upload",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          authorization: "Bearer access-token",
+          "content-type": "application/json"
+        })
+      })
+    );
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      "https://uploads.example.com/menu/item-1",
+      expect.objectContaining({
+        method: "PUT",
+        headers: {
+          "content-type": "image/png"
+        },
+        body: file
       })
     );
   });

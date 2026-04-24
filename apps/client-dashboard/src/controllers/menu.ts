@@ -1,6 +1,7 @@
 import {
   createOperatorMenuItem,
   deleteOperatorMenuItem,
+  uploadOperatorMenuItemImage,
   updateOperatorMenuItem,
   updateOperatorMenuItemVisibility
 } from "../api.js";
@@ -66,17 +67,28 @@ export async function handleMenuItemSubmit(form: HTMLFormElement) {
 
   const formData = new FormData(form);
   const visibleField = form.elements.namedItem("visible");
+  const removeImageField = form.elements.namedItem("removeImage");
   const visible = visibleField instanceof HTMLInputElement ? visibleField.checked : false;
+  const removeImage = removeImageField instanceof HTMLInputElement ? removeImageField.checked : false;
   const customizationGroups = sanitizeCustomizationGroupsForSubmit(ensureMenuCustomizationDraft(itemId));
+  const currentItem = state.menuCategories.flatMap((category) => category.items).find((item) => item.itemId === itemId);
+  const imageFile = formData.get("imageFile");
 
   try {
     state.busyMenuItemId = itemId;
     setError(null);
     render();
+    const imageUrl =
+      imageFile instanceof File && imageFile.size > 0
+        ? await uploadOperatorMenuItemImage(state.session, itemId, imageFile)
+        : removeImage && currentItem?.imageUrl
+          ? null
+          : undefined;
     await updateOperatorMenuItem(state.session, itemId, {
       name: formData.get("name"),
       priceCents: formData.get("priceCents"),
       visible,
+      ...(imageUrl === undefined ? {} : { imageUrl }),
       customizationGroups
     });
     addToast(`Saved ${itemId}.`, "success");

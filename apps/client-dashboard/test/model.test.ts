@@ -138,6 +138,7 @@ const sampleMenuCategories: OperatorMenuCategory[] = [
         categoryTitle: "Featured",
         name: "Brown Sugar Latte",
         description: "Sweet espresso latte",
+        imageUrl: "https://media.example.com/drink-1.jpg",
         priceCents: 675,
         sortOrder: 0,
         visible: true,
@@ -149,6 +150,7 @@ const sampleMenuCategories: OperatorMenuCategory[] = [
         categoryTitle: "Featured",
         name: "Honey Cortado",
         description: "Short milk coffee",
+        imageUrl: undefined,
         priceCents: 550,
         sortOrder: 1,
         visible: false,
@@ -356,6 +358,7 @@ describe("client dashboard model", () => {
         name: "  Brown Sugar Latte  ",
         priceCents: "1250",
         visible: "yes",
+        imageUrl: null,
         customizationGroups: [
           {
             id: "milk",
@@ -380,6 +383,7 @@ describe("client dashboard model", () => {
       name: "Brown Sugar Latte",
       priceCents: 1250,
       visible: true,
+      imageUrl: null,
       customizationGroups: [
         {
           id: "milk",
@@ -408,6 +412,7 @@ describe("client dashboard model", () => {
         categoryId: " featured ",
         name: "  Honey Cortado  ",
         description: "  Bright and sweet  ",
+        imageUrl: " https://media.example.com/honey-cortado.jpg ",
         priceCents: "550",
         visible: "false"
       })
@@ -415,6 +420,7 @@ describe("client dashboard model", () => {
       categoryId: "featured",
       name: "Honey Cortado",
       description: "Bright and sweet",
+      imageUrl: "https://media.example.com/honey-cortado.jpg",
       priceCents: 550,
       visible: false
     });

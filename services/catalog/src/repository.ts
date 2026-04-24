@@ -324,6 +324,7 @@ type CatalogRepository = {
     name: string;
     priceCents: number;
     visible: boolean;
+    imageUrl?: string | null;
     customizationGroups?: unknown[];
   }): Promise<AdminMenuItemWithCustomizations | undefined>;
   updateAdminMenuItemVisibility(locationId: string, input: {
@@ -409,6 +410,7 @@ function toAdminMenuItem(input: {
   categoryTitle: string;
   name: string;
   description?: string;
+  imageUrl?: string;
   priceCents: number;
   visible: boolean;
   sortOrder: number;
@@ -769,6 +771,7 @@ function createInMemoryRepository(): CatalogRepository {
               categoryTitle: category.title,
               name: item.name,
               description: item.description,
+              imageUrl: item.imageUrl,
               priceCents: item.priceCents,
               visible: item.visible,
               sortOrder: index,
@@ -898,6 +901,7 @@ function createInMemoryRepository(): CatalogRepository {
         id: createMenuItemId(input.name),
         name: input.name,
         description: input.description ?? "",
+        imageUrl: input.imageUrl ?? undefined,
         priceCents: input.priceCents,
         badgeCodes: [],
         visible: input.visible,
@@ -923,6 +927,7 @@ function createInMemoryRepository(): CatalogRepository {
         categoryTitle: category.title,
         name: nextItem.name,
         description: nextItem.description,
+        imageUrl: nextItem.imageUrl,
         priceCents: nextItem.priceCents,
         visible: nextItem.visible,
         sortOrder: category.items.length,
@@ -951,6 +956,7 @@ function createInMemoryRepository(): CatalogRepository {
               categoryTitle: category.title,
               name: input.name,
               description: item.description,
+              imageUrl: input.imageUrl === undefined ? item.imageUrl : input.imageUrl ?? undefined,
               priceCents: input.priceCents,
               visible: input.visible,
               sortOrder: index,
@@ -962,6 +968,7 @@ function createInMemoryRepository(): CatalogRepository {
               name: input.name,
               priceCents: input.priceCents,
               visible: input.visible,
+              imageUrl: input.imageUrl === undefined ? item.imageUrl : input.imageUrl ?? undefined,
               customizationGroups
             };
           })
@@ -989,6 +996,7 @@ function createInMemoryRepository(): CatalogRepository {
               categoryTitle: category.title,
               name: item.name,
               description: item.description,
+              imageUrl: item.imageUrl,
               priceCents: item.priceCents,
               visible: input.visible,
               sortOrder: index,
@@ -1590,6 +1598,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
             categoryTitle: categoryTitles.get(item.category_id) ?? item.category_id,
             name: item.name,
             description: item.description,
+            imageUrl: item.image_url ?? undefined,
             priceCents: item.price_cents,
             visible: item.visible,
             sortOrder: item.sort_order,
@@ -1860,6 +1869,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         categoryTitle: category.title,
         name: input.name,
         description: input.description ?? "",
+        imageUrl: input.imageUrl ?? undefined,
         priceCents: input.priceCents,
         visible: input.visible,
         sortOrder: nextSortOrder,
@@ -1881,11 +1891,13 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         input.customizationGroups === undefined
           ? toCustomizationGroups(existingRow.customization_groups_json)
           : toCustomizationGroups(input.customizationGroups);
+      const nextImageUrl = input.imageUrl === undefined ? existingRow.image_url : input.imageUrl;
 
       await db
         .updateTable("catalog_menu_items")
         .set({
           name: input.name,
+          image_url: nextImageUrl,
           price_cents: input.priceCents,
           visible: input.visible,
           customization_groups_json: JSON.stringify(customizationGroups)
@@ -1907,6 +1919,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         categoryTitle: category?.title ?? existingRow.category_id,
         name: input.name,
         description: existingRow.description,
+        imageUrl: nextImageUrl ?? undefined,
         priceCents: input.priceCents,
         visible: input.visible,
         sortOrder: existingRow.sort_order,
@@ -1947,6 +1960,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         categoryTitle: category?.title ?? existingRow.category_id,
         name: existingRow.name,
         description: existingRow.description,
+        imageUrl: existingRow.image_url ?? undefined,
         priceCents: existingRow.price_cents,
         visible: input.visible,
         sortOrder: existingRow.sort_order,

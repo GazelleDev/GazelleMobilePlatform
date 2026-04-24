@@ -11,6 +11,8 @@ import {
 } from "@lattelink/contracts-auth";
 import {
   adminMenuItemCreateSchema,
+  adminMenuItemImageUploadRequestSchema,
+  adminMenuItemImageUploadResponseSchema,
   adminMenuItemVisibilityUpdateSchema,
   adminMutationSuccessSchema,
   adminStoreConfigSchema,
@@ -190,6 +192,30 @@ async function requestJson<TSchema extends z.ZodTypeAny>(params: {
   }
 
   return schema.parse(parsedPayload);
+}
+
+async function uploadBinary(params: {
+  uploadUrl: string;
+  method: "PUT";
+  headers: Record<string, string>;
+  body: Blob;
+}) {
+  let response: Response;
+  try {
+    response = await fetch(params.uploadUrl, {
+      method: params.method,
+      headers: params.headers,
+      body: params.body
+    });
+  } catch (error) {
+    throw new Error("Unable to upload image.", {
+      cause: error instanceof Error ? error : undefined
+    });
+  }
+
+  if (!response.ok) {
+    throw new Error(`Image upload failed (${response.status}).`);
+  }
 }
 
 export async function signInOperatorWithPassword(params: { apiBaseUrl: string; email: string; password: string }) {
@@ -392,6 +418,30 @@ export function createOperatorMenuItem(
     body: adminMenuItemCreateSchema.parse(normalizeMenuItemCreateForm(input)),
     schema: operatorMenuItemSchema
   });
+}
+
+export async function uploadOperatorMenuItemImage(session: OperatorSession, itemId: string, file: File) {
+  const upload = await requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: `/admin/menu/${itemId}/image-upload`,
+    method: "POST",
+    body: adminMenuItemImageUploadRequestSchema.parse({
+      fileName: file.name,
+      contentType: file.type || "application/octet-stream",
+      sizeBytes: file.size
+    }),
+    schema: adminMenuItemImageUploadResponseSchema
+  });
+
+  await uploadBinary({
+    uploadUrl: upload.uploadUrl,
+    method: upload.uploadMethod,
+    headers: upload.uploadHeaders,
+    body: file
+  });
+
+  return upload.assetUrl;
 }
 
 export function updateOperatorMenuItem(

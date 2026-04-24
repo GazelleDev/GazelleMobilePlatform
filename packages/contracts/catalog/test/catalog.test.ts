@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   adminMenuItemSchema,
+  adminMenuItemImageUploadRequestSchema,
+  adminMenuItemImageUploadResponseSchema,
   adminMenuItemUpdateSchema,
   adminStoreConfigSchema,
   adminStoreConfigUpdateSchema,
@@ -241,6 +243,7 @@ describe("contracts-catalog", () => {
       categoryTitle: "Espresso Bar",
       name: "Honey Oat Latte",
       description: "Espresso with oat milk",
+      imageUrl: "https://assets.example.com/menu/honey-oat-latte.jpg",
       priceCents: 675,
       visible: true,
       sortOrder: 0
@@ -264,7 +267,8 @@ describe("contracts-catalog", () => {
     const menuUpdate = adminMenuItemUpdateSchema.parse({
       name: "Iced Cortado",
       priceCents: 575,
-      visible: false
+      visible: false,
+      imageUrl: null
     });
     const storeUpdate = adminStoreConfigUpdateSchema.parse({
       storeName: "Gazelle Coffee Downtown",
@@ -293,6 +297,27 @@ describe("contracts-catalog", () => {
     expect(storeUpdate.capabilities?.menu.source).toBe("external_sync");
     expect(catalogContract.routes.adminMenu.path).toBe("/admin/menu");
     expect(catalogContract.routes.adminStoreConfig.path).toBe("/admin/store/config");
+  });
+
+  it("validates admin menu image upload payloads", () => {
+    const uploadRequest = adminMenuItemImageUploadRequestSchema.parse({
+      fileName: "iced-latte.png",
+      contentType: "image/png",
+      sizeBytes: 245_120
+    });
+    const uploadResponse = adminMenuItemImageUploadResponseSchema.parse({
+      uploadMethod: "PUT",
+      uploadUrl: "https://example.r2.cloudflarestorage.com/bucket/key",
+      uploadHeaders: {
+        "content-type": "image/png"
+      },
+      assetUrl: "https://media.example.com/locations/flagship-01/menu/iced-latte.png",
+      expiresAt: "2026-04-23T22:00:00.000Z"
+    });
+
+    expect(uploadRequest.contentType).toBe("image/png");
+    expect(uploadResponse.uploadMethod).toBe("PUT");
+    expect(catalogContract.routes.adminMenuItemImageUpload.path).toBe("/admin/menu/:itemId/image-upload");
   });
 
   it("validates internal location bootstrap and summary payloads", () => {

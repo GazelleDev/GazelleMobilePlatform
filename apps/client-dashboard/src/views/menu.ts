@@ -232,6 +232,31 @@ function renderMenuCategory(
                           <input type="checkbox" name="visible" ${item.visible ? "checked" : ""} ${canWrite ? "" : "disabled"} />
                           <span>${item.visible ? "Visible" : "Hidden"}</span>
                         </label>
+                        <div class="dash-menu-image-field">
+                          <div class="dash-menu-image-preview">
+                            ${
+                              item.imageUrl
+                                ? `<img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" loading="lazy" />`
+                                : `<div class="dash-menu-image-preview__empty">No image uploaded</div>`
+                            }
+                          </div>
+                          <div class="dash-menu-image-field__controls">
+                            <label class="field dash-field-inline dash-field-span-full">
+                              <span>${item.imageUrl ? "Replace image" : "Upload image"}</span>
+                              <input name="imageFile" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" ${canWrite ? "" : "disabled"} />
+                            </label>
+                            ${
+                              item.imageUrl
+                                ? `
+                                    <label class="toggle dash-toggle-inline">
+                                      <input type="checkbox" name="removeImage" ${canWrite ? "" : "disabled"} />
+                                      <span>Remove current image</span>
+                                    </label>
+                                  `
+                                : ""
+                            }
+                          </div>
+                        </div>
                       </div>
                       <details class="dash-customization-panel">
                         <summary>

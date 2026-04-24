@@ -246,6 +246,20 @@ export const homeNewsCardsResponseSchema = z.object({
   cards: z.array(homeNewsCardSchema)
 });
 
+export const adminMenuItemImageUploadRequestSchema = z.object({
+  fileName: z.string().min(1),
+  contentType: z.string().min(1).regex(/^image\//, "Menu uploads must be image files."),
+  sizeBytes: z.number().int().positive()
+});
+
+export const adminMenuItemImageUploadResponseSchema = z.object({
+  uploadMethod: z.literal("PUT"),
+  uploadUrl: z.string().url(),
+  uploadHeaders: z.record(z.string(), z.string()).default({}),
+  assetUrl: z.string().url(),
+  expiresAt: z.string().datetime()
+});
+
 export const homeNewsCardCreateSchema = z.object({
   label: z.string().min(1),
   title: z.string().min(1),
@@ -284,6 +298,7 @@ export const adminMenuItemSchema = z.object({
   categoryTitle: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
+  imageUrl: z.string().min(1).optional(),
   priceCents: z.number().int().nonnegative(),
   visible: z.boolean(),
   sortOrder: z.number().int().nonnegative()
@@ -303,13 +318,15 @@ export const adminMenuResponseSchema = z.object({
 export const adminMenuItemUpdateSchema = z.object({
   name: z.string().min(1),
   priceCents: z.number().int().nonnegative(),
-  visible: z.boolean()
+  visible: z.boolean(),
+  imageUrl: z.string().url().nullable().optional()
 });
 
 export const adminMenuItemCreateSchema = z.object({
   categoryId: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
+  imageUrl: z.string().url().nullable().optional(),
   priceCents: z.number().int().nonnegative(),
   visible: z.boolean()
 });
@@ -706,6 +723,8 @@ export type HomeNewsCardsResponse = z.output<typeof homeNewsCardsResponseSchema>
 export type HomeNewsCardCreate = z.output<typeof homeNewsCardCreateSchema>;
 export type HomeNewsCardUpdate = z.output<typeof homeNewsCardUpdateSchema>;
 export type HomeNewsCardVisibilityUpdate = z.output<typeof homeNewsCardVisibilityUpdateSchema>;
+export type AdminMenuItemImageUploadRequest = z.output<typeof adminMenuItemImageUploadRequestSchema>;
+export type AdminMenuItemImageUploadResponse = z.output<typeof adminMenuItemImageUploadResponseSchema>;
 export type MenuCategory = z.output<typeof menuCategorySchema>;
 export type MenuResponse = z.output<typeof menuResponseSchema>;
 export type StoreConfigResponse = z.output<typeof storeConfigResponseSchema>;
@@ -713,6 +732,7 @@ export type AdminMenuItem = z.output<typeof adminMenuItemSchema>;
 export type AdminMenuCategory = z.output<typeof adminMenuCategorySchema>;
 export type AdminMenuResponse = z.output<typeof adminMenuResponseSchema>;
 export type AdminStoreConfig = z.output<typeof adminStoreConfigSchema>;
+export type AdminMenuItemUpdate = z.output<typeof adminMenuItemUpdateSchema>;
 export type AdminMenuItemCreate = z.output<typeof adminMenuItemCreateSchema>;
 export type AdminMenuItemVisibilityUpdate = z.output<typeof adminMenuItemVisibilityUpdateSchema>;
 export type AppConfigTheme = z.output<typeof appConfigThemeSchema>;
@@ -1063,6 +1083,12 @@ export const catalogContract = {
       path: "/admin/menu/:itemId",
       request: adminMenuItemUpdateSchema,
       response: adminMenuItemSchema
+    },
+    adminMenuItemImageUpload: {
+      method: "POST",
+      path: "/admin/menu/:itemId/image-upload",
+      request: adminMenuItemImageUploadRequestSchema,
+      response: adminMenuItemImageUploadResponseSchema
     },
     adminCards: {
       method: "GET",

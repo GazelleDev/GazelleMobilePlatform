@@ -2,6 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   adminMenuItemCreateSchema,
+  adminMenuItemImageUploadRequestSchema,
+  adminMenuItemImageUploadResponseSchema,
   adminMenuItemUpdateSchema,
   adminMenuItemVisibilityUpdateSchema,
   adminMutationSuccessSchema,
@@ -22,6 +24,11 @@ import {
 import { z } from "zod";
 import { createCatalogRepository } from "./repository.js";
 import { DEFAULT_LOCATION_ID } from "./tenant.js";
+import {
+  createMenuImageUploadService,
+  MenuImageUploadUnavailableError,
+  MenuImageUploadValidationError
+} from "./media-storage.js";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
@@ -126,6 +133,7 @@ function authorizeGatewayRequest(request: FastifyRequest, reply: FastifyReply, g
 
 export async function registerRoutes(app: FastifyInstance) {
   const repository = await createCatalogRepository(app.log);
+  const menuImageUploads = createMenuImageUploadService();
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const rateLimitWindowMs = toPositiveInteger(process.env.CATALOG_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const gatewayReadRateLimit = {
@@ -252,6 +260,71 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       return homeNewsCardSchema.parse(updatedCard);
+    }
+  );
+
+  app.post(
+    "/v1/catalog/admin/menu/:itemId/image-upload",
+    {
+      preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
+    },
+    async (request, reply) => {
+      const locationId = getOperatorLocationId(request);
+      const { itemId } = menuItemParamsSchema.parse(request.params);
+      const input = adminMenuItemImageUploadRequestSchema.parse(request.body);
+      const appConfig = await repository.getAppConfig(locationId);
+      const menu = await repository.getAdminMenu(locationId);
+      const existingItem = menu.categories.flatMap((category) => category.items).find((item) => item.itemId === itemId);
+
+      if (!existingItem) {
+        return reply.status(404).send(
+          serviceErrorSchema.parse({
+            code: "MENU_ITEM_NOT_FOUND",
+            message: "Menu item not found",
+            requestId: request.id,
+            details: { itemId }
+          })
+        );
+      }
+
+      try {
+        return adminMenuItemImageUploadResponseSchema.parse(
+          await menuImageUploads.createUpload({
+            brandId: appConfig.brand.brandId,
+            locationId,
+            itemId,
+            fileName: input.fileName,
+            contentType: input.contentType,
+            sizeBytes: input.sizeBytes
+          })
+        );
+      } catch (error) {
+        if (error instanceof MenuImageUploadUnavailableError) {
+          return sendError(reply, {
+            statusCode: 503,
+            code: "MENU_IMAGE_UPLOAD_UNAVAILABLE",
+            message: error.message,
+            requestId: request.id
+          });
+        }
+
+        if (error instanceof MenuImageUploadValidationError) {
+          return sendError(reply, {
+            statusCode: error.statusCode,
+            code: "INVALID_MENU_IMAGE_UPLOAD",
+            message: error.message,
+            requestId: request.id
+          });
+        }
+
+        request.log.error({ error, requestId: request.id, itemId, locationId }, "menu image upload session failed");
+        return sendError(reply, {
+          statusCode: 502,
+          code: "MENU_IMAGE_UPLOAD_FAILED",
+          message: "Unable to create a menu image upload session.",
+          requestId: request.id
+        });
+      }
     }
   );
 

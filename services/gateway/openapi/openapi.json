@@ -702,6 +702,25 @@
         }
       }
     },
+    "/admin/menu/{itemId}/image-upload": {
+      "post": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "itemId",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/admin/menu/{itemId}/visibility": {
       "patch": {
         "parameters": [

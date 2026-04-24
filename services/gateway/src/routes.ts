@@ -34,6 +34,8 @@ import {
 } from "@lattelink/contracts-auth";
 import {
   adminMenuItemCreateSchema,
+  adminMenuItemImageUploadRequestSchema,
+  adminMenuItemImageUploadResponseSchema,
   adminMenuItemSchema,
   adminMenuItemUpdateSchema,
   adminMenuItemVisibilityUpdateSchema,
@@ -2561,6 +2563,32 @@ export async function registerRoutes(app: FastifyInstance) {
           ...operatorLocationHeader(request)
         },
         responseSchema: adminMenuItemWithCustomizationsSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/admin/menu/:itemId/image-upload",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const { itemId } = menuItemParamsSchema.parse(request.params);
+      const input = adminMenuItemImageUploadRequestSchema.parse(request.body);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: catalogBaseUrl,
+        serviceLabel: "Catalog",
+        method: "POST",
+        path: `/v1/catalog/admin/menu/${itemId}/image-upload`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
+        },
+        responseSchema: adminMenuItemImageUploadResponseSchema
       });
     }
   );
