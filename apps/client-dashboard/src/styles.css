@@ -1429,11 +1429,15 @@ label.field > span {
   }
 
   .dash-store-board {
-    grid-template-columns: 1fr;
+    gap: 14px;
   }
 
   .dash-ticket-facts {
     grid-template-columns: 1fr;
+  }
+
+  .dash-store-ticket-strip {
+    grid-auto-columns: minmax(280px, 88vw);
   }
 }
 
@@ -1604,11 +1608,29 @@ label.field > span {
 
 .dash-store-board {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.dash-store-board__meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dash-store-ticket-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(320px, 360px);
+  gap: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
   align-items: stretch;
   min-height: 0;
+  padding-bottom: 6px;
 }
 
 .dash-store-lane {
@@ -1685,6 +1707,7 @@ label.field > span {
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-xs);
   min-height: 0;
+  height: 100%;
 }
 
 .dash-ticket-card--needs-action {
@@ -2528,9 +2551,11 @@ label.field > span {
     align-items: stretch;
   }
 
+  .dash-store-board__meta,
   .dash-ticket-card__band,
   .dash-ticket-meta {
-    align-items: flex-start;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .dash-surface-head,

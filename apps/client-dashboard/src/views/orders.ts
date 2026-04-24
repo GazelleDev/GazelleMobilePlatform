@@ -130,6 +130,37 @@ function renderStoreModeSummary(orders: readonly OperatorOrder[], completedOrder
   `;
 }
 
+function getStoreTicketPriority(order: OperatorOrder) {
+  switch (order.status) {
+    case "PAID":
+      return 0;
+    case "IN_PREP":
+      return 1;
+    case "READY":
+      return 2;
+    case "COMPLETED":
+      return 3;
+    case "CANCELED":
+      return 4;
+    case "PENDING_PAYMENT":
+    default:
+      return 5;
+  }
+}
+
+function sortStoreTickets(orders: readonly OperatorOrder[]) {
+  return [...orders].sort((left, right) => {
+    const priorityDelta = getStoreTicketPriority(left) - getStoreTicketPriority(right);
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    const leftTime = Date.parse(left.timeline[0]?.occurredAt ?? "") || 0;
+    const rightTime = Date.parse(right.timeline[0]?.occurredAt ?? "") || 0;
+    return leftTime - rightTime;
+  });
+}
+
 function renderOrderItems(order: OperatorOrder, variant: "detail" | "ticket") {
   const itemMarkup = order.items
     .map((item) => {
@@ -352,29 +383,9 @@ function renderStoreTicket(order: OperatorOrder, appConfig: AppConfig | null) {
 
 function renderStoreModeBoard(appConfig: AppConfig | null) {
   const visibleOrders = getVisibleOrders();
-  const lanes = [
-    {
-      key: "new",
-      title: "New",
-      description: "Paid orders waiting to be started.",
-      orders: visibleOrders.filter((order) => order.status === "PAID")
-    },
-    {
-      key: "in-prep",
-      title: "In prep",
-      description: "Drinks currently being made.",
-      orders: visibleOrders.filter((order) => order.status === "IN_PREP")
-    },
-    {
-      key: "ready",
-      title: "Ready",
-      description: "Completed drinks waiting for pickup.",
-      orders: visibleOrders.filter((order) => order.status === "READY")
-    }
-  ] as const;
-
   const completedOrders = visibleOrders.filter((order) => order.status === "COMPLETED" || order.status === "CANCELED");
   const selectedLocation = getSelectedLocation();
+  const orderedTickets = sortStoreTickets(visibleOrders);
   const storeHeading = isAllLocationsSelected()
     ? state.storeConfig?.storeName ?? state.appConfig?.brand.brandName ?? "Store mode"
     : state.storeConfig?.storeName ??
@@ -394,7 +405,7 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
       ${renderSectionHeading({
         eyebrow: storeHeading,
         title: locationHeading,
-        description: "A compact prep board for active tickets, modifiers, and handoff actions.",
+        description: "A horizontally scrolling prep board for active tickets, modifiers, and handoff actions.",
         actions: `
           ${renderStoreModeSummary(visibleOrders, completedOrders)}
           <button class="button button--ghost" type="button" data-action="refresh" ${state.loading ? "disabled" : ""}>
@@ -403,52 +414,21 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
         `
       })}
       <div class="dash-store-board">
-        ${lanes
-          .map(
-            (lane) => `
-              <section class="dash-store-lane dash-store-lane--${lane.key}">
-                <div class="dash-store-lane__head">
-                  <div class="dash-store-lane__heading">
-                    <div>
-                      <div class="dash-panel-title">${escapeHtml(lane.title)}</div>
-                      <h3 class="dash-surface-title">${lane.orders.length} tickets</h3>
-                    </div>
-                    <span class="dash-store-lane__count">${lane.orders.length}</span>
-                  </div>
-                  <p class="muted-copy">${escapeHtml(lane.description)}</p>
-                </div>
-                <div class="dash-store-lane__tickets">
-                  ${
-                    lane.orders.length > 0
-                      ? lane.orders.map((order) => renderStoreTicket(order, appConfig)).join("")
-                      : `<div class="dash-empty-surface"><p class="muted-copy">No tickets in ${escapeHtml(
-                          lane.title.toLowerCase()
-                        )} right now.</p></div>`
-                  }
-                </div>
-              </section>
-            `
-          )
-          .join("")}
+        <div class="dash-store-board__meta">
+          <div>
+            <div class="dash-panel-title">Ticket strip</div>
+            <h3 class="dash-surface-title">${orderedTickets.length} tickets in view</h3>
+          </div>
+          <span class="dash-inline-note">${escapeHtml(formatRelativeRefresh(state.lastRefreshedAt, state.loading))}</span>
+        </div>
+        <div class="dash-store-ticket-strip" role="list" aria-label="Store tickets">
+          ${
+            orderedTickets.length > 0
+              ? orderedTickets.map((order) => renderStoreTicket(order, appConfig)).join("")
+              : `<div class="dash-empty-surface dash-empty-surface--store-strip"><p class="muted-copy">No tickets are in this view right now.</p></div>`
+          }
+        </div>
       </div>
-      ${
-        completedOrders.length > 0 && state.orderFilter !== "active"
-          ? `
-              <article class="dash-surface">
-                <div class="dash-surface-head">
-                  <div>
-                    <div class="dash-panel-title">Recently closed</div>
-                    <h3 class="dash-surface-title">${completedOrders.length} recent tickets</h3>
-                  </div>
-                  <span class="dash-inline-note">${escapeHtml(formatRelativeRefresh(state.lastRefreshedAt, state.loading))}</span>
-                </div>
-                <div class="dash-ticket-grid">
-                  ${completedOrders.map((order) => renderStoreTicket(order, appConfig)).join("")}
-                </div>
-              </article>
-            `
-          : ""
-      }
     </section>
   `;
 }
