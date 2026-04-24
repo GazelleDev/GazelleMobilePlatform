@@ -13,13 +13,15 @@ export async function getAdapter(params: {
   repository: PaymentsRepository;
   providerConfig: CloverProviderConfig;
   oauthConfig: CloverOAuthConfig;
+  locationId?: string;
   requestId: string;
 }) {
   const runtimeCredentials = await resolveRuntimeCloverCredentials({
     logger: params.logger,
     repository: params.repository,
     providerConfig: params.providerConfig,
-    oauthConfig: params.oauthConfig
+    oauthConfig: params.oauthConfig,
+    locationId: params.locationId
   });
   if (isCloverCredentialsUnavailableError(runtimeCredentials)) {
     const error = Object.assign(new Error(runtimeCredentials.error.message), runtimeCredentials.error);

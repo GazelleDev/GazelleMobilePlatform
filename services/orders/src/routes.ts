@@ -74,6 +74,10 @@ const cancelSourceHeadersSchema = z.object({
   "x-order-cancel-source": z.enum(["customer", "staff"]).optional()
 });
 
+const operatorLocationHeadersSchema = z.object({
+  "x-operator-location-id": z.string().min(1).optional()
+});
+
 const defaultRateLimitWindowMs = 60_000;
 const defaultOrdersWriteRateLimitMax = 120;
 const defaultOrdersInternalReconcileRateLimitMax = 180;
@@ -533,6 +537,11 @@ export async function registerRoutes(app: FastifyInstance) {
       return;
     }
 
+    const parsedOperatorHeaders = operatorLocationHeadersSchema.safeParse(request.headers);
+    const operatorLocationId = parsedOperatorHeaders.success
+      ? parsedOperatorHeaders.data["x-operator-location-id"]
+      : undefined;
+
     const requestUserContext = parseRequestUserContext(request);
     if (requestUserContext.error) {
       return sendServiceError(reply, request, requestUserContext.error);
@@ -541,6 +550,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const result = await listOrdersForRead({
       requestId: request.id,
       requestUserId: requestUserContext.userId,
+      locationId: operatorLocationId,
       deps: getServiceDeps(request)
     });
 

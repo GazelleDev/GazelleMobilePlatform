@@ -337,15 +337,16 @@ function parseIsoDate(value: unknown) {
   return new Date(String(value)).toISOString();
 }
 
-function createInMemoryRepository(): LoyaltyRepository {
-  const balancesByUserId = new Map<string, LoyaltyBalance>();
-  const ledgerByUserId = new Map<string, LoyaltyLedgerEntry[]>();
-  const idempotencyByUserId = new Map<string, Map<string, IdempotencyRecord>>();
+function createInMemoryRepository(brandId: string): LoyaltyRepository {
+  const key = (userId: string) => `${brandId}:${userId}`;
+  const balancesByKey = new Map<string, LoyaltyBalance>();
+  const ledgerByKey = new Map<string, LoyaltyLedgerEntry[]>();
+  const idempotencyByKey = new Map<string, Map<string, IdempotencyRecord>>();
 
   return {
     backend: "memory",
     async getBalance(userId) {
-      const existing = balancesByUserId.get(userId);
+      const existing = balancesByKey.get(key(userId));
       if (existing) {
         return existing;
       }
@@ -356,32 +357,32 @@ function createInMemoryRepository(): LoyaltyRepository {
         pendingPoints: 0,
         lifetimeEarned: 0
       });
-      balancesByUserId.set(userId, created);
+      balancesByKey.set(key(userId), created);
       return created;
     },
     async saveBalance(balance) {
-      balancesByUserId.set(balance.userId, balance);
+      balancesByKey.set(key(balance.userId), balance);
     },
     async getLedger(userId) {
-      return ledgerByUserId.get(userId) ?? [];
+      return ledgerByKey.get(key(userId)) ?? [];
     },
     async appendLedgerEntry(userId, entry) {
-      const existing = ledgerByUserId.get(userId) ?? [];
+      const existing = ledgerByKey.get(key(userId)) ?? [];
       existing.push(entry);
-      ledgerByUserId.set(userId, existing);
+      ledgerByKey.set(key(userId), existing);
     },
     async getIdempotencyRecord(userId, idempotencyKey) {
-      return idempotencyByUserId.get(userId)?.get(idempotencyKey);
+      return idempotencyByKey.get(key(userId))?.get(idempotencyKey);
     },
     async saveIdempotencyRecord(userId, idempotencyKey, record) {
-      const userStore = idempotencyByUserId.get(userId) ?? new Map<string, IdempotencyRecord>();
+      const userStore = idempotencyByKey.get(key(userId)) ?? new Map<string, IdempotencyRecord>();
       const existing = userStore.get(idempotencyKey);
       if (existing) {
         return existing;
       }
 
       userStore.set(idempotencyKey, record);
-      idempotencyByUserId.set(userId, userStore);
+      idempotencyByKey.set(key(userId), userStore);
       return record;
     },
     async pingDb() {
@@ -393,7 +394,7 @@ function createInMemoryRepository(): LoyaltyRepository {
   };
 }
 
-async function createPostgresRepository(connectionString: string): Promise<LoyaltyRepository> {
+async function createPostgresRepository(connectionString: string, brandId: string): Promise<LoyaltyRepository> {
   const db = createPostgresDb(connectionString);
   await runMigrations(db);
 
@@ -405,6 +406,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
           .insertInto("loyalty_balances")
           .values({
             user_id: userId,
+            brand_id: brandId,
             available_points: 0,
             pending_points: 0,
             lifetime_earned: 0
@@ -417,6 +419,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
       const row = await db
         .selectFrom("loyalty_balances")
         .selectAll()
+        .where("brand_id", "=", brandId)
         .where("user_id", "=", userId)
         .executeTakeFirstOrThrow();
 
@@ -436,6 +439,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
           lifetime_earned: balance.lifetimeEarned,
           updated_at: new Date().toISOString()
         })
+        .where("brand_id", "=", brandId)
         .where("user_id", "=", balance.userId)
         .executeTakeFirst();
 
@@ -448,6 +452,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
           .insertInto("loyalty_balances")
           .values({
             user_id: balance.userId,
+            brand_id: brandId,
             available_points: balance.availablePoints,
             pending_points: balance.pendingPoints,
             lifetime_earned: balance.lifetimeEarned
@@ -462,6 +467,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
             lifetime_earned: balance.lifetimeEarned,
             updated_at: new Date().toISOString()
           })
+          .where("brand_id", "=", brandId)
           .where("user_id", "=", balance.userId)
           .execute();
       }
@@ -470,6 +476,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
       const rows = (await db
         .selectFrom("loyalty_ledger_entries")
         .selectAll()
+        .where("brand_id", "=", brandId)
         .where("user_id", "=", userId)
         .orderBy("created_at", "desc")
         .execute()) as LoyaltyLedgerRow[];
@@ -490,6 +497,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
         .values({
           id: entry.id,
           user_id: userId,
+          brand_id: brandId,
           type: entry.type,
           points: entry.points,
           order_id: entry.orderId ?? null,
@@ -501,6 +509,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
       const row = await db
         .selectFrom("loyalty_idempotency_keys")
         .selectAll()
+        .where("brand_id", "=", brandId)
         .where("user_id", "=", userId)
         .where("idempotency_key", "=", idempotencyKey)
         .executeTakeFirst();
@@ -520,6 +529,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
           .insertInto("loyalty_idempotency_keys")
           .values({
             user_id: userId,
+            brand_id: brandId,
             idempotency_key: idempotencyKey,
             request_fingerprint: record.requestFingerprint,
             response_json: record.response
@@ -532,6 +542,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
       const persisted = (await db
         .selectFrom("loyalty_idempotency_keys")
         .selectAll()
+        .where("brand_id", "=", brandId)
         .where("user_id", "=", userId)
         .where("idempotency_key", "=", idempotencyKey)
         .executeTakeFirstOrThrow()) as LoyaltyIdempotencyRow;
@@ -550,7 +561,7 @@ async function createPostgresRepository(connectionString: string): Promise<Loyal
   };
 }
 
-async function createLoyaltyRepository(logger: FastifyBaseLogger): Promise<LoyaltyRepository> {
+async function createLoyaltyRepository(logger: FastifyBaseLogger, brandId: string): Promise<LoyaltyRepository> {
   const databaseUrl = getDatabaseUrl();
   const allowInMemory = allowsInMemoryPersistence();
   if (!databaseUrl) {
@@ -562,11 +573,11 @@ async function createLoyaltyRepository(logger: FastifyBaseLogger): Promise<Loyal
     }
 
     logger.warn({ backend: "memory" }, "loyalty persistence backend selected with explicit in-memory mode");
-    return createInMemoryRepository();
+    return createInMemoryRepository(brandId);
   }
 
   try {
-    const repository = await createPostgresRepository(databaseUrl);
+    const repository = await createPostgresRepository(databaseUrl, brandId);
     logger.info({ backend: "postgres" }, "loyalty persistence backend selected");
     return repository;
   } catch (error) {
@@ -579,14 +590,15 @@ async function createLoyaltyRepository(logger: FastifyBaseLogger): Promise<Loyal
     }
 
     logger.error({ error }, "failed to initialize postgres persistence; using explicit in-memory fallback");
-    return createInMemoryRepository();
+    return createInMemoryRepository(brandId);
   }
 }
 
 export async function registerRoutes(app: FastifyInstance) {
   const gatewayApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const loyaltyInternalApiToken = trimToUndefined(process.env.LOYALTY_INTERNAL_API_TOKEN);
-  const repository = await createLoyaltyRepository(app.log);
+  const brandId = trimToUndefined(process.env.BRAND_ID) ?? "rawaqcoffee";
+  const repository = await createLoyaltyRepository(app.log, brandId);
   const loyaltyRateLimitWindowMs = toPositiveInteger(process.env.LOYALTY_RATE_LIMIT_WINDOW_MS, defaultRateLimitWindowMs);
   const loyaltyMutationRateLimit = {
     max: toPositiveInteger(process.env.LOYALTY_RATE_LIMIT_MUTATION_MAX, defaultLoyaltyMutationRateLimitMax),

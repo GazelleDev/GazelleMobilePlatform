@@ -21,9 +21,14 @@ import {
 } from "@lattelink/contracts-catalog";
 import { z } from "zod";
 import { createCatalogRepository } from "./repository.js";
+import { DEFAULT_LOCATION_ID } from "./tenant.js";
 
 const payloadSchema = z.object({
   id: z.string().uuid().optional()
+});
+
+const locationIdQuerySchema = z.object({
+  locationId: z.string().min(1).optional()
 });
 
 const menuItemParamsSchema = z.object({
@@ -45,6 +50,10 @@ const serviceErrorSchema = z.object({
 
 const gatewayHeadersSchema = z.object({
   "x-gateway-token": z.string().optional()
+});
+
+const operatorLocationHeadersSchema = z.object({
+  "x-operator-location-id": z.string().min(1).optional()
 });
 
 const defaultRateLimitWindowMs = 60_000;
@@ -150,19 +159,39 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/v1/app-config", async () => repository.getAppConfig());
-  app.get("/v1/menu", async () => repository.getMenu());
-  app.get("/v1/cards", async () => homeNewsCardsResponseSchema.parse(await repository.getHomeNewsCards()));
-  app.get("/v1/store/cards", async () => homeNewsCardsResponseSchema.parse(await repository.getHomeNewsCards()));
+  app.get("/v1/app-config", async (request) => {
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    return repository.getAppConfig(locationId ?? DEFAULT_LOCATION_ID);
+  });
+  app.get("/v1/menu", async (request) => {
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    return repository.getMenu(locationId ?? DEFAULT_LOCATION_ID);
+  });
+  app.get("/v1/cards", async (request) => {
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    return homeNewsCardsResponseSchema.parse(await repository.getHomeNewsCards(locationId ?? DEFAULT_LOCATION_ID));
+  });
+  app.get("/v1/store/cards", async (request) => {
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    return homeNewsCardsResponseSchema.parse(await repository.getHomeNewsCards(locationId ?? DEFAULT_LOCATION_ID));
+  });
 
-  app.get("/v1/store/config", async () => repository.getStoreConfig());
+  app.get("/v1/store/config", async (request) => {
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    return repository.getStoreConfig(locationId ?? DEFAULT_LOCATION_ID);
+  });
+
+  function getOperatorLocationId(request: FastifyRequest): string {
+    const parsed = operatorLocationHeadersSchema.safeParse(request.headers);
+    return (parsed.success ? parsed.data["x-operator-location-id"] : undefined) ?? DEFAULT_LOCATION_ID;
+  }
 
   app.get(
     "/v1/catalog/admin/menu",
     {
       preHandler: [app.rateLimit(gatewayReadRateLimit), requireGatewayAccess]
     },
-    async () => repository.getAdminMenu()
+    async (request) => repository.getAdminMenu(getOperatorLocationId(request))
   );
 
   app.get(
@@ -170,7 +199,7 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: [app.rateLimit(gatewayReadRateLimit), requireGatewayAccess]
     },
-    async () => repository.getAdminHomeNewsCards()
+    async (request) => repository.getAdminHomeNewsCards(getOperatorLocationId(request))
   );
 
   app.put(
@@ -179,8 +208,9 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request) => {
+      const locationId = getOperatorLocationId(request);
       const input = homeNewsCardsResponseSchema.parse(request.body);
-      return homeNewsCardsResponseSchema.parse(await repository.replaceAdminHomeNewsCards(input));
+      return homeNewsCardsResponseSchema.parse(await repository.replaceAdminHomeNewsCards(locationId, input));
     }
   );
 
@@ -190,8 +220,9 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request) => {
+      const locationId = getOperatorLocationId(request);
       const input = homeNewsCardCreateSchema.parse(request.body);
-      return homeNewsCardSchema.parse(await repository.createAdminHomeNewsCard(input));
+      return homeNewsCardSchema.parse(await repository.createAdminHomeNewsCard(locationId, input));
     }
   );
 
@@ -201,9 +232,10 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request, reply) => {
+      const locationId = getOperatorLocationId(request);
       const { cardId } = cardParamsSchema.parse(request.params);
       const input = homeNewsCardUpdateSchema.parse(request.body);
-      const updatedCard = await repository.updateAdminHomeNewsCard({
+      const updatedCard = await repository.updateAdminHomeNewsCard(locationId, {
         cardId,
         ...input
       });
@@ -229,9 +261,10 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request, reply) => {
+      const locationId = getOperatorLocationId(request);
       const { cardId } = cardParamsSchema.parse(request.params);
       const input = homeNewsCardVisibilityUpdateSchema.parse(request.body);
-      const updatedCard = await repository.updateAdminHomeNewsCardVisibility({
+      const updatedCard = await repository.updateAdminHomeNewsCardVisibility(locationId, {
         cardId,
         ...input
       });
@@ -257,8 +290,9 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request) => {
+      const locationId = getOperatorLocationId(request);
       const { cardId } = cardParamsSchema.parse(request.params);
-      return adminMutationSuccessSchema.parse(await repository.deleteAdminHomeNewsCard(cardId));
+      return adminMutationSuccessSchema.parse(await repository.deleteAdminHomeNewsCard(locationId, cardId));
     }
   );
 
@@ -268,6 +302,7 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request, reply) => {
+      const locationId = getOperatorLocationId(request);
       const { itemId } = menuItemParamsSchema.parse(request.params);
       const parsedInput = adminMenuItemUpdateWithCustomizationsSchema.safeParse(request.body);
       if (!parsedInput.success) {
@@ -283,7 +318,7 @@ export async function registerRoutes(app: FastifyInstance) {
       }
       let updatedItem;
       try {
-        updatedItem = await repository.updateAdminMenuItem({
+        updatedItem = await repository.updateAdminMenuItem(locationId, {
           itemId,
           ...parsedInput.data
         });
@@ -323,8 +358,9 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request, reply) => {
+      const locationId = getOperatorLocationId(request);
       const input = adminMenuItemCreateSchema.parse(request.body);
-      const createdItem = await repository.createAdminMenuItem(input);
+      const createdItem = await repository.createAdminMenuItem(locationId, input);
       if (!createdItem) {
         return reply.status(404).send(
           serviceErrorSchema.parse({
@@ -346,9 +382,10 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request, reply) => {
+      const locationId = getOperatorLocationId(request);
       const { itemId } = menuItemParamsSchema.parse(request.params);
       const input = adminMenuItemVisibilityUpdateSchema.parse(request.body);
-      const updatedItem = await repository.updateAdminMenuItemVisibility({
+      const updatedItem = await repository.updateAdminMenuItemVisibility(locationId, {
         itemId,
         ...input
       });
@@ -374,8 +411,9 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request) => {
+      const locationId = getOperatorLocationId(request);
       const { itemId } = menuItemParamsSchema.parse(request.params);
-      return adminMutationSuccessSchema.parse(await repository.deleteAdminMenuItem(itemId));
+      return adminMutationSuccessSchema.parse(await repository.deleteAdminMenuItem(locationId, itemId));
     }
   );
 
@@ -384,7 +422,7 @@ export async function registerRoutes(app: FastifyInstance) {
     {
       preHandler: [app.rateLimit(gatewayReadRateLimit), requireGatewayAccess]
     },
-    async () => repository.getAdminStoreConfig()
+    async (request) => repository.getAdminStoreConfig(getOperatorLocationId(request))
   );
 
   app.put(
@@ -393,8 +431,9 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(gatewayWriteRateLimit), requireGatewayAccess]
     },
     async (request) => {
+      const locationId = getOperatorLocationId(request);
       const input = adminStoreConfigUpdateSchema.parse(request.body);
-      return repository.updateAdminStoreConfig(input);
+      return repository.updateAdminStoreConfig(locationId, input);
     }
   );
 

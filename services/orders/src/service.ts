@@ -62,7 +62,8 @@ const paymentsChargeRequestSchema = z
     paymentSourceToken: z.string().min(1).optional(),
     applePayToken: z.string().min(1).optional(),
     applePayWallet: applePayWalletSchema.optional(),
-    idempotencyKey: z.string().min(1)
+    idempotencyKey: z.string().min(1),
+    locationId: z.string().min(1).optional()
   })
   .superRefine((input, context) => {
     const hasPaymentSourceToken = Boolean(input.paymentSourceToken);
@@ -109,7 +110,8 @@ const paymentsRefundRequestSchema = z.object({
   amountCents: z.number().int().positive(),
   currency: z.literal("USD"),
   reason: z.string().min(1),
-  idempotencyKey: z.string().min(1)
+  idempotencyKey: z.string().min(1),
+  locationId: z.string().min(1).optional()
 });
 
 const paymentsRefundResponseSchema = z.object({
@@ -858,7 +860,8 @@ async function requestSuccessfulCharge(params: {
     paymentSourceToken: params.input.paymentSourceToken,
     applePayToken: params.input.applePayToken,
     applePayWallet: params.input.applePayWallet,
-    idempotencyKey: params.input.idempotencyKey
+    idempotencyKey: params.input.idempotencyKey,
+    locationId: params.order.locationId
   });
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -961,7 +964,8 @@ async function requestSuccessfulRefund(params: {
     amountCents: params.order.total.amountCents,
     currency: params.order.total.currency,
     reason: params.reason,
-    idempotencyKey: toRefundIdempotencyKey(params.orderId, params.reason)
+    idempotencyKey: toRefundIdempotencyKey(params.orderId, params.reason),
+    locationId: params.order.locationId
   });
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -1330,11 +1334,14 @@ export async function processPayment(params: {
 export async function listOrdersForRead(params: {
   requestId: string;
   requestUserId?: string;
+  locationId?: string;
   deps: OrderServiceDeps;
 }): Promise<{ orders: Order[] }> {
-  const orders = params.requestUserId
-    ? await params.deps.repository.listOrdersByUser(params.requestUserId)
-    : await params.deps.repository.listOrders();
+  const orders = params.locationId
+    ? await params.deps.repository.listOrdersByLocation(params.locationId)
+    : params.requestUserId
+      ? await params.deps.repository.listOrdersByUser(params.requestUserId)
+      : await params.deps.repository.listOrders();
 
   const reconciledOrders = await Promise.all(
     orders.map((order) =>

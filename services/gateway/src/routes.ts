@@ -431,6 +431,11 @@ function trimToUndefined(value: string | undefined) {
   return next && next.length > 0 ? next : undefined;
 }
 
+function operatorLocationHeader(request: FastifyRequest): Record<string, string> {
+  const locationId = request.authenticatedOperator?.locationId;
+  return locationId ? { "x-operator-location-id": locationId } : {};
+}
+
 function resolveServiceBaseUrl(params: {
   envVar: string;
   serviceLabel: string;
@@ -570,6 +575,7 @@ async function proxyUpstream<TResponse>(params: {
   body?: unknown;
   additionalHeaders?: Record<string, string | undefined>;
   forwardUserIdHeader?: boolean;
+  forwardQuery?: boolean;
   timeoutMs?: number;
   responseSchema: z.ZodType<TResponse>;
 }) {
@@ -583,9 +589,13 @@ async function proxyUpstream<TResponse>(params: {
     body,
     additionalHeaders,
     forwardUserIdHeader = true,
+    forwardQuery = false,
     timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs),
     responseSchema
   } = params;
+
+  const queryString = forwardQuery && request.url.includes("?") ? request.url.split("?")[1] : undefined;
+  const upstreamPath = queryString ? `${path}?${queryString}` : path;
 
   const headers: Record<string, string> = {
     "x-request-id": request.id
@@ -618,7 +628,7 @@ async function proxyUpstream<TResponse>(params: {
   const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
 
   try {
-    upstreamResponse = await fetch(`${baseUrl}${path}`, {
+    upstreamResponse = await fetch(`${baseUrl}${upstreamPath}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -1223,7 +1233,7 @@ export async function registerRoutes(app: FastifyInstance) {
       baseUrl: paymentsBaseUrl,
       serviceLabel: "Payments",
       method: "GET",
-      path: "/v1/payments/clover/oauth/status",
+      path: request.url,
       forwardUserIdHeader: false
     })
   );
@@ -1238,7 +1248,7 @@ export async function registerRoutes(app: FastifyInstance) {
         baseUrl: paymentsBaseUrl,
         serviceLabel: "Payments",
         method: "GET",
-        path: "/v1/payments/clover/card-entry-config",
+        path: request.url,
         responseSchema: cloverCardEntryConfigResponseSchema
       })
   );
@@ -1367,7 +1377,7 @@ export async function registerRoutes(app: FastifyInstance) {
       baseUrl: paymentsBaseUrl,
       serviceLabel: "Payments",
       method: "GET",
-      path: "/v1/payments/clover/oauth/connect",
+      path: request.url,
       forwardUserIdHeader: false
     })
   );
@@ -1392,7 +1402,7 @@ export async function registerRoutes(app: FastifyInstance) {
       baseUrl: paymentsBaseUrl,
       serviceLabel: "Payments",
       method: "POST",
-      path: "/v1/payments/clover/oauth/refresh",
+      path: request.url,
       forwardUserIdHeader: false
     })
   );
@@ -1902,6 +1912,7 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Catalog",
       method: "GET",
       path: "/v1/menu",
+      forwardQuery: true,
       responseSchema: menuResponseSchema
     })
   );
@@ -1914,6 +1925,7 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Catalog",
       method: "GET",
       path: "/v1/app-config",
+      forwardQuery: true,
       responseSchema: appConfigSchema
     })
   );
@@ -1926,6 +1938,7 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Catalog",
       method: "GET",
       path: "/v1/store/config",
+      forwardQuery: true,
       responseSchema: storeConfigResponseSchema
     })
   );
@@ -1938,6 +1951,7 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Catalog",
       method: "GET",
       path: "/v1/store/cards",
+      forwardQuery: true,
       responseSchema: homeNewsCardsResponseSchema
     })
   );
@@ -2250,7 +2264,10 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "GET",
         path: "/v1/orders",
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...(request.authenticatedOperator?.locationId
+            ? { "x-operator-location-id": request.authenticatedOperator.locationId }
+            : {})
         },
         forwardUserIdHeader: false,
         responseSchema: z.array(orderSchema)
@@ -2343,7 +2360,8 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "GET",
         path: "/v1/catalog/admin/menu",
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminMenuResponseWithCustomizationsSchema
       })
@@ -2363,7 +2381,8 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "GET",
         path: "/v1/catalog/admin/cards",
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: homeNewsCardsResponseSchema
       })
@@ -2382,6 +2401,7 @@ export async function registerRoutes(app: FastifyInstance) {
         serviceLabel: "Catalog",
         method: "GET",
         path: "/v1/cards",
+        forwardQuery: true,
         responseSchema: homeNewsCardsResponseSchema
       })
   );
@@ -2403,7 +2423,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: "/v1/catalog/admin/cards",
         body: input,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: homeNewsCardsResponseSchema
       });
@@ -2427,7 +2448,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: "/v1/catalog/admin/cards",
         body: input,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: homeNewsCardSchema
       });
@@ -2452,7 +2474,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: `/v1/catalog/admin/cards/${cardId}`,
         body: input,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: homeNewsCardSchema
       });
@@ -2477,7 +2500,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: `/v1/catalog/admin/cards/${cardId}/visibility`,
         body: input,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: homeNewsCardSchema
       });
@@ -2500,7 +2524,8 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "DELETE",
         path: `/v1/catalog/admin/cards/${cardId}`,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminMutationSuccessSchema
       });
@@ -2532,7 +2557,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: `/v1/catalog/admin/menu/${itemId}`,
         body: parsedBody.data,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminMenuItemWithCustomizationsSchema
       });
@@ -2556,7 +2582,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: "/v1/catalog/admin/menu",
         body: input,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminMenuItemWithCustomizationsSchema
       });
@@ -2581,7 +2608,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: `/v1/catalog/admin/menu/${itemId}/visibility`,
         body: input,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminMenuItemWithCustomizationsSchema
       });
@@ -2604,7 +2632,8 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "DELETE",
         path: `/v1/catalog/admin/menu/${itemId}`,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminMutationSuccessSchema
       });
@@ -2625,7 +2654,8 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "GET",
         path: "/v1/catalog/admin/store/config",
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminStoreConfigSchema
       })
@@ -2648,7 +2678,8 @@ export async function registerRoutes(app: FastifyInstance) {
         path: "/v1/catalog/admin/store/config",
         body: input,
         additionalHeaders: {
-          "x-gateway-token": gatewayInternalApiToken
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorLocationHeader(request)
         },
         responseSchema: adminStoreConfigSchema
       });

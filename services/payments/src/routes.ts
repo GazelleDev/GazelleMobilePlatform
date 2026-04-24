@@ -75,7 +75,8 @@ const chargeRequestSchema = z.object({
   paymentSourceToken: z.string().min(1).optional(),
   applePayToken: z.string().min(1).optional(),
   applePayWallet: applePayWalletSchema.optional(),
-  idempotencyKey: z.string().min(1)
+  idempotencyKey: z.string().min(1),
+  locationId: z.string().min(1).optional()
 }).superRefine((input, context) => {
   const hasPaymentSourceToken = Boolean(input.paymentSourceToken);
   const hasToken = Boolean(input.applePayToken);
@@ -120,7 +121,8 @@ const refundRequestSchema = z.object({
   amountCents: z.number().int().positive(),
   currency: z.literal("USD"),
   reason: z.string().min(1),
-  idempotencyKey: z.string().min(1)
+  idempotencyKey: z.string().min(1),
+  locationId: z.string().min(1).optional()
 });
 
 const refundStatusSchema = z.enum(["REFUNDED", "REJECTED"]);
@@ -155,6 +157,10 @@ const internalHeadersSchema = z.object({
 
 const gatewayHeadersSchema = z.object({
   "x-gateway-token": z.string().optional()
+});
+
+const locationIdQuerySchema = z.object({
+  locationId: z.string().min(1).optional()
 });
 
 const userHeadersSchema = z.object({
@@ -289,10 +295,12 @@ type PersistedCloverConnectionRow = {
   api_access_key: string | null;
   token_type: string | null;
   scope: string | null;
+  location_id: string | null;
 };
 
 export type CloverConnection = {
   merchantId: string;
+  locationId?: string;
   accessToken: string;
   refreshToken?: string;
   accessTokenExpiresAt?: string;
@@ -336,7 +344,7 @@ export type PaymentsRepository = {
     occurredAt: string;
   }): Promise<RefundResponse | undefined>;
   findCloverConnection(merchantId: string): Promise<CloverConnection | undefined>;
-  findLatestCloverConnection(): Promise<CloverConnection | undefined>;
+  findLatestCloverConnection(locationId: string): Promise<CloverConnection | undefined>;
   saveCloverConnection(connection: CloverConnection): Promise<CloverConnection>;
   findWebhookResult(eventKey: string): Promise<PaymentWebhookDispatchResult | undefined>;
   saveWebhookResult(eventKey: string, result: PaymentWebhookDispatchResult): Promise<void>;
@@ -401,6 +409,7 @@ function toWebhookDispatchResult(row: PersistedWebhookDedupRow): PaymentWebhookD
 function toCloverConnection(row: PersistedCloverConnectionRow): CloverConnection {
   return {
     merchantId: row.merchant_id,
+    locationId: row.location_id ?? undefined,
     accessToken: row.access_token,
     refreshToken: row.refresh_token ?? undefined,
     accessTokenExpiresAt: row.access_token_expires_at ? new Date(row.access_token_expires_at).toISOString() : undefined,
@@ -535,7 +544,11 @@ function createInMemoryRepository(): PaymentsRepository {
     async findCloverConnection(merchantId) {
       return cloverConnectionsByMerchantId.get(merchantId);
     },
-    async findLatestCloverConnection() {
+    async findLatestCloverConnection(locationId) {
+      const byLocation = Array.from(cloverConnectionsByMerchantId.values()).find(
+        (c) => c.locationId === locationId
+      );
+      if (byLocation) return byLocation;
       return latestCloverMerchantId ? cloverConnectionsByMerchantId.get(latestCloverMerchantId) : undefined;
     },
     async saveCloverConnection(connection) {
@@ -777,7 +790,15 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
 
       return row ? toCloverConnection(row as PersistedCloverConnectionRow) : undefined;
     },
-    async findLatestCloverConnection() {
+    async findLatestCloverConnection(locationId) {
+      const byLocation = await db
+        .selectFrom("payments_clover_connections")
+        .selectAll()
+        .where("location_id", "=", locationId)
+        .orderBy("updated_at", "desc")
+        .executeTakeFirst();
+      if (byLocation) return toCloverConnection(byLocation as PersistedCloverConnectionRow);
+
       const row = await db
         .selectFrom("payments_clover_connections")
         .selectAll()
@@ -791,6 +812,7 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
         .insertInto("payments_clover_connections")
         .values({
           merchant_id: connection.merchantId,
+          location_id: connection.locationId ?? null,
           access_token: connection.accessToken,
           refresh_token: connection.refreshToken ?? null,
           access_token_expires_at: connection.accessTokenExpiresAt ?? null,
@@ -801,6 +823,7 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
         })
         .onConflict((oc) =>
           oc.column("merchant_id").doUpdateSet({
+            location_id: connection.locationId ?? null,
             access_token: connection.accessToken,
             refresh_token: connection.refreshToken ?? null,
             access_token_expires_at: connection.accessTokenExpiresAt ?? null,
@@ -1469,7 +1492,7 @@ function decodeSignedState(
   state: string,
   secret: string,
   maxAgeMs = 10 * 60_000
-): { issuedAtMs: number; merchantId?: string } | undefined {
+): { issuedAtMs: number; merchantId?: string; locationId?: string } | undefined {
   const [encodedPayload, signature] = state.split(".");
   if (!encodedPayload || !signature) {
     return undefined;
@@ -1489,7 +1512,8 @@ function decodeSignedState(
     const parsed = z
       .object({
         issuedAtMs: z.number().int().positive(),
-        merchantId: z.string().min(1).optional()
+        merchantId: z.string().min(1).optional(),
+        locationId: z.string().min(1).optional()
       })
       .parse(JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as unknown);
     if (Date.now() - parsed.issuedAtMs > maxAgeMs) {
@@ -1505,8 +1529,9 @@ function decodeSignedState(
 function buildCloverAuthorizeUrl(params: {
   oauthConfig: CloverOAuthConfig;
   merchantId?: string;
+  locationId?: string;
 }) {
-  const { oauthConfig, merchantId } = params;
+  const { oauthConfig, merchantId, locationId } = params;
   if (!oauthConfig.configured || !oauthConfig.appId || !oauthConfig.redirectUri || !oauthConfig.stateSigningSecret) {
     throw new Error(oauthConfig.misconfigurationReason ?? "Clover OAuth is not configured");
   }
@@ -1514,7 +1539,8 @@ function buildCloverAuthorizeUrl(params: {
   const state = encodeSignedState(
     {
       issuedAtMs: Date.now(),
-      merchantId
+      merchantId,
+      locationId
     },
     oauthConfig.stateSigningSecret
   );
@@ -1756,14 +1782,17 @@ export async function resolveRuntimeCloverCredentials(params: {
   repository: PaymentsRepository;
   providerConfig: CloverProviderConfig;
   oauthConfig: CloverOAuthConfig;
+  locationId?: string;
   allowRefresh?: boolean;
 }): Promise<CloverRuntimeCredentials | CloverCredentialsUnavailableError | undefined> {
-  const { logger, repository, providerConfig, oauthConfig, allowRefresh = true } = params;
+  const { logger, repository, providerConfig, oauthConfig, locationId, allowRefresh = true } = params;
   if (providerConfig.mode !== "live") {
     return undefined;
   }
 
-  const connectedMerchant = await repository.findLatestCloverConnection();
+  const connectedMerchant = locationId
+    ? await repository.findLatestCloverConnection(locationId)
+    : await repository.findLatestCloverConnection("");
 
   if (connectedMerchant) {
     let resolvedConnection = connectedMerchant;
@@ -2602,12 +2631,14 @@ async function executeLiveCharge(params: {
   logger: FastifyBaseLogger;
   repository: PaymentsRepository;
   oauthConfig: CloverOAuthConfig;
+  locationId?: string;
 }): Promise<{ response: ChargeResponse; providerPaymentId?: string }> {
   const adapter = await getAdapter({
     logger: params.logger,
     repository: params.repository,
     providerConfig: params.config,
     oauthConfig: params.oauthConfig,
+    locationId: params.locationId,
     requestId: params.requestId
   });
   return adapter.processCharge(params.request);
@@ -2621,12 +2652,14 @@ async function executeLiveRefund(params: {
   providerPaymentId?: string;
   repository: PaymentsRepository;
   oauthConfig: CloverOAuthConfig;
+  locationId?: string;
 }): Promise<RefundResponse> {
   const adapter = await getAdapter({
     logger: params.logger,
     repository: params.repository,
     providerConfig: params.config,
     oauthConfig: params.oauthConfig,
+    locationId: params.locationId,
     requestId: params.requestId
   });
   return adapter.processRefund(params.request, params.providerPaymentId);
@@ -2670,13 +2703,14 @@ export async function registerRoutes(app: FastifyInstance) {
     await repository.close();
   });
 
-  const buildCloverOauthStatus = async () => {
-    const latestConnection = await repository.findLatestCloverConnection();
+  const buildCloverOauthStatus = async (locationId?: string) => {
+    const latestConnection = await repository.findLatestCloverConnection(locationId ?? "");
     const runtimeCredentials = await resolveRuntimeCloverCredentials({
       logger: app.log,
       repository,
       providerConfig: cloverProvider,
       oauthConfig: cloverOAuthConfig,
+      locationId,
       allowRefresh: false
     });
     const resolvedCredentials = isCloverCredentialsUnavailableError(runtimeCredentials) ? undefined : runtimeCredentials;
@@ -2693,7 +2727,7 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   };
 
-  const buildCloverCardEntryConfig = async () => {
+  const buildCloverCardEntryConfig = async (locationId?: string) => {
     const runtimeCredentials =
       cloverProvider.mode === "live"
         ? await resolveRuntimeCloverCredentials({
@@ -2701,6 +2735,7 @@ export async function registerRoutes(app: FastifyInstance) {
             repository,
             providerConfig: cloverProvider,
             oauthConfig: cloverOAuthConfig,
+            locationId,
             allowRefresh: false
           })
         : undefined;
@@ -2760,9 +2795,15 @@ export async function registerRoutes(app: FastifyInstance) {
     return status;
   });
 
-  app.get("/v1/payments/clover/oauth/status", async () => buildCloverOauthStatus());
+  app.get("/v1/payments/clover/oauth/status", async (request) => {
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    return buildCloverOauthStatus(locationId);
+  });
 
-  app.get("/v1/payments/clover/card-entry-config", async () => buildCloverCardEntryConfig());
+  app.get("/v1/payments/clover/card-entry-config", async (request) => {
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    return buildCloverCardEntryConfig(locationId);
+  });
   app.post("/v1/payments/stripe/mobile-session", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
     if (!authorizeGatewayRequest(request, reply, gatewayInternalToken)) {
       return;
@@ -3380,8 +3421,10 @@ export async function registerRoutes(app: FastifyInstance) {
       );
     }
 
+    const { locationId } = locationIdQuerySchema.parse(request.query);
     const { authorizeUrl, stateExpiresAt } = buildCloverAuthorizeUrl({
-      oauthConfig: cloverOAuthConfig
+      oauthConfig: cloverOAuthConfig,
+      locationId
     });
 
     return cloverOauthConnectResponseSchema.parse({
@@ -3478,13 +3521,15 @@ export async function registerRoutes(app: FastifyInstance) {
         oauthConfig: cloverOAuthConfig,
         accessToken: exchanged.accessToken
       });
+      const locationIdFromState = trimToUndefined(decodedState.locationId);
       await repository.saveCloverConnection({
         ...exchanged,
         merchantId,
+        locationId: locationIdFromState,
         apiAccessKey
       });
 
-      const status = await buildCloverOauthStatus();
+      const status = await buildCloverOauthStatus(locationIdFromState);
       logPaymentsMutation(request, "clover oauth callback connected merchant", {
         merchantId,
         providerMode: status.providerMode,
@@ -3514,7 +3559,8 @@ export async function registerRoutes(app: FastifyInstance) {
       );
     }
 
-    const connection = await repository.findLatestCloverConnection();
+    const { locationId } = locationIdQuerySchema.parse(request.query);
+    const connection = await repository.findLatestCloverConnection(locationId ?? "");
     if (!connection) {
       return reply.status(404).send(
         serviceErrorSchema.parse({
@@ -3538,9 +3584,10 @@ export async function registerRoutes(app: FastifyInstance) {
         }));
       await repository.saveCloverConnection({
         ...refreshedConnection,
+        locationId: locationId ?? connection.locationId,
         apiAccessKey
       });
-      const status = await buildCloverOauthStatus();
+      const status = await buildCloverOauthStatus(locationId);
       logPaymentsMutation(request, "clover oauth connection refreshed", {
         merchantId: status.connectedMerchantId ?? status.merchantId ?? null,
         providerMode: status.providerMode,
@@ -3574,10 +3621,11 @@ export async function registerRoutes(app: FastifyInstance) {
         repository,
         providerConfig: cloverProvider,
         oauthConfig: cloverOAuthConfig,
+        locationId: order.locationId,
         requestId: request.id
       });
       await adapter.submitOrder(order);
-      const latestConnection = await repository.findLatestCloverConnection();
+      const latestConnection = await repository.findLatestCloverConnection(order.locationId);
 
       return submitOrderResponseSchema.parse({
         accepted: true,
@@ -3695,7 +3743,8 @@ export async function registerRoutes(app: FastifyInstance) {
         requestId: request.id,
         logger: request.log,
         repository,
-        oauthConfig: cloverOAuthConfig
+        oauthConfig: cloverOAuthConfig,
+        locationId: input.locationId
       });
 
       const savedCharge = await repository.saveCharge({
@@ -3834,7 +3883,8 @@ export async function registerRoutes(app: FastifyInstance) {
         logger: request.log,
         providerPaymentId: chargeLookup?.providerPaymentId,
         repository,
-        oauthConfig: cloverOAuthConfig
+        oauthConfig: cloverOAuthConfig,
+        locationId: input.locationId
       });
       const savedRefund = await repository.saveRefund({ request: input, response: refundResponse });
       logPaymentsMutation(request, "refund accepted", {

@@ -34,6 +34,7 @@ export const UNABLE_TO_REACH_BACKEND_MESSAGE = "Unable to reach backend.";
 export type ApiClientOptions = {
   baseUrl: string;
   accessToken?: string;
+  locationId?: string;
 };
 
 type SessionRefreshHandler = () => Promise<z.output<typeof authSessionSchema> | null>;
@@ -164,18 +165,23 @@ export class GazelleApiClient {
     return meResponseSchema.parse(data);
   }
 
+  private locationQuery(): string {
+    const id = this.options.locationId?.trim();
+    return id ? `?locationId=${encodeURIComponent(id)}` : "";
+  }
+
   async menu(): Promise<z.output<typeof menuResponseSchema>> {
-    const data = await this.get<unknown>("/menu");
+    const data = await this.get<unknown>(`/menu${this.locationQuery()}`);
     return menuResponseSchema.parse(data);
   }
 
   async storeConfig(): Promise<z.output<typeof storeConfigResponseSchema>> {
-    const data = await this.get<unknown>("/store/config");
+    const data = await this.get<unknown>(`/store/config${this.locationQuery()}`);
     return storeConfigResponseSchema.parse(data);
   }
 
   async appConfig(): Promise<z.output<typeof appConfigSchema>> {
-    const data = await this.get<unknown>("/app-config");
+    const data = await this.get<unknown>(`/app-config${this.locationQuery()}`);
     return appConfigSchema.parse(data);
   }
 

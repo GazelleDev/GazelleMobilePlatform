@@ -56,6 +56,7 @@ export type OrdersRepository = {
   getOrder(orderId: string): Promise<Order | undefined>;
   listOrders(): Promise<Order[]>;
   listOrdersByUser(userId: string): Promise<Order[]>;
+  listOrdersByLocation(locationId: string): Promise<Order[]>;
   getOrderForCreateIdempotency(quoteId: string, quoteHash: string): Promise<Order | undefined>;
   saveCreateOrderIdempotency(quoteId: string, quoteHash: string, orderId: string): Promise<void>;
   getPaymentOrderByIdempotency(orderId: string, idempotencyKey: string): Promise<Order | undefined>;
@@ -228,6 +229,12 @@ function createInMemoryRepository(): OrdersRepository {
     async listOrdersByUser(userId) {
       const orders = [...ordersById.values()]
         .filter((entry) => entry.userId === userId)
+        .map((entry) => entry.order);
+      return sortOrdersDescendingByCreatedAt(orders);
+    },
+    async listOrdersByLocation(locationId) {
+      const orders = [...ordersById.values()]
+        .filter((entry) => entry.order.locationId === locationId)
         .map((entry) => entry.order);
       return sortOrdersDescendingByCreatedAt(orders);
     },
@@ -433,6 +440,15 @@ async function createPostgresRepository(
         .selectFrom("orders")
         .selectAll()
         .where("user_id", "=", userId)
+        .orderBy("created_at", "desc")
+        .execute();
+      return rows.map((row) => parseOrder((row as PersistedOrderRow).order_json));
+    },
+    async listOrdersByLocation(locationId) {
+      const rows = await db
+        .selectFrom("orders")
+        .selectAll()
+        .where(sql`order_json->>'locationId'`, "=", locationId)
         .orderBy("created_at", "desc")
         .execute();
       return rows.map((row) => parseOrder((row as PersistedOrderRow).order_json));

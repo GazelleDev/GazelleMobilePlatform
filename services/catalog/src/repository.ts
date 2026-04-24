@@ -289,7 +289,7 @@ type AdminHomeNewsCardsResponse = z.output<typeof homeNewsCardsResponseSchema>;
 
 type CatalogRepository = {
   backend: "memory" | "postgres";
-  getAppConfig(): Promise<AppConfig>;
+  getAppConfig(locationId: string): Promise<AppConfig>;
   listInternalLocations(): Promise<InternalLocationSummary[]>;
   getInternalLocationSummary(locationId: string): Promise<InternalLocationSummary | undefined>;
   bootstrapInternalLocation(input: InternalLocationBootstrap): Promise<InternalLocationSummary>;
@@ -299,12 +299,12 @@ type CatalogRepository = {
     locationId: string,
     input: InternalLocationPaymentProfileUpdate
   ): Promise<ClientPaymentProfile>;
-  getAdminMenu(): Promise<AdminMenuResponseWithCustomizations>;
-  getHomeNewsCards(): Promise<HomeNewsCardsResponse>;
-  getAdminHomeNewsCards(): Promise<AdminHomeNewsCardsResponse>;
-  replaceAdminHomeNewsCards(input: HomeNewsCardsResponse): Promise<AdminHomeNewsCardsResponse>;
-  createAdminHomeNewsCard(input: z.output<typeof homeNewsCardCreateSchema>): Promise<AdminHomeNewsCard>;
-  updateAdminHomeNewsCard(input: {
+  getAdminMenu(locationId: string): Promise<AdminMenuResponseWithCustomizations>;
+  getHomeNewsCards(locationId: string): Promise<HomeNewsCardsResponse>;
+  getAdminHomeNewsCards(locationId: string): Promise<AdminHomeNewsCardsResponse>;
+  replaceAdminHomeNewsCards(locationId: string, input: HomeNewsCardsResponse): Promise<AdminHomeNewsCardsResponse>;
+  createAdminHomeNewsCard(locationId: string, input: z.output<typeof homeNewsCardCreateSchema>): Promise<AdminHomeNewsCard>;
+  updateAdminHomeNewsCard(locationId: string, input: {
     cardId: string;
     label: string;
     title: string;
@@ -313,26 +313,26 @@ type CatalogRepository = {
     visible: boolean;
     sortOrder: number;
   }): Promise<AdminHomeNewsCard | undefined>;
-  updateAdminHomeNewsCardVisibility(input: {
+  updateAdminHomeNewsCardVisibility(locationId: string, input: {
     cardId: string;
     visible: boolean;
   }): Promise<AdminHomeNewsCard | undefined>;
-  deleteAdminHomeNewsCard(cardId: string): Promise<z.output<typeof adminMutationSuccessSchema>>;
-  createAdminMenuItem(input: z.output<typeof adminMenuItemCreateSchema>): Promise<AdminMenuItemWithCustomizations | undefined>;
-  updateAdminMenuItem(input: {
+  deleteAdminHomeNewsCard(locationId: string, cardId: string): Promise<z.output<typeof adminMutationSuccessSchema>>;
+  createAdminMenuItem(locationId: string, input: z.output<typeof adminMenuItemCreateSchema>): Promise<AdminMenuItemWithCustomizations | undefined>;
+  updateAdminMenuItem(locationId: string, input: {
     itemId: string;
     name: string;
     priceCents: number;
     visible: boolean;
     customizationGroups?: unknown[];
   }): Promise<AdminMenuItemWithCustomizations | undefined>;
-  updateAdminMenuItemVisibility(input: {
+  updateAdminMenuItemVisibility(locationId: string, input: {
     itemId: string;
     visible: boolean;
   }): Promise<AdminMenuItemWithCustomizations | undefined>;
-  deleteAdminMenuItem(itemId: string): Promise<z.output<typeof adminMutationSuccessSchema>>;
-  getAdminStoreConfig(): Promise<AdminStoreConfig>;
-  updateAdminStoreConfig(input: {
+  deleteAdminMenuItem(locationId: string, itemId: string): Promise<z.output<typeof adminMutationSuccessSchema>>;
+  getAdminStoreConfig(locationId: string): Promise<AdminStoreConfig>;
+  updateAdminStoreConfig(locationId: string, input: {
     storeName: string;
     locationName: string;
     hours: string;
@@ -340,8 +340,8 @@ type CatalogRepository = {
     taxRateBasisPoints?: number;
     capabilities?: AppConfigStoreCapabilities;
   }): Promise<AdminStoreConfig>;
-  getMenu(): Promise<MenuResponse>;
-  getStoreConfig(): Promise<StoreConfigResponse>;
+  getMenu(locationId: string): Promise<MenuResponse>;
+  getStoreConfig(locationId: string): Promise<StoreConfigResponse>;
   pingDb(): Promise<void>;
   close(): Promise<void>;
 };
@@ -611,10 +611,10 @@ function createInMemoryRepository(): CatalogRepository {
 
   return {
     backend: "memory",
-    async getAppConfig() {
+    async getAppConfig(locationId) {
       return applyPaymentProfileToAppConfig(
-        applyRuntimeFulfillmentMode(appConfigsByLocation.get(DEFAULT_LOCATION_ID) ?? defaultAppConfig),
-        paymentProfilesByLocation.get(DEFAULT_LOCATION_ID)
+        applyRuntimeFulfillmentMode(appConfigsByLocation.get(locationId) ?? defaultAppConfig),
+        paymentProfilesByLocation.get(locationId)
       );
     },
     async listInternalLocations() {
@@ -755,8 +755,8 @@ function createInMemoryRepository(): CatalogRepository {
       menusByLocation.set(locationId, nextMenu);
       return nextMenu;
     },
-    async getAdminMenu() {
-      const menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
+    async getAdminMenu(locationId) {
+      const menu = menusByLocation.get(locationId) ?? defaultMenuPayload;
       return buildAdminMenuResponse({
         locationId: menu.locationId,
         categories: menu.categories.map((category) => ({
@@ -778,19 +778,19 @@ function createInMemoryRepository(): CatalogRepository {
         }))
       });
     },
-    async getHomeNewsCards() {
-      return homeNewsCardsByLocation.get(DEFAULT_LOCATION_ID) ?? buildHomeNewsCardsResponse({
-        locationId: DEFAULT_LOCATION_ID,
+    async getHomeNewsCards(locationId) {
+      return homeNewsCardsByLocation.get(locationId) ?? buildHomeNewsCardsResponse({
+        locationId,
         cards: []
       });
     },
-    async getAdminHomeNewsCards() {
-      return homeNewsCardsByLocation.get(DEFAULT_LOCATION_ID) ?? buildHomeNewsCardsResponse({
-        locationId: DEFAULT_LOCATION_ID,
+    async getAdminHomeNewsCards(locationId) {
+      return homeNewsCardsByLocation.get(locationId) ?? buildHomeNewsCardsResponse({
+        locationId,
         cards: []
       });
     },
-    async replaceAdminHomeNewsCards(input) {
+    async replaceAdminHomeNewsCards(locationId, input) {
       const nextCards = buildHomeNewsCardsResponse({
         locationId: input.locationId,
         cards: input.cards.map((card) =>
@@ -809,12 +809,12 @@ function createInMemoryRepository(): CatalogRepository {
       homeNewsCardsByLocation.set(input.locationId, nextCards);
       return nextCards;
     },
-    async createAdminHomeNewsCard(input) {
-      const currentCards = homeNewsCardsByLocation.get(DEFAULT_LOCATION_ID)?.cards ?? defaultHomeNewsCardsPayload.cards;
+    async createAdminHomeNewsCard(locationId, input) {
+      const currentCards = homeNewsCardsByLocation.get(locationId)?.cards ?? defaultHomeNewsCardsPayload.cards;
       const nextSortOrder = input.sortOrder ?? (currentCards.reduce((max, card) => Math.max(max, card.sortOrder), -1) + 1);
       const cardId = createHomeNewsCardId(input.title);
       const nextCards = buildHomeNewsCardsResponse({
-        locationId: DEFAULT_LOCATION_ID,
+        locationId,
         cards: [
           ...currentCards,
           toHomeNewsCard({
@@ -829,18 +829,18 @@ function createInMemoryRepository(): CatalogRepository {
         ]
       });
 
-      homeNewsCardsByLocation.set(DEFAULT_LOCATION_ID, nextCards);
+      homeNewsCardsByLocation.set(locationId, nextCards);
       return nextCards.cards.find((card) => card.cardId === cardId)!;
     },
-    async updateAdminHomeNewsCard(input) {
-      const existingCards = homeNewsCardsByLocation.get(DEFAULT_LOCATION_ID)?.cards ?? defaultHomeNewsCardsPayload.cards;
+    async updateAdminHomeNewsCard(locationId, input) {
+      const existingCards = homeNewsCardsByLocation.get(locationId)?.cards ?? defaultHomeNewsCardsPayload.cards;
       const existingCard = existingCards.find((card) => card.cardId === input.cardId);
       if (!existingCard) {
         return undefined;
       }
 
       const nextCards = buildHomeNewsCardsResponse({
-        locationId: DEFAULT_LOCATION_ID,
+        locationId,
         cards: existingCards.map((card) =>
           card.cardId === input.cardId
             ? toHomeNewsCard({
@@ -856,38 +856,38 @@ function createInMemoryRepository(): CatalogRepository {
         )
       });
 
-      homeNewsCardsByLocation.set(DEFAULT_LOCATION_ID, nextCards);
+      homeNewsCardsByLocation.set(locationId, nextCards);
       return nextCards.cards.find((card) => card.cardId === input.cardId);
     },
-    async updateAdminHomeNewsCardVisibility(input) {
-      const existingCards = homeNewsCardsByLocation.get(DEFAULT_LOCATION_ID)?.cards ?? defaultHomeNewsCardsPayload.cards;
+    async updateAdminHomeNewsCardVisibility(locationId, input) {
+      const existingCards = homeNewsCardsByLocation.get(locationId)?.cards ?? defaultHomeNewsCardsPayload.cards;
       const existingCard = existingCards.find((card) => card.cardId === input.cardId);
       if (!existingCard) {
         return undefined;
       }
 
       const nextCards = buildHomeNewsCardsResponse({
-        locationId: DEFAULT_LOCATION_ID,
+        locationId,
         cards: existingCards.map((card) =>
           card.cardId === input.cardId ? { ...card, visible: input.visible } : card
         )
       });
 
-      homeNewsCardsByLocation.set(DEFAULT_LOCATION_ID, nextCards);
+      homeNewsCardsByLocation.set(locationId, nextCards);
       return nextCards.cards.find((card) => card.cardId === input.cardId);
     },
-    async deleteAdminHomeNewsCard(cardId) {
-      const existingCards = homeNewsCardsByLocation.get(DEFAULT_LOCATION_ID)?.cards ?? defaultHomeNewsCardsPayload.cards;
+    async deleteAdminHomeNewsCard(locationId, cardId) {
+      const existingCards = homeNewsCardsByLocation.get(locationId)?.cards ?? defaultHomeNewsCardsPayload.cards;
       const nextCards = buildHomeNewsCardsResponse({
-        locationId: DEFAULT_LOCATION_ID,
+        locationId,
         cards: existingCards.filter((card) => card.cardId !== cardId)
       });
 
-      homeNewsCardsByLocation.set(DEFAULT_LOCATION_ID, nextCards);
+      homeNewsCardsByLocation.set(locationId, nextCards);
       return { success: true };
     },
-    async createAdminMenuItem(input) {
-      const currentMenu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
+    async createAdminMenuItem(locationId, input) {
+      const currentMenu = menusByLocation.get(locationId) ?? defaultMenuPayload;
       let menu = currentMenu;
       const category = menu.categories.find((entry) => entry.id === input.categoryId);
       if (!category) {
@@ -915,7 +915,7 @@ function createInMemoryRepository(): CatalogRepository {
             : entry
         )
       });
-      menusByLocation.set(DEFAULT_LOCATION_ID, menu);
+      menusByLocation.set(locationId, menu);
 
       return toAdminMenuItem({
         itemId: nextItem.id,
@@ -929,8 +929,8 @@ function createInMemoryRepository(): CatalogRepository {
         customizationGroups: nextItem.customizationGroups
       });
     },
-    async updateAdminMenuItem(input) {
-      let menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
+    async updateAdminMenuItem(locationId, input) {
+      let menu = menusByLocation.get(locationId) ?? defaultMenuPayload;
       let updatedItem: AdminMenuItemWithCustomizations | undefined;
       menu = menuResponseSchema.parse({
         ...menu,
@@ -967,12 +967,12 @@ function createInMemoryRepository(): CatalogRepository {
           })
         }))
       });
-      menusByLocation.set(DEFAULT_LOCATION_ID, menu);
+      menusByLocation.set(locationId, menu);
 
       return updatedItem;
     },
-    async updateAdminMenuItemVisibility(input) {
-      let menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
+    async updateAdminMenuItemVisibility(locationId, input) {
+      let menu = menusByLocation.get(locationId) ?? defaultMenuPayload;
       let updatedItem: AdminMenuItemWithCustomizations | undefined;
       menu = menuResponseSchema.parse({
         ...menu,
@@ -1002,12 +1002,12 @@ function createInMemoryRepository(): CatalogRepository {
           })
         }))
       });
-      menusByLocation.set(DEFAULT_LOCATION_ID, menu);
+      menusByLocation.set(locationId, menu);
 
       return updatedItem;
     },
-    async deleteAdminMenuItem(itemId) {
-      let menu = menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
+    async deleteAdminMenuItem(locationId, itemId) {
+      let menu = menusByLocation.get(locationId) ?? defaultMenuPayload;
       menu = menuResponseSchema.parse({
         ...menu,
         categories: menu.categories.map((category) => ({
@@ -1015,19 +1015,19 @@ function createInMemoryRepository(): CatalogRepository {
           items: category.items.filter((item) => item.id !== itemId)
         }))
       });
-      menusByLocation.set(DEFAULT_LOCATION_ID, menu);
+      menusByLocation.set(locationId, menu);
 
       return { success: true };
     },
-    async getAdminStoreConfig() {
-      return adminStoreConfigsByLocation.get(DEFAULT_LOCATION_ID)!;
+    async getAdminStoreConfig(locationId) {
+      return adminStoreConfigsByLocation.get(locationId) ?? adminStoreConfigsByLocation.get(DEFAULT_LOCATION_ID)!;
     },
-    async updateAdminStoreConfig(input) {
-      const currentAppConfig = appConfigsByLocation.get(DEFAULT_LOCATION_ID) ?? defaultAppConfig;
-      const currentStoreConfig = storeConfigsByLocation.get(DEFAULT_LOCATION_ID) ?? defaultStoreConfigRecord;
+    async updateAdminStoreConfig(locationId, input) {
+      const currentAppConfig = appConfigsByLocation.get(locationId) ?? defaultAppConfig;
+      const currentStoreConfig = storeConfigsByLocation.get(locationId) ?? defaultStoreConfigRecord;
       const taxRateBasisPoints = input.taxRateBasisPoints ?? currentStoreConfig.taxRateBasisPoints;
       const nextAdminStoreConfig = buildAdminStoreConfig({
-        locationId: DEFAULT_LOCATION_ID,
+        locationId,
         storeName: input.storeName,
         locationName: input.locationName,
         hours: input.hours,
@@ -1050,17 +1050,17 @@ function createInMemoryRepository(): CatalogRepository {
         },
         storeCapabilities: input.capabilities ?? currentAppConfig.storeCapabilities
       });
-      adminStoreConfigsByLocation.set(DEFAULT_LOCATION_ID, nextAdminStoreConfig);
-      storeConfigsByLocation.set(DEFAULT_LOCATION_ID, nextStoreConfig);
-      appConfigsByLocation.set(DEFAULT_LOCATION_ID, nextAppConfig);
+      adminStoreConfigsByLocation.set(locationId, nextAdminStoreConfig);
+      storeConfigsByLocation.set(locationId, nextStoreConfig);
+      appConfigsByLocation.set(locationId, nextAppConfig);
 
       return nextAdminStoreConfig;
     },
-    async getMenu() {
-      return menusByLocation.get(DEFAULT_LOCATION_ID) ?? defaultMenuPayload;
+    async getMenu(locationId) {
+      return menusByLocation.get(locationId) ?? defaultMenuPayload;
     },
-    async getStoreConfig() {
-      return buildStoreConfigResponse(storeConfigsByLocation.get(DEFAULT_LOCATION_ID) ?? defaultStoreConfigRecord);
+    async getStoreConfig(locationId) {
+      return buildStoreConfigResponse(storeConfigsByLocation.get(locationId) ?? defaultStoreConfigRecord);
     },
     async pingDb() {
       // no-op for in-memory
@@ -1174,6 +1174,15 @@ async function seedCatalogDefaults(db: PersistenceDb) {
     .execute();
 }
 
+async function getBrandIdForLocation(db: PersistenceDb, locationId: string): Promise<string> {
+  const row = await db
+    .selectFrom("catalog_app_configs")
+    .select("brand_id")
+    .where("location_id", "=", locationId)
+    .executeTakeFirst();
+  return row?.brand_id ?? DEFAULT_BRAND_ID;
+}
+
 async function createPostgresRepository(connectionString: string): Promise<CatalogRepository> {
   const db = createPostgresDb(connectionString);
   const defaultAppConfigPayload = resolveDefaultAppConfigPayload();
@@ -1182,17 +1191,16 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
 
   return {
     backend: "postgres",
-    async getAppConfig() {
+    async getAppConfig(locationId) {
       const row = await db
         .selectFrom("catalog_app_configs")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
       const paymentProfileRow = await db
         .selectFrom("catalog_payment_profiles")
         .select("payment_profile_json")
-        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
 
       const appConfig = row ? appConfigSchema.parse(row.app_config_json) : defaultAppConfigPayload;
@@ -1555,20 +1563,18 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
 
       return nextMenu;
     },
-    async getAdminMenu() {
+    async getAdminMenu(locationId) {
       const categories = await db
         .selectFrom("catalog_menu_categories")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .orderBy("sort_order", "asc")
         .execute();
 
       const items = await db
         .selectFrom("catalog_menu_items")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .orderBy("category_id", "asc")
         .orderBy("sort_order", "asc")
         .execute();
@@ -1594,7 +1600,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       }
 
       return buildAdminMenuResponse({
-        locationId: defaultMenuPayload.locationId,
+        locationId,
         categories: categories.map((category) => ({
           categoryId: category.category_id,
           title: category.title,
@@ -1602,14 +1608,13 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         }))
       });
     },
-    async getHomeNewsCards() {
+    async getHomeNewsCards(locationId) {
       return buildHomeNewsCardsResponse({
-        locationId: defaultHomeNewsCardsPayload.locationId,
+        locationId,
         cards: await db
           .selectFrom("catalog_home_news_cards")
           .selectAll()
-          .where("brand_id", "=", DEFAULT_BRAND_ID)
-          .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+          .where("location_id", "=", locationId)
           .orderBy("sort_order", "asc")
           .orderBy("card_id", "asc")
           .execute()
@@ -1628,14 +1633,13 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
           )
       });
     },
-    async getAdminHomeNewsCards() {
+    async getAdminHomeNewsCards(locationId) {
       return buildHomeNewsCardsResponse({
-        locationId: defaultHomeNewsCardsPayload.locationId,
+        locationId,
         cards: await db
           .selectFrom("catalog_home_news_cards")
           .selectAll()
-          .where("brand_id", "=", DEFAULT_BRAND_ID)
-          .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+          .where("location_id", "=", locationId)
           .orderBy("sort_order", "asc")
           .orderBy("card_id", "asc")
           .execute()
@@ -1654,7 +1658,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
           )
       });
     },
-    async replaceAdminHomeNewsCards(input) {
+    async replaceAdminHomeNewsCards(locationId, input) {
+      const brandId = await getBrandIdForLocation(db, locationId);
       const cards = input.cards.map((card) =>
         toHomeNewsCard({
           cardId: card.cardId,
@@ -1670,8 +1675,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       await db.transaction().execute(async (trx) => {
         await trx
           .deleteFrom("catalog_home_news_cards")
-          .where("brand_id", "=", DEFAULT_BRAND_ID)
-          .where("location_id", "=", input.locationId)
+          .where("location_id", "=", locationId)
           .execute();
 
         if (cards.length > 0) {
@@ -1679,8 +1683,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
             .insertInto("catalog_home_news_cards")
             .values(
               cards.map((card) => ({
-                brand_id: DEFAULT_BRAND_ID,
-                location_id: input.locationId,
+                brand_id: brandId,
+                location_id: locationId,
                 card_id: card.cardId,
                 label: card.label,
                 title: card.title,
@@ -1695,16 +1699,16 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       });
 
       return buildHomeNewsCardsResponse({
-        locationId: input.locationId,
+        locationId,
         cards
       });
     },
-    async createAdminHomeNewsCard(input) {
+    async createAdminHomeNewsCard(locationId, input) {
+      const brandId = await getBrandIdForLocation(db, locationId);
       const nextSortOrderResult = await db
         .selectFrom("catalog_home_news_cards")
         .select((eb) => eb.fn.max<number>("sort_order").as("max_sort_order"))
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
       const nextSortOrder = input.sortOrder ?? (nextSortOrderResult?.max_sort_order ?? -1) + 1;
       const cardId = createHomeNewsCardId(input.title);
@@ -1712,8 +1716,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       await db
         .insertInto("catalog_home_news_cards")
         .values({
-          brand_id: DEFAULT_BRAND_ID,
-          location_id: defaultHomeNewsCardsPayload.locationId,
+          brand_id: brandId,
+          location_id: locationId,
           card_id: cardId,
           label: input.label,
           title: input.title,
@@ -1734,12 +1738,11 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         visible: input.visible
       });
     },
-    async updateAdminHomeNewsCard(input) {
+    async updateAdminHomeNewsCard(locationId, input) {
       const existingRow = await db
         .selectFrom("catalog_home_news_cards")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("card_id", "=", input.cardId)
         .executeTakeFirst();
 
@@ -1757,8 +1760,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
           visible: input.visible,
           sort_order: input.sortOrder
         })
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("card_id", "=", input.cardId)
         .executeTakeFirst();
 
@@ -1772,12 +1774,11 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         visible: input.visible
       });
     },
-    async updateAdminHomeNewsCardVisibility(input) {
+    async updateAdminHomeNewsCardVisibility(locationId, input) {
       const existingRow = await db
         .selectFrom("catalog_home_news_cards")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("card_id", "=", input.cardId)
         .executeTakeFirst();
 
@@ -1790,8 +1791,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         .set({
           visible: input.visible
         })
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("card_id", "=", input.cardId)
         .executeTakeFirst();
 
@@ -1805,22 +1805,21 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         visible: input.visible
       });
     },
-    async deleteAdminHomeNewsCard(cardId) {
+    async deleteAdminHomeNewsCard(locationId, cardId) {
       await db
         .deleteFrom("catalog_home_news_cards")
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultHomeNewsCardsPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("card_id", "=", cardId)
         .executeTakeFirst();
 
       return { success: true };
     },
-    async createAdminMenuItem(input) {
+    async createAdminMenuItem(locationId, input) {
+      const brandId = await getBrandIdForLocation(db, locationId);
       const category = await db
         .selectFrom("catalog_menu_categories")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("category_id", "=", input.categoryId)
         .executeTakeFirst();
 
@@ -1831,8 +1830,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       const nextSortOrderResult = await db
         .selectFrom("catalog_menu_items")
         .select((eb) => eb.fn.max<number>("sort_order").as("max_sort_order"))
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("category_id", "=", input.categoryId)
         .executeTakeFirst();
       const nextSortOrder = (nextSortOrderResult?.max_sort_order ?? -1) + 1;
@@ -1841,8 +1839,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       await db
         .insertInto("catalog_menu_items")
         .values({
-          brand_id: DEFAULT_BRAND_ID,
-          location_id: defaultMenuPayload.locationId,
+          brand_id: brandId,
+          location_id: locationId,
           item_id: itemId,
           category_id: input.categoryId,
           name: input.name,
@@ -1868,12 +1866,11 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         customizationGroups: []
       });
     },
-    async updateAdminMenuItem(input) {
+    async updateAdminMenuItem(locationId, input) {
       const existingRow = await db
         .selectFrom("catalog_menu_items")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("item_id", "=", input.itemId)
         .executeTakeFirst();
 
@@ -1893,16 +1890,14 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
           visible: input.visible,
           customization_groups_json: JSON.stringify(customizationGroups)
         })
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("item_id", "=", input.itemId)
         .executeTakeFirst();
 
       const category = await db
         .selectFrom("catalog_menu_categories")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("category_id", "=", existingRow.category_id)
         .executeTakeFirst();
 
@@ -1918,12 +1913,11 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         customizationGroups
       });
     },
-    async updateAdminMenuItemVisibility(input) {
+    async updateAdminMenuItemVisibility(locationId, input) {
       const existingRow = await db
         .selectFrom("catalog_menu_items")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("item_id", "=", input.itemId)
         .executeTakeFirst();
 
@@ -1936,16 +1930,14 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         .set({
           visible: input.visible
         })
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("item_id", "=", input.itemId)
         .executeTakeFirst();
 
       const category = await db
         .selectFrom("catalog_menu_categories")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("category_id", "=", existingRow.category_id)
         .executeTakeFirst();
 
@@ -1961,22 +1953,20 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         customizationGroups: existingRow.customization_groups_json
       });
     },
-    async deleteAdminMenuItem(itemId) {
+    async deleteAdminMenuItem(locationId, itemId) {
       await db
         .deleteFrom("catalog_menu_items")
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .where("item_id", "=", itemId)
         .executeTakeFirst();
 
       return { success: true };
     },
-    async getMenu() {
+    async getMenu(locationId) {
       const categories = await db
         .selectFrom("catalog_menu_categories")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .orderBy("sort_order", "asc")
         .execute();
 
@@ -1987,8 +1977,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       const items = await db
         .selectFrom("catalog_menu_items")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultMenuPayload.locationId)
+        .where("location_id", "=", locationId)
         .orderBy("category_id", "asc")
         .orderBy("sort_order", "asc")
         .execute();
@@ -2010,7 +1999,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       }
 
       return menuResponseSchema.parse({
-        locationId: defaultMenuPayload.locationId,
+        locationId,
         currency: defaultMenuPayload.currency,
         categories: categories.map((category) => ({
           id: category.category_id,
@@ -2019,17 +2008,16 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         }))
       });
     },
-    async getAdminStoreConfig() {
+    async getAdminStoreConfig(locationId) {
       const row = await db
         .selectFrom("catalog_store_configs")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultStoreConfigRecord.locationId)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
 
       if (!row) {
         return buildAdminStoreConfig({
-          locationId: DEFAULT_LOCATION_ID,
+          locationId,
           storeName: DEFAULT_BRAND_NAME,
           locationName: defaultAppConfigPayload.brand.locationName,
           hours: DEFAULT_STORE_HOURS,
@@ -2042,8 +2030,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       const appConfigRow = await db
         .selectFrom("catalog_app_configs")
         .select("app_config_json")
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
       const appConfig = appConfigSchema.parse(appConfigRow?.app_config_json ?? defaultAppConfigPayload);
 
@@ -2057,18 +2044,17 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         capabilities: appConfig.storeCapabilities
       });
     },
-    async updateAdminStoreConfig(input) {
+    async updateAdminStoreConfig(locationId, input) {
+      const brandId = await getBrandIdForLocation(db, locationId);
       const existingAppConfigRow = await db
         .selectFrom("catalog_app_configs")
         .select("app_config_json")
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
       const existingStoreConfigRow = await db
         .selectFrom("catalog_store_configs")
         .select(["prep_eta_minutes", "tax_rate_basis_points"])
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", DEFAULT_LOCATION_ID)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
 
       const currentAppConfig = appConfigSchema.parse(existingAppConfigRow?.app_config_json ?? defaultAppConfigPayload);
@@ -2086,8 +2072,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         await trx
           .insertInto("catalog_store_configs")
           .values({
-            brand_id: DEFAULT_BRAND_ID,
-            location_id: defaultStoreConfigRecord.locationId,
+            brand_id: brandId,
+            location_id: locationId,
             store_name: input.storeName,
             hours_text: input.hours,
             prep_eta_minutes: existingStoreConfigRow?.prep_eta_minutes ?? defaultStoreConfigRecord.prepEtaMinutes,
@@ -2096,7 +2082,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
           })
           .onConflict((oc) =>
             oc.column("location_id").doUpdateSet({
-              brand_id: DEFAULT_BRAND_ID,
+              brand_id: brandId,
               store_name: input.storeName,
               hours_text: input.hours,
               tax_rate_basis_points: taxRateBasisPoints,
@@ -2108,8 +2094,8 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         await trx
           .insertInto("catalog_app_configs")
           .values({
-            brand_id: DEFAULT_BRAND_ID,
-            location_id: DEFAULT_LOCATION_ID,
+            brand_id: brandId,
+            location_id: locationId,
             app_config_json: nextAppConfig
           })
           .onConflict((oc) =>
@@ -2121,7 +2107,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
       });
 
       return buildAdminStoreConfig({
-        locationId: DEFAULT_LOCATION_ID,
+        locationId,
         storeName: input.storeName,
         locationName: input.locationName,
         hours: input.hours,
@@ -2130,12 +2116,11 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         capabilities: nextAppConfig.storeCapabilities
       });
     },
-    async getStoreConfig() {
+    async getStoreConfig(locationId) {
       const row = await db
         .selectFrom("catalog_store_configs")
         .selectAll()
-        .where("brand_id", "=", DEFAULT_BRAND_ID)
-        .where("location_id", "=", defaultStoreConfigRecord.locationId)
+        .where("location_id", "=", locationId)
         .executeTakeFirst();
 
       if (!row) {
