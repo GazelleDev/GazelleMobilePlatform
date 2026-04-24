@@ -147,6 +147,10 @@ export function resolveOperatorCapabilities(role: z.infer<typeof operatorRoleSch
   return [...operatorCapabilitiesByRole[role]];
 }
 
+export function normalizeOperatorRole(role: string): z.infer<typeof operatorRoleSchema> {
+  return operatorRoleSchema.parse(role === "staff" ? "store" : role);
+}
+
 export const internalAdminRoleSchema = z.enum(["platform_owner", "platform_operator", "support_readonly"]);
 export const internalAdminCapabilitySchema = z.enum([
   "clients:read",

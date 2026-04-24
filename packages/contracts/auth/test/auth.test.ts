@@ -8,6 +8,7 @@ import {
   internalOwnerProvisionResponseSchema,
   internalOwnerSummarySchema,
   meResponseSchema,
+  normalizeOperatorRole,
   operatorGoogleExchangeRequestSchema,
   operatorPasswordSignInSchema,
   operatorUserCreateSchema,
@@ -103,6 +104,11 @@ describe("contracts-auth", () => {
 
     expect(payload.email).toBe("owner@gazellecoffee.com");
     expect(payload.password).toBe("Password123!");
+  });
+
+  it("normalizes the legacy staff operator role to store", () => {
+    expect(normalizeOperatorRole("staff")).toBe("store");
+    expect(normalizeOperatorRole("manager")).toBe("manager");
   });
 
   it("accepts me responses with optional customer profile fields", () => {

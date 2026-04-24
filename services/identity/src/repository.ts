@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypt
 import type { FastifyBaseLogger } from "fastify";
 import { authSessionSchema } from "@lattelink/contracts-core";
 import {
+  normalizeOperatorRole,
   resolveInternalAdminCapabilities,
   resolveOperatorCapabilities,
   type InternalAdminRole,
@@ -92,7 +93,7 @@ type PersistedOperatorUserRow = {
   google_sub: string | null;
   display_name: string;
   password_hash: string | null;
-  role: OperatorRole;
+  role: OperatorRole | "staff";
   location_id: string;
   active: boolean;
   created_at: string | Date;
@@ -453,15 +454,16 @@ function getDefaultInternalAdminSeeds(): Array<{
 }
 
 function toOperatorUserRecord(row: PersistedOperatorUserRow, locationIds?: readonly string[]): OperatorUserRecord {
+  const normalizedRole = normalizeOperatorRole(row.role);
   return {
     operatorUserId: row.operator_user_id,
     displayName: row.display_name,
     email: normalizeEmail(row.email),
-    role: row.role,
+    role: normalizedRole,
     locationId: row.location_id,
     locationIds: normalizeOperatorLocationIds(row.location_id, locationIds),
     active: row.active,
-    capabilities: resolveOperatorCapabilities(row.role),
+    capabilities: resolveOperatorCapabilities(normalizedRole),
     createdAt: parseIsoDate(row.created_at),
     updatedAt: parseIsoDate(row.updated_at)
   };
