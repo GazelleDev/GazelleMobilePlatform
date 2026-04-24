@@ -72,6 +72,7 @@ export function renderDashboard() {
     state.appConfig?.brand.locationName ?? state.storeConfig?.storeName ?? "Operator dashboard";
   const marketLabel = state.appConfig?.brand.marketLabel ?? "Store operations";
   const liveEnabled = isStaffDashboardEnabled(state.appConfig) && isOrderTrackingEnabled(state.appConfig);
+  const settingsAvailable = getAvailableDashboardSections().includes("store");
 
   return `
     <div class="dash-shell">
@@ -86,14 +87,32 @@ export function renderDashboard() {
             ${renderNavItems()}
           </nav>
 
-          <div class="dash-user-row">
-            <div class="dash-avatar">${escapeHtml(getOperatorInitials(state.session?.operator.displayName))}</div>
-            <div class="dash-user-meta">
-              <div class="dash-user-name">${escapeHtml(state.session?.operator.displayName ?? "Operator")}</div>
-              <div class="dash-user-role">${escapeHtml(getOperatorRoleLabel(state.session?.operator.role ?? "staff"))}</div>
+          <details class="dash-account-menu">
+            <summary class="dash-account-trigger" aria-label="Open account menu">
+              <div class="dash-avatar">${escapeHtml(getOperatorInitials(state.session?.operator.displayName))}</div>
+              <div class="dash-user-meta">
+                <div class="dash-user-name">${escapeHtml(state.session?.operator.displayName ?? "Operator")}</div>
+                <div class="dash-user-role">${escapeHtml(getOperatorRoleLabel(state.session?.operator.role ?? "staff"))}</div>
+              </div>
+              <span class="dash-account-chevron" aria-hidden="true">▾</span>
+            </summary>
+            <div class="dash-account-dropdown" role="menu">
+              <button class="dash-account-action" type="button" role="menuitem">
+                Account
+              </button>
+              <button
+                class="dash-account-action"
+                type="button"
+                role="menuitem"
+                ${settingsAvailable ? `data-action="set-section" data-section="store"` : "disabled"}
+              >
+                Settings
+              </button>
+              <button class="dash-account-action dash-account-action--danger" type="button" role="menuitem" data-action="sign-out">
+                Sign out
+              </button>
             </div>
-            <button class="dash-signout" type="button" data-action="sign-out">Sign out</button>
-          </div>
+          </details>
         </div>
       </header>
 

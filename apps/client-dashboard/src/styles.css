@@ -836,11 +836,43 @@ label.field > span {
   font-weight: 700;
 }
 
-.dash-user-row {
+.dash-account-menu {
+  position: relative;
+  min-width: max-content;
+}
+
+.dash-account-menu[open] .dash-account-chevron {
+  transform: rotate(180deg);
+}
+
+.dash-account-trigger {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: max-content;
+  min-width: 190px;
+  padding: 6px 8px 6px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  list-style: none;
+  transition: background var(--t), border-color var(--t), box-shadow var(--t);
+}
+
+.dash-account-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.dash-account-trigger:hover,
+.dash-account-menu[open] .dash-account-trigger {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+
+.dash-account-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
 
 .dash-avatar {
@@ -873,30 +905,58 @@ label.field > span {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 
-.dash-signout {
+.dash-account-chevron {
+  color: var(--color-text-3);
+  font-size: 11px;
+  line-height: 1;
+  transition: transform var(--t);
+}
+
+.dash-account-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 120;
+  min-width: 190px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.dash-account-action {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
   font-size: 13px;
   font-weight: 500;
   color: var(--color-text-2);
-  padding: 7px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  background: none;
   text-align: left;
-  transition: background var(--t), border-color var(--t), color var(--t);
+  background: transparent;
+  transition: background var(--t), color var(--t);
   outline: none;
 }
 
-.dash-signout:hover {
+.dash-account-action:hover:not(:disabled),
+.dash-account-action:focus-visible {
   background: var(--color-surface-2);
-  border-color: var(--color-border-strong);
   color: var(--color-text);
 }
 
-.dash-signout:focus-visible {
-  box-shadow: var(--shadow-focus);
+.dash-account-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.dash-account-action--danger {
+  color: var(--color-danger);
 }
 
 /* -------- Main area -------- */
@@ -1941,6 +2001,14 @@ label.field > span {
 
   .dash-user-meta {
     display: none;
+  }
+
+  .dash-account-trigger {
+    min-width: auto;
+  }
+
+  .dash-account-dropdown {
+    min-width: 180px;
   }
 
   .dash-topbar {
