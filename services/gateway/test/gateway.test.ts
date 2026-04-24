@@ -877,6 +877,11 @@ describe("gateway", () => {
               items: [],
               total: { currency: "USD", amountCents: 530 },
               pickupCode: "PAID01",
+              customer: {
+                name: "Avery Quinn",
+                email: "avery@example.com",
+                phone: "+13135550123"
+              },
               timeline: [
                 {
                   status: "PENDING_PAYMENT",
@@ -2199,7 +2204,17 @@ describe("gateway", () => {
     });
     expect(ordersResponse.statusCode).toBe(200);
     expect(ordersResponse.json()).toEqual(
-      expect.arrayContaining([expect.objectContaining({ status: "PAID", pickupCode: "PAID01" })])
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "PAID",
+          pickupCode: "PAID01",
+          customer: {
+            name: "Avery Quinn",
+            email: "avery@example.com",
+            phone: "+13135550123"
+          }
+        })
+      ])
     );
 
     const menuResponse = await app.inject({

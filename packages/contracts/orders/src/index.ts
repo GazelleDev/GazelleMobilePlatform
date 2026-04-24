@@ -52,6 +52,12 @@ export const orderTimelineEntrySchema = z.object({
   source: z.enum(["system", "staff", "webhook", "customer"]).optional()
 });
 
+export const orderCustomerSchema = z.object({
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  phone: z.string().min(1).optional()
+});
+
 export const orderSchema = z.object({
   id: z.string().uuid(),
   locationId: z.string(),
@@ -59,7 +65,8 @@ export const orderSchema = z.object({
   items: z.array(orderItemSchema),
   total: moneySchema,
   pickupCode: z.string(),
-  timeline: z.array(orderTimelineEntrySchema)
+  timeline: z.array(orderTimelineEntrySchema),
+  customer: orderCustomerSchema.optional()
 });
 
 export const quoteRequestItemSchema = z.object({
@@ -164,6 +171,7 @@ export const orderPaymentContextSchema = z.object({
 });
 
 export type OrderStatus = z.output<typeof orderStatusSchema>;
+export type OrderCustomer = z.output<typeof orderCustomerSchema>;
 export type OrderItemCustomizationSelectionSnapshot = z.output<typeof orderItemCustomizationSelectionSnapshotSchema>;
 export type OrderItemCustomizationSnapshot = z.output<typeof orderItemCustomizationSnapshotSchema>;
 export type OrderItem = z.output<typeof orderItemSchema>;

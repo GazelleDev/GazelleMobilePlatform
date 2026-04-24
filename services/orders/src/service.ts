@@ -258,6 +258,25 @@ function buildMissingOrderUserContextError(orderId: string) {
   });
 }
 
+async function hydrateOrderCustomer(params: {
+  order: Order;
+  deps: OrderServiceDeps;
+}): Promise<Order> {
+  const customer = await params.deps.repository.getOrderCustomer(params.order.id);
+  return customer ? orderSchema.parse({ ...params.order, customer }) : params.order;
+}
+
+async function hydrateOrderCustomers(params: {
+  orders: readonly Order[];
+  deps: OrderServiceDeps;
+}): Promise<Order[]> {
+  const customersByOrderId = await params.deps.repository.listOrderCustomers(params.orders.map((order) => order.id));
+  return params.orders.map((order) => {
+    const customer = customersByOrderId.get(order.id);
+    return customer ? orderSchema.parse({ ...order, customer }) : order;
+  });
+}
+
 function buildActiveOrderExistsError(order: Order) {
   return buildServiceError({
     statusCode: 409,
@@ -1353,7 +1372,12 @@ export async function listOrdersForRead(params: {
     )
   );
 
-  return { orders: z.array(orderSchema).parse(reconciledOrders) };
+  const hydratedOrders = await hydrateOrderCustomers({
+    orders: reconciledOrders,
+    deps: params.deps
+  });
+
+  return { orders: z.array(orderSchema).parse(hydratedOrders) };
 }
 
 export async function getOrderForRead(params: {
@@ -1391,7 +1415,11 @@ export async function getOrderForRead(params: {
     requestId: params.requestId,
     deps: params.deps
   });
-  return { order: orderSchema.parse(reconciledOrder) };
+  const hydratedOrder = await hydrateOrderCustomer({
+    order: reconciledOrder,
+    deps: params.deps
+  });
+  return { order: orderSchema.parse(hydratedOrder) };
 }
 
 export async function cancelOrder(params: {

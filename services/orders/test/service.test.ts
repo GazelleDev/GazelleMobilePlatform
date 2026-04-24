@@ -9,6 +9,7 @@ import {
   createOrder,
   createQuote,
   getOrderForRead,
+  listOrdersForRead,
   processPayment,
   reconcilePaymentWebhook,
   type PosAdapter,
@@ -704,6 +705,178 @@ describe("orders service layer", () => {
       details: {
         orderId: order.id,
         locationId: "northside-01"
+      }
+    });
+  });
+
+  it("hydrates customer details onto operator order lists", async () => {
+    const order = {
+      id: "123e4567-e89b-12d3-a456-426614174201",
+      locationId: "flagship-01",
+      status: "PAID" as const,
+      items: [],
+      total: { currency: "USD" as const, amountCents: 530 },
+      pickupCode: "PAID01",
+      timeline: [
+        {
+          status: "PAID" as const,
+          occurredAt: "2026-04-24T12:00:00.000Z"
+        }
+      ]
+    };
+    const repository: OrdersRepository = {
+      backend: "memory",
+      saveQuote: vi.fn(),
+      getQuote: vi.fn(),
+      createOrder: vi.fn(),
+      getOrder: vi.fn().mockResolvedValue(order),
+      listOrders: vi.fn().mockResolvedValue([order]),
+      listOrdersByUser: vi.fn().mockResolvedValue([]),
+      listOrdersByLocation: vi.fn().mockResolvedValue([order]),
+      getOrderForCreateIdempotency: vi.fn(),
+      saveCreateOrderIdempotency: vi.fn(),
+      getPaymentOrderByIdempotency: vi.fn(),
+      savePaymentIdempotency: vi.fn(),
+      getOrderQuote: vi.fn(),
+      getOrderUserId: vi.fn().mockResolvedValue(defaultTestUserId),
+      getOrderCustomer: vi.fn().mockResolvedValue({
+        name: "Avery Quinn",
+        email: "avery@example.com",
+        phone: "+13135550123"
+      }),
+      listOrderCustomers: vi.fn().mockResolvedValue(
+        new Map([
+          [
+            order.id,
+            {
+              name: "Avery Quinn",
+              email: "avery@example.com",
+              phone: "+13135550123"
+            }
+          ]
+        ])
+      ),
+      setOrderUserId: vi.fn(),
+      setPaymentId: vi.fn(),
+      getPaymentId: vi.fn(),
+      setSuccessfulCharge: vi.fn(),
+      getSuccessfulCharge: vi.fn(),
+      setSuccessfulRefund: vi.fn(),
+      getSuccessfulRefund: vi.fn(),
+      updateOrder: vi.fn().mockImplementation(async (_orderId, nextOrder) => nextOrder),
+      getCatalogItemsForQuote: vi.fn().mockResolvedValue(new Map()),
+      getTaxRateBasisPoints: vi.fn().mockResolvedValue(600),
+      pingDb: vi.fn(),
+      close: vi.fn()
+    };
+    const deps: OrderServiceDeps = {
+      repository,
+      catalogBaseUrl: "http://catalog.test",
+      paymentsBaseUrl: "http://payments.test",
+      loyaltyBaseUrl: "http://loyalty.test",
+      notificationsBaseUrl: "http://notifications.test",
+      fulfillmentConfig: {
+        ...DEFAULT_APP_CONFIG_FULFILLMENT,
+        mode: "staff"
+      },
+      logger: createLoggerMock()
+    };
+
+    const result = await listOrdersForRead({
+      requestId: "list-orders-customer-hydration",
+      locationId: "flagship-01",
+      deps
+    });
+
+    expect(result.orders).toEqual([
+      expect.objectContaining({
+        id: order.id,
+        customer: {
+          name: "Avery Quinn",
+          email: "avery@example.com",
+          phone: "+13135550123"
+        }
+      })
+    ]);
+  });
+
+  it("hydrates customer details onto single operator order reads", async () => {
+    const order = {
+      id: "123e4567-e89b-12d3-a456-426614174202",
+      locationId: "flagship-01",
+      status: "PAID" as const,
+      items: [],
+      total: { currency: "USD" as const, amountCents: 530 },
+      pickupCode: "PAID02",
+      timeline: [
+        {
+          status: "PAID" as const,
+          occurredAt: "2026-04-24T12:00:00.000Z"
+        }
+      ]
+    };
+    const repository: OrdersRepository = {
+      backend: "memory",
+      saveQuote: vi.fn(),
+      getQuote: vi.fn(),
+      createOrder: vi.fn(),
+      getOrder: vi.fn().mockResolvedValue(order),
+      listOrders: vi.fn().mockResolvedValue([]),
+      listOrdersByUser: vi.fn().mockResolvedValue([]),
+      listOrdersByLocation: vi.fn().mockResolvedValue([]),
+      getOrderForCreateIdempotency: vi.fn(),
+      saveCreateOrderIdempotency: vi.fn(),
+      getPaymentOrderByIdempotency: vi.fn(),
+      savePaymentIdempotency: vi.fn(),
+      getOrderQuote: vi.fn(),
+      getOrderUserId: vi.fn().mockResolvedValue(defaultTestUserId),
+      getOrderCustomer: vi.fn().mockResolvedValue({
+        name: "Avery Quinn",
+        email: "avery@example.com"
+      }),
+      listOrderCustomers: vi.fn().mockResolvedValue(new Map()),
+      setOrderUserId: vi.fn(),
+      setPaymentId: vi.fn(),
+      getPaymentId: vi.fn(),
+      setSuccessfulCharge: vi.fn(),
+      getSuccessfulCharge: vi.fn(),
+      setSuccessfulRefund: vi.fn(),
+      getSuccessfulRefund: vi.fn(),
+      updateOrder: vi.fn().mockImplementation(async (_orderId, nextOrder) => nextOrder),
+      getCatalogItemsForQuote: vi.fn().mockResolvedValue(new Map()),
+      getTaxRateBasisPoints: vi.fn().mockResolvedValue(600),
+      pingDb: vi.fn(),
+      close: vi.fn()
+    };
+    const deps: OrderServiceDeps = {
+      repository,
+      catalogBaseUrl: "http://catalog.test",
+      paymentsBaseUrl: "http://payments.test",
+      loyaltyBaseUrl: "http://loyalty.test",
+      notificationsBaseUrl: "http://notifications.test",
+      fulfillmentConfig: {
+        ...DEFAULT_APP_CONFIG_FULFILLMENT,
+        mode: "staff"
+      },
+      logger: createLoggerMock()
+    };
+
+    const result = await getOrderForRead({
+      orderId: order.id,
+      locationId: "flagship-01",
+      requestId: "get-order-customer-hydration",
+      deps
+    });
+
+    expect("error" in result).toBe(false);
+    if ("error" in result) {
+      throw new Error(`Unexpected error: ${result.error.code}`);
+    }
+    expect(result.order).toMatchObject({
+      id: order.id,
+      customer: {
+        name: "Avery Quinn",
+        email: "avery@example.com"
       }
     });
   });

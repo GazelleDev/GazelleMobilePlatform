@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import { normalizeCustomizationGroups, type MenuItemCustomizationGroup } from "@lattelink/contracts-catalog";
-import { orderQuoteSchema, orderSchema } from "@lattelink/contracts-orders";
+import { orderCustomerSchema, orderQuoteSchema, orderSchema } from "@lattelink/contracts-orders";
 import {
   allowsInMemoryPersistence,
   buildPersistenceStartupError,
@@ -13,6 +13,7 @@ import { z } from "zod";
 
 type OrderQuote = z.output<typeof orderQuoteSchema>;
 type Order = z.output<typeof orderSchema>;
+type OrderCustomer = z.output<typeof orderCustomerSchema>;
 
 type StoredOrderRecord = {
   order: Order;
@@ -41,6 +42,11 @@ type PersistedQuoteRow = {
 
 const defaultTaxRateBasisPoints = 600;
 
+function trimToUndefined(value: string | null | undefined) {
+  const next = value?.trim();
+  return next && next.length > 0 ? next : undefined;
+}
+
 export type QuoteCatalogItem = {
   itemId: string;
   itemName: string;
@@ -63,6 +69,8 @@ export type OrdersRepository = {
   savePaymentIdempotency(orderId: string, idempotencyKey: string): Promise<void>;
   getOrderQuote(orderId: string): Promise<OrderQuote | undefined>;
   getOrderUserId(orderId: string): Promise<string | undefined>;
+  getOrderCustomer(orderId: string): Promise<OrderCustomer | undefined>;
+  listOrderCustomers(orderIds: readonly string[]): Promise<Map<string, OrderCustomer>>;
   setOrderUserId(orderId: string, userId: string): Promise<void>;
   setPaymentId(orderId: string, paymentId: string): Promise<void>;
   getPaymentId(orderId: string): Promise<string | undefined>;
@@ -268,6 +276,12 @@ function createInMemoryRepository(): OrdersRepository {
     async getOrderUserId(orderId) {
       return ordersById.get(orderId)?.userId;
     },
+    async getOrderCustomer() {
+      return undefined;
+    },
+    async listOrderCustomers() {
+      return new Map();
+    },
     async setOrderUserId(orderId, userId) {
       const record = ordersById.get(orderId);
       if (!record) {
@@ -364,6 +378,28 @@ async function createPostgresRepository(
 
   function parseOrder(payload: unknown): Order {
     return orderSchema.parse(payload);
+  }
+
+  function parseOrderCustomer(payload: unknown): OrderCustomer | undefined {
+    if (!payload || typeof payload !== "object") {
+      return undefined;
+    }
+
+    const parsed = orderCustomerSchema.safeParse(payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  function toOrderCustomerFromIdentityUser(row: {
+    name: string | null;
+    display_name: string | null;
+    email: string | null;
+    phone_number: string | null;
+  }): OrderCustomer | undefined {
+    return parseOrderCustomer({
+      name: trimToUndefined(row.display_name) ?? trimToUndefined(row.name),
+      email: trimToUndefined(row.email),
+      phone: trimToUndefined(row.phone_number)
+    });
   }
 
   function parseQuote(payload: unknown): OrderQuote {
@@ -518,6 +554,48 @@ async function createPostgresRepository(
     async getOrderUserId(orderId) {
       const row = await getPersistedOrder(orderId);
       return row?.user_id;
+    },
+    async getOrderCustomer(orderId) {
+      const row = await db
+        .selectFrom("orders")
+        .innerJoin("identity_users", "identity_users.user_id", "orders.user_id")
+        .select([
+          "identity_users.name",
+          "identity_users.display_name",
+          "identity_users.email",
+          "identity_users.phone_number"
+        ])
+        .where("orders.order_id", "=", orderId)
+        .executeTakeFirst();
+
+      return row ? toOrderCustomerFromIdentityUser(row) : undefined;
+    },
+    async listOrderCustomers(orderIds) {
+      if (orderIds.length === 0) {
+        return new Map();
+      }
+
+      const rows = await db
+        .selectFrom("orders")
+        .innerJoin("identity_users", "identity_users.user_id", "orders.user_id")
+        .select([
+          "orders.order_id",
+          "identity_users.name",
+          "identity_users.display_name",
+          "identity_users.email",
+          "identity_users.phone_number"
+        ])
+        .where("orders.order_id", "in", [...orderIds])
+        .execute();
+
+      return new Map(
+        rows
+          .map((row) => {
+            const customer = toOrderCustomerFromIdentityUser(row);
+            return customer ? ([row.order_id, customer] as const) : null;
+          })
+          .filter((entry): entry is readonly [string, OrderCustomer] => entry !== null)
+      );
     },
     async setOrderUserId(orderId, userId) {
       await db
