@@ -1711,15 +1711,18 @@ label.field > span {
 }
 
 .dash-ticket-card--needs-action {
-  border-color: rgba(217, 119, 6, 0.22);
+  --ticket-header-bg: #dc2626;
+  border-color: #fecaca;
 }
 
 .dash-ticket-card--in-progress {
-  border-color: rgba(37, 99, 235, 0.22);
+  --ticket-header-bg: #1d4ed8;
+  border-color: #bfdbfe;
 }
 
 .dash-ticket-card--ready {
-  border-color: rgba(22, 163, 74, 0.22);
+  --ticket-header-bg: #16a34a;
+  border-color: #bbf7d0;
 }
 
 .dash-ticket-card__band {
@@ -1727,21 +1730,12 @@ label.field > span {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px;
-  margin: -14px -14px 0;
+  min-height: 104px;
+  padding: 16px;
+  margin: -14px -14px 10px;
   border-radius: var(--r-md) var(--r-md) 0 0;
-}
-
-.dash-ticket-card--needs-action .dash-ticket-card__band {
-  background: #dc2626;
-}
-
-.dash-ticket-card--in-progress .dash-ticket-card__band {
-  background: #1d4ed8;
-}
-
-.dash-ticket-card--ready .dash-ticket-card__band {
-  background: #16a34a;
+  background: var(--ticket-header-bg, var(--color-surface-2));
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.14);
 }
 
 .dash-ticket-label {
