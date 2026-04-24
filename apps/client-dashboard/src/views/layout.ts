@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 import { escapeHtml, formatDashboardDate, getOperatorInitials } from "../ui/format.js";
-import { filterOrdersByView, getOperatorRoleLabel } from "../model.js";
+import { filterOrdersByView } from "../model.js";
 import {
   isOrderTrackingEnabled,
   isStaffDashboardEnabled
@@ -92,7 +92,6 @@ export function renderDashboard() {
               <div class="dash-avatar">${escapeHtml(getOperatorInitials(state.session?.operator.displayName))}</div>
               <div class="dash-user-meta">
                 <div class="dash-user-name">${escapeHtml(state.session?.operator.displayName ?? "Operator")}</div>
-                <div class="dash-user-role">${escapeHtml(getOperatorRoleLabel(state.session?.operator.role ?? "staff"))}</div>
               </div>
               <span class="dash-account-chevron" aria-hidden="true">▾</span>
             </summary>
