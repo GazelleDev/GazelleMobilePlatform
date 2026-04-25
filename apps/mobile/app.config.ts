@@ -133,7 +133,8 @@ const config: ExpoConfig = {
     bundleIdentifier,
     usesAppleSignIn: true,
     infoPlist: {
-      NSCameraUsageDescription: "Allow $(PRODUCT_NAME) to access the camera to scan QR codes and capture profile images when those features are used."
+      NSCameraUsageDescription: "Allow $(PRODUCT_NAME) to access the camera to scan QR codes and capture profile images when those features are used.",
+      NSUserNotificationUsageDescription: "$(PRODUCT_NAME) uses notifications to alert you when your order is ready for pickup."
     },
     associatedDomains: resolveAssociatedDomains(),
     entitlements:
@@ -162,7 +163,19 @@ const config: ExpoConfig = {
       projectId: "18320a67-0f15-4860-9f84-845eb0f4c31c"
     }
   },
-  plugins: ["expo-router", "expo-secure-store", "expo-font", "expo-apple-authentication", stripePlugin]
+  plugins: [
+    "expo-router",
+    "expo-secure-store",
+    "expo-font",
+    "expo-apple-authentication",
+    stripePlugin,
+    [
+      "expo-notifications",
+      {
+        iosDisplayInForeground: true
+      }
+    ]
+  ]
 };
 
 export default config;

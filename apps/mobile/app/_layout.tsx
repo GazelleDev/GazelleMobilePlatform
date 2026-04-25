@@ -9,10 +9,11 @@ import { useEffect, useRef } from "react";
 import { InteractionManager, Linking, StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { AuthSessionProvider } from "../src/auth/session";
+import { AuthSessionProvider, useAuthSession } from "../src/auth/session";
 import { CartProvider } from "../src/cart/store";
 import { CheckoutFlowProvider } from "../src/orders/flow";
 import { uiPalette } from "../src/ui/system";
+import { usePushNotificationRegistration } from "../src/notifications/usePushNotificationRegistration";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,12 @@ SplashScreen.setOptions({
 });
 
 void SplashScreen.preventAutoHideAsync();
+
+function AppInitializer() {
+  const { isAuthenticated } = useAuthSession();
+  usePushNotificationRegistration(isAuthenticated);
+  return null;
+}
 
 export default function RootLayout() {
   const pathname = usePathname();
@@ -97,6 +104,7 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <BottomSheetModalProvider>
             <AuthSessionProvider>
+              <AppInitializer />
               <CartProvider>
                 <CheckoutFlowProvider>
                   <Stack
