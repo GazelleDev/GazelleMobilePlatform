@@ -3784,7 +3784,7 @@ export async function registerRoutes(app: FastifyInstance) {
     const input = refundRequestSchema.parse(request.body);
     const existingRefund = await repository.findRefundByIdempotency(input.orderId, input.idempotencyKey);
 
-    if (existingRefund) {
+    if (existingRefund && existingRefund.status === "REFUNDED") {
       if (
         existingRefund.orderId !== input.orderId ||
         existingRefund.paymentId !== input.paymentId ||
