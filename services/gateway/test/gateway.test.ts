@@ -23,6 +23,8 @@ describe("gateway", () => {
   let previousNodeEnv: string | undefined;
   let queuedOrderStatuses: Map<string, Array<"PENDING_PAYMENT" | "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED">>;
   let queuedOrderPayloads: Map<string, Array<ReturnType<typeof buildOrderPayload>>>;
+  let queuedOrderListPayloads: Array<Array<ReturnType<typeof buildOrderPayload>>>;
+  let failOrderListFetchWhenQueueEmpty: boolean;
 
   function buildOrderPayload(
     orderId: string,
@@ -92,6 +94,8 @@ describe("gateway", () => {
     previousNodeEnv = process.env.NODE_ENV;
     queuedOrderStatuses = new Map();
     queuedOrderPayloads = new Map();
+    queuedOrderListPayloads = [];
+    failOrderListFetchWhenQueueEmpty = false;
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
     process.env.ORDERS_SERVICE_BASE_URL = "http://orders.internal";
     process.env.CATALOG_SERVICE_BASE_URL = "http://catalog.internal";
@@ -870,6 +874,26 @@ describe("gateway", () => {
       }
 
       if (url.endsWith("/v1/orders") && method === "GET") {
+        if (queuedOrderListPayloads.length > 0) {
+          return new Response(JSON.stringify(queuedOrderListPayloads.shift()), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+        if (failOrderListFetchWhenQueueEmpty) {
+          return new Response(
+            JSON.stringify({
+              code: "UPSTREAM_ERROR",
+              message: "forced test failure",
+              requestId: "forced-order-list-failure"
+            }),
+            {
+              status: 500,
+              headers: { "content-type": "application/json" }
+            }
+          );
+        }
+
         return new Response(
           JSON.stringify([
             {
@@ -2154,6 +2178,55 @@ describe("gateway", () => {
       expect(upstreamHeaders.get("x-user-id")).toBe("123e4567-e89b-12d3-a456-426614174000");
       expect(upstreamHeaders.get("x-gateway-token")).toBe("gateway-test-token");
     }
+
+    await app.close();
+  });
+
+  it("streams the customer order list snapshot as text/event-stream", async () => {
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
+    failOrderListFetchWhenQueueEmpty = true;
+    const app = await buildApp();
+    const initialOrders = [buildOrderPayload("123e4567-e89b-12d3-a456-426614174150", "PAID")];
+    queuedOrderListPayloads = [initialOrders];
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/orders/stream",
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/event-stream");
+    expect(response.body).toContain('"type":"snapshot"');
+    expect(response.body).toContain('"id":"123e4567-e89b-12d3-a456-426614174150"');
+
+    await app.close();
+  });
+
+  it("streams customer order list changes without waiting for a manual refresh", async () => {
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
+    failOrderListFetchWhenQueueEmpty = true;
+    const app = await buildApp();
+    const initialOrder = buildOrderPayload("123e4567-e89b-12d3-a456-426614174151", "PAID");
+    const newOrder = buildOrderPayload("123e4567-e89b-12d3-a456-426614174152", "PENDING_PAYMENT");
+    queuedOrderListPayloads = [[initialOrder], [newOrder, initialOrder]];
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/orders/stream",
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dataEvents = response.body
+      .split("\n\n")
+      .filter((block) => block.startsWith("data: "))
+      .map((block) => block.trim());
+    expect(dataEvents).toHaveLength(2);
+    expect(dataEvents[0]).toContain('"type":"snapshot"');
+    expect(dataEvents[0]).toContain('"id":"123e4567-e89b-12d3-a456-426614174151"');
+    expect(dataEvents[1]).toContain('"type":"snapshot"');
+    expect(dataEvents[1]).toContain('"id":"123e4567-e89b-12d3-a456-426614174152"');
 
     await app.close();
   });

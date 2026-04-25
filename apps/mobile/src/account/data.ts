@@ -106,6 +106,10 @@ function filterVisibleOrderHistory(orders: OrderHistoryEntry[]) {
   return orders.filter((order) => !isAbortedCheckoutOrder(order));
 }
 
+export function normalizeOrderHistory(orders: OrderHistoryEntry[]) {
+  return sortOrdersByLatestActivity(filterVisibleOrderHistory(orders));
+}
+
 export function mergeOrderIntoHistory(
   currentOrders: OrderHistoryEntry[] | undefined,
   order: OrderHistoryEntry
@@ -116,7 +120,7 @@ export function mergeOrderIntoHistory(
     ? baseOrders.map((entry) => (entry.id === order.id ? order : entry))
     : [order, ...baseOrders];
 
-  return sortOrdersByLatestActivity(filterVisibleOrderHistory(nextOrders));
+  return normalizeOrderHistory(nextOrders);
 }
 
 export function useOrderHistoryQuery(enabled = true) {
@@ -124,7 +128,7 @@ export function useOrderHistoryQuery(enabled = true) {
     queryKey: orderHistoryQueryKey,
     enabled,
     queryFn: async (): Promise<OrderHistoryEntry[]> =>
-      sortOrdersByLatestActivity(filterVisibleOrderHistory(orderListSchema.parse(await apiClient.listOrders())))
+      normalizeOrderHistory(orderListSchema.parse(await apiClient.listOrders()))
   });
 }
 

@@ -40,6 +40,18 @@ export const CATALOG_API_BASE_URL =
 
 type OrderUpdateHandler = (order: Order) => void;
 type OrderUpdateErrorHandler = (error: unknown) => void;
+const ordersStreamSnapshotSchema = z.object({
+  type: z.literal("snapshot"),
+  orders: z.array(orderSchema)
+});
+const ordersStreamUpdateSchema = z.object({
+  type: z.literal("order_update"),
+  order: orderSchema
+});
+export type OrdersStreamEvent =
+  | z.output<typeof ordersStreamSnapshotSchema>
+  | z.output<typeof ordersStreamUpdateSchema>;
+type OrdersStreamEventHandler = (event: OrdersStreamEvent) => void;
 const cloverCardEntryConfigSchema = z.object({
   enabled: z.boolean(),
   providerMode: z.enum(["simulated", "live"]),
@@ -52,6 +64,10 @@ export type CloverCardEntryConfig = z.output<typeof cloverCardEntryConfigSchema>
 
 type MobileApiClient = GazelleApiClient & {
   getCloverCardEntryConfig(): Promise<CloverCardEntryConfig>;
+  subscribeToOrders(
+    onEvent: OrdersStreamEventHandler,
+    onError?: OrderUpdateErrorHandler
+  ): () => void;
   subscribeToOrderUpdates(
     orderId: string,
     onUpdate: OrderUpdateHandler,
@@ -152,6 +168,75 @@ async function streamOrderUpdates(params: {
   }
 }
 
+async function streamOrders(params: {
+  accessToken: string;
+  onEvent: OrdersStreamEventHandler;
+  signal: AbortSignal;
+}) {
+  let response: Response;
+
+  try {
+    response = await fetch(resolveConfiguredApiUrl(API_BASE_URL, "/orders/stream"), {
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${params.accessToken}`
+      },
+      signal: params.signal
+    });
+  } catch (error) {
+    throw toReachabilityError(error);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Orders stream request failed (${response.status})`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader || typeof TextDecoder !== "function") {
+    throw new Error("Authenticated SSE streaming is not available in this runtime");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const emit = (raw: string) => {
+    const parsed = JSON.parse(raw);
+    const snapshot = ordersStreamSnapshotSchema.safeParse(parsed);
+    if (snapshot.success) {
+      params.onEvent(snapshot.data);
+      return;
+    }
+
+    params.onEvent(ordersStreamUpdateSchema.parse(parsed));
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const { completeEvents, remainder } = parseSseEventChunks(buffer);
+    buffer = remainder;
+
+    for (const eventBlock of completeEvents) {
+      const data = readSseEventData(eventBlock);
+      if (!data) {
+        continue;
+      }
+
+      emit(data);
+    }
+  }
+
+  const trailingData = readSseEventData(buffer);
+  if (trailingData) {
+    emit(trailingData);
+  }
+}
+
 function startOrderPolling(params: {
   client: GazelleApiClient;
   orderId: string;
@@ -174,6 +259,41 @@ function startOrderPolling(params: {
     }
   };
 
+  const intervalHandle = setInterval(() => {
+    void poll();
+  }, fallbackOrderUpdatePollMs);
+
+  return () => {
+    disposed = true;
+    clearInterval(intervalHandle);
+  };
+}
+
+function startOrdersPolling(params: {
+  client: GazelleApiClient;
+  onEvent: OrdersStreamEventHandler;
+  onError?: OrderUpdateErrorHandler;
+}) {
+  let disposed = false;
+
+  const poll = async () => {
+    if (disposed) {
+      return;
+    }
+
+    try {
+      params.onEvent({
+        type: "snapshot",
+        orders: orderSchema.array().parse(await params.client.listOrders())
+      });
+    } catch (error) {
+      if (!disposed) {
+        params.onError?.(error);
+      }
+    }
+  };
+
+  void poll();
   const intervalHandle = setInterval(() => {
     void poll();
   }, fallbackOrderUpdatePollMs);
@@ -220,6 +340,75 @@ export const apiClient = Object.assign(baseApiClient, {
     }
 
     return cloverCardEntryConfigSchema.parse(JSON.parse(await response.text()));
+  },
+  subscribeToOrders(onEvent: OrdersStreamEventHandler, onError?: OrderUpdateErrorHandler) {
+    let disposed = false;
+    let fallbackCleanup = () => {};
+    const abortController = new AbortController();
+
+    const stopFallback = () => {
+      fallbackCleanup();
+      fallbackCleanup = () => {};
+    };
+
+    const startFallback = () => {
+      if (disposed) {
+        return;
+      }
+
+      stopFallback();
+      fallbackCleanup = startOrdersPolling({
+        client: baseApiClient,
+        onEvent,
+        onError
+      });
+    };
+
+    if (
+      typeof fetch !== "function" ||
+      typeof TextDecoder !== "function" ||
+      typeof currentAccessToken !== "string" ||
+      currentAccessToken.length === 0
+    ) {
+      startFallback();
+
+      return () => {
+        disposed = true;
+        abortController.abort();
+        stopFallback();
+      };
+    }
+
+    const streamAccessToken = currentAccessToken;
+
+    void (async () => {
+      try {
+        await streamOrders({
+          accessToken: streamAccessToken,
+          onEvent,
+          signal: abortController.signal
+        });
+        if (disposed) {
+          return;
+        }
+
+        onError?.(new Error("Orders stream closed"));
+        startFallback();
+      } catch (error) {
+        if (disposed || isAbortError(error)) {
+          return;
+        }
+
+        onError?.(error);
+        startFallback();
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      abortController.abort();
+      stopFallback();
+    };
   },
   subscribeToOrderUpdates(orderId: string, onUpdate: OrderUpdateHandler, onError?: OrderUpdateErrorHandler) {
     let disposed = false;

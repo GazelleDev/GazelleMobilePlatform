@@ -147,6 +147,13 @@ type StreamOrderFetchError = {
   statusCode: number;
   error: z.output<typeof apiErrorSchema>;
 };
+type StreamOrdersFetchSuccess = {
+  orders: Array<z.output<typeof orderSchema>>;
+};
+type StreamOrdersFetchError = {
+  statusCode: number;
+  error: z.output<typeof apiErrorSchema>;
+};
 
 function unauthorized(requestId: string) {
   return apiErrorSchema.parse({
@@ -963,6 +970,107 @@ async function fetchOrderForStream(params: {
   } as const;
 }
 
+async function fetchOrdersForStream(params: {
+  requestId: string;
+  ordersBaseUrl: string;
+  gatewayInternalApiToken: string | undefined;
+  userId: string;
+  authorization: string;
+  timeoutMs?: number;
+}): Promise<StreamOrdersFetchSuccess | StreamOrdersFetchError> {
+  const {
+    requestId,
+    ordersBaseUrl,
+    gatewayInternalApiToken,
+    userId,
+    authorization,
+    timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs)
+  } = params;
+  const headers: Record<string, string> = {
+    authorization,
+    "x-request-id": requestId,
+    "x-user-id": userId
+  };
+
+  if (gatewayInternalApiToken) {
+    headers["x-gateway-token"] = gatewayInternalApiToken;
+  }
+
+  let upstreamResponse: Response;
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
+
+  try {
+    upstreamResponse = await fetch(`${ordersBaseUrl}/v1/orders`, {
+      method: "GET",
+      headers,
+      signal: timeoutController.signal
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      return {
+        statusCode: 504,
+        error: apiErrorSchema.parse({
+          code: "UPSTREAM_TIMEOUT",
+          message: "Orders service timed out",
+          requestId
+        })
+      } as const;
+    }
+
+    return {
+      statusCode: 502,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Orders service is unavailable",
+        requestId
+      })
+    } as const;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+
+  const rawBody = await upstreamResponse.text();
+  const parsedBody = parseJsonSafely(rawBody);
+
+  if (!upstreamResponse.ok) {
+    const upstreamError = apiErrorSchema.safeParse(parsedBody);
+    if (upstreamError.success) {
+      return {
+        statusCode: upstreamResponse.status,
+        error: upstreamError.data
+      } as const;
+    }
+
+    return {
+      statusCode: upstreamResponse.status,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_ERROR",
+        message: `Orders request failed with status ${upstreamResponse.status}`,
+        requestId,
+        details: toErrorDetails(parsedBody)
+      })
+    } as const;
+  }
+
+  const parsedResponse = z.array(orderSchema).safeParse(parsedBody);
+  if (!parsedResponse.success) {
+    return {
+      statusCode: 502,
+      error: apiErrorSchema.parse({
+        code: "UPSTREAM_INVALID_RESPONSE",
+        message: "Orders response did not match contract",
+        requestId,
+        details: parsedResponse.error.flatten()
+      })
+    } as const;
+  }
+
+  return {
+    orders: parsedResponse.data
+  } as const;
+}
+
 function isTerminalOrderStatus(status: z.output<typeof orderSchema>["status"]) {
   return status === "COMPLETED" || status === "CANCELED";
 }
@@ -979,6 +1087,15 @@ function buildOrderStreamRevision(order: z.output<typeof orderSchema>) {
     latestTimelineOccurredAt: latestTimelineEntry?.occurredAt ?? null,
     latestTimelineNote: latestTimelineEntry?.note ?? null
   });
+}
+
+function buildOrdersStreamRevision(orders: Array<z.output<typeof orderSchema>>) {
+  return JSON.stringify(
+    orders.map((order) => ({
+      id: order.id,
+      revision: buildOrderStreamRevision(order)
+    }))
+  );
 }
 
 async function resolveAuthenticatedUserId(params: {
@@ -2114,6 +2231,178 @@ export async function registerRoutes(app: FastifyInstance) {
       },
       responseSchema: z.array(orderSchema)
     });
+  });
+
+  app.get("/v1/orders/stream", { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
+    });
+    if (!userId) {
+      return;
+    }
+
+    const authorization = request.headers.authorization;
+    if (typeof authorization !== "string") {
+      return reply.status(401).send(unauthorized(request.id));
+    }
+
+    const initialOrdersResult = await fetchOrdersForStream({
+      requestId: request.id,
+      ordersBaseUrl,
+      gatewayInternalApiToken,
+      userId,
+      authorization
+    });
+    if ("error" in initialOrdersResult) {
+      const { statusCode, error } = initialOrdersResult;
+      return reply.status(statusCode).send(error);
+    }
+
+    reply.hijack();
+    reply.raw.statusCode = 200;
+    reply.raw.setHeader("Content-Type", "text/event-stream");
+    reply.raw.setHeader("Cache-Control", "no-cache");
+    reply.raw.setHeader("Connection", "keep-alive");
+    reply.raw.setHeader("X-Accel-Buffering", "no");
+    if (typeof reply.raw.flushHeaders === "function") {
+      reply.raw.flushHeaders();
+    }
+
+    let closed = false;
+    let pollTimeout: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribeFromOrderEvents: (() => void) | null = null;
+    let lastSeenRevision = buildOrdersStreamRevision(initialOrdersResult.orders);
+
+    const cleanup = () => {
+      if (pollTimeout) {
+        clearTimeout(pollTimeout);
+        pollTimeout = undefined;
+      }
+      unsubscribeFromOrderEvents?.();
+      unsubscribeFromOrderEvents = null;
+      if (closed) {
+        return;
+      }
+      closed = true;
+      request.raw.removeListener("close", handleDisconnect);
+      if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+        reply.raw.end();
+      }
+    };
+
+    const sendEvent = (data: unknown) => {
+      if (closed || reply.raw.destroyed || reply.raw.writableEnded) {
+        return;
+      }
+      reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const handleDisconnect = () => {
+      cleanup();
+    };
+
+    const refreshOrdersSnapshot = async () => {
+      if (closed) {
+        return false;
+      }
+
+      const nextOrdersResult = await fetchOrdersForStream({
+        requestId: request.id,
+        ordersBaseUrl,
+        gatewayInternalApiToken,
+        userId,
+        authorization
+      });
+
+      if ("error" in nextOrdersResult) {
+        const { statusCode, error } = nextOrdersResult;
+        request.log.warn(
+          {
+            requestId: request.id,
+            userId,
+            statusCode,
+            errorCode: error.code
+          },
+          "orders stream poll failed"
+        );
+        cleanup();
+        return false;
+      }
+
+      const nextRevision = buildOrdersStreamRevision(nextOrdersResult.orders);
+      if (nextRevision !== lastSeenRevision) {
+        lastSeenRevision = nextRevision;
+        sendEvent({
+          type: "snapshot",
+          orders: nextOrdersResult.orders
+        });
+      }
+
+      return true;
+    };
+
+    const pollForUpdates = async () => {
+      const shouldContinue = await refreshOrdersSnapshot();
+      if (!shouldContinue || closed) {
+        return;
+      }
+
+      pollTimeout = setTimeout(() => {
+        void pollForUpdates();
+      }, orderStreamPollIntervalMs);
+    };
+
+    request.raw.on("close", handleDisconnect);
+    sendEvent({
+      type: "snapshot",
+      orders: initialOrdersResult.orders
+    });
+
+    if (eventBusSubscriber) {
+      unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToAllOrderEvents((event) => {
+        if (event.userId !== userId) {
+          return;
+        }
+
+        void fetchOrderForStream({
+          requestId: request.id,
+          ordersBaseUrl,
+          gatewayInternalApiToken,
+          orderId: event.orderId,
+          userId,
+          authorization
+        }).then((result) => {
+          if (closed || "error" in result) {
+            if ("error" in result) {
+              request.log.warn(
+                {
+                  requestId: request.id,
+                  orderId: event.orderId,
+                  userId,
+                  statusCode: result.statusCode,
+                  errorCode: result.error.code
+                },
+                "orders stream event fetch failed"
+              );
+            }
+            return;
+          }
+
+          sendEvent({
+            type: "order_update",
+            order: result.order
+          });
+        });
+      });
+      return;
+    }
+
+    pollTimeout = setTimeout(() => {
+      void pollForUpdates();
+    }, orderStreamPollIntervalMs);
   });
 
   app.get("/v1/orders/:orderId", { preHandler: [app.rateLimit(ordersReadRateLimit), requireCustomerAuth] }, async (request, reply) => {
