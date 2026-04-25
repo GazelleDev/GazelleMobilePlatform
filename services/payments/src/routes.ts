@@ -2644,27 +2644,6 @@ async function executeLiveCharge(params: {
   return adapter.processCharge(params.request);
 }
 
-async function executeLiveRefund(params: {
-  config: CloverProviderConfig;
-  request: RefundRequest;
-  requestId: string;
-  logger: FastifyBaseLogger;
-  providerPaymentId?: string;
-  repository: PaymentsRepository;
-  oauthConfig: CloverOAuthConfig;
-  locationId?: string;
-}): Promise<RefundResponse> {
-  const adapter = await getAdapter({
-    logger: params.logger,
-    repository: params.repository,
-    providerConfig: params.config,
-    oauthConfig: params.oauthConfig,
-    locationId: params.locationId,
-    requestId: params.requestId
-  });
-  return adapter.processRefund(params.request, params.providerPaymentId);
-}
-
 export async function registerRoutes(app: FastifyInstance) {
   const repository = await createPaymentsRepository(app.log);
   const cloverProvider = resolveCloverProviderConfig(app.log);
