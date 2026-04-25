@@ -411,9 +411,6 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
         </button>
       </div>
       <div class="dash-store-board">
-        <div class="dash-store-board__meta">
-          <span class="dash-inline-note">${escapeHtml(formatRelativeRefresh(state.lastRefreshedAt, state.loading))}</span>
-        </div>
         <div class="dash-store-ticket-strip${orderedTickets.length === 0 ? " dash-store-ticket-strip--empty" : ""}" role="list" aria-label="Store tickets">
           ${
             orderedTickets.length > 0
