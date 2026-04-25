@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { EventBusSubscriber } from "@lattelink/event-bus";
+import { EventBusSubscriber, type OrderEvent } from "@lattelink/event-bus";
 import { z } from "zod";
 import { apiErrorSchema, authSessionSchema } from "@lattelink/contracts-core";
 import {
@@ -2361,44 +2361,19 @@ export async function registerRoutes(app: FastifyInstance) {
       orders: initialOrdersResult.orders
     });
 
-    if (eventBusSubscriber) {
-      unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToAllOrderEvents((event) => {
-        if (event.userId !== userId) {
-          return;
-        }
-
-        void fetchOrderForStream({
-          requestId: request.id,
-          ordersBaseUrl,
-          gatewayInternalApiToken,
-          orderId: event.orderId,
-          userId,
-          authorization
-        }).then((result) => {
-          if (closed || "error" in result) {
-            if ("error" in result) {
-              request.log.warn(
-                {
-                  requestId: request.id,
-                  orderId: event.orderId,
-                  userId,
-                  statusCode: result.statusCode,
-                  errorCode: result.error.code
-                },
-                "orders stream event fetch failed"
-              );
-            }
+      if (eventBusSubscriber) {
+        unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToAllOrderEvents((event) => {
+          if (event.userId !== userId) {
             return;
           }
 
           sendEvent({
             type: "order_update",
-            order: result.order
+            order: event.order
           });
         });
-      });
-      return;
-    }
+        return;
+      }
 
     pollTimeout = setTimeout(() => {
       void pollForUpdates();
@@ -2475,9 +2450,8 @@ export async function registerRoutes(app: FastifyInstance) {
         reply.raw.flushHeaders();
       }
 
-      // This is SSE backed by gateway polling rather than a dedicated websocket/event bus. The stream keeps
-      // client integration simple today while the gateway can either subscribe to Valkey-backed order events
-      // or fall back to interval polling when the event bus is unavailable.
+      // This stream prefers Valkey-backed order events for live updates and falls back to polling
+      // only when the event bus is unavailable.
       let closed = false;
       let pollTimeout: ReturnType<typeof setTimeout> | undefined;
       let unsubscribeFromOrderEvents: (() => void) | null = null;
@@ -2579,8 +2553,16 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       if (eventBusSubscriber) {
-        unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToOrderStatus(orderId, () => {
-          void refreshOrderSnapshot();
+        unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToOrderStatus(orderId, (event) => {
+          if (closed || event.userId !== userId || event.order.id !== orderId) {
+            return;
+          }
+
+          sendEvent(event.order);
+          lastSeenStatus = event.order.status;
+          if (isTerminalOrderStatus(lastSeenStatus)) {
+            cleanup();
+          }
         });
         return;
       }
@@ -2860,39 +2842,25 @@ export async function registerRoutes(app: FastifyInstance) {
 
       let unsubscribe: (() => void) | null = null;
 
-      const handleOrderEvent = async (event: { orderId: string; locationId: string }) => {
+      const handleOrderEvent = (event: OrderEvent) => {
         if (closed) {
           return;
         }
-        const orderHeaders: Record<string, string> = {
-          "x-request-id": request.id,
-          ...(gatewayInternalApiToken ? { "x-gateway-token": gatewayInternalApiToken } : {}),
-          ...(event.locationId ? { "x-operator-location-id": event.locationId } : {})
-        };
-        try {
-          const orderResponse = await fetch(`${ordersBaseUrl}/v1/orders/${event.orderId}`, {
-            method: "GET",
-            headers: orderHeaders
-          });
-          if (!orderResponse.ok) {
-            return;
-          }
-          const parsedOrder = orderSchema.safeParse(await orderResponse.json());
-          if (parsedOrder.success) {
-            sendEvent({ type: "order_update", order: parsedOrder.data });
-          }
-        } catch {
-          // ignore upstream errors in streaming context
+
+        if (locationId && event.order.locationId !== locationId) {
+          return;
         }
+
+        sendEvent({ type: "order_update", order: event.order });
       };
 
       if (locationId) {
         unsubscribe = await eventBusSubscriber.subscribeToOrderEvents(locationId, (ev) => {
-          void handleOrderEvent(ev);
+          handleOrderEvent(ev);
         });
       } else {
         unsubscribe = await eventBusSubscriber.subscribeToAllOrderEvents((ev) => {
-          void handleOrderEvent(ev);
+          handleOrderEvent(ev);
         });
       }
 

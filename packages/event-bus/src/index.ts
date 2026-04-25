@@ -1,14 +1,10 @@
 import { Redis } from "ioredis";
 import { z } from "zod";
+import { orderSchema } from "@lattelink/contracts-orders";
 
 export const orderEventSchema = z.object({
-  orderId: z.string(),
-  locationId: z.string(),
-  status: z.string(),
   userId: z.string(),
-  occurredAt: z.string(),
-  pickupCode: z.string(),
-  note: z.string().optional()
+  order: orderSchema
 });
 
 export type OrderEvent = z.infer<typeof orderEventSchema>;
@@ -24,8 +20,8 @@ export function orderEventsChannel(locationId: string) {
 export async function publishOrderEvent(publisher: Redis, event: OrderEvent): Promise<void> {
   const payload = JSON.stringify(event);
   await Promise.all([
-    publisher.publish(orderStatusChannel(event.orderId), payload),
-    publisher.publish(orderEventsChannel(event.locationId), payload)
+    publisher.publish(orderStatusChannel(event.order.id), payload),
+    publisher.publish(orderEventsChannel(event.order.locationId), payload)
   ]);
 }
 

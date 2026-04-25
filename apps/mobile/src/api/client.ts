@@ -1,4 +1,4 @@
-import { orderSchema, type Order } from "@lattelink/contracts-orders";
+import { orderSchema } from "@lattelink/contracts-orders";
 import {
   GazelleApiClient,
   UNABLE_TO_REACH_BACKEND_MESSAGE,
@@ -38,8 +38,6 @@ export const CATALOG_API_BASE_URL =
   normalizeApiBaseUrl(process.env.EXPO_PUBLIC_CATALOG_API_BASE_URL) ||
   API_BASE_URL;
 
-type OrderUpdateHandler = (order: Order) => void;
-type OrderUpdateErrorHandler = (error: unknown) => void;
 const ordersStreamSnapshotSchema = z.object({
   type: z.literal("snapshot"),
   orders: z.array(orderSchema)
@@ -52,6 +50,7 @@ export type OrdersStreamEvent =
   | z.output<typeof ordersStreamSnapshotSchema>
   | z.output<typeof ordersStreamUpdateSchema>;
 type OrdersStreamEventHandler = (event: OrdersStreamEvent) => void;
+type OrdersStreamErrorHandler = (error: unknown) => void;
 const cloverCardEntryConfigSchema = z.object({
   enabled: z.boolean(),
   providerMode: z.enum(["simulated", "live"]),
@@ -66,12 +65,7 @@ type MobileApiClient = GazelleApiClient & {
   getCloverCardEntryConfig(): Promise<CloverCardEntryConfig>;
   subscribeToOrders(
     onEvent: OrdersStreamEventHandler,
-    onError?: OrderUpdateErrorHandler
-  ): () => void;
-  subscribeToOrderUpdates(
-    orderId: string,
-    onUpdate: OrderUpdateHandler,
-    onError?: OrderUpdateErrorHandler
+    onError?: OrdersStreamErrorHandler
   ): () => void;
 };
 
@@ -107,65 +101,6 @@ function readSseEventData(block: string) {
   }
 
   return dataLines.join("\n");
-}
-
-async function streamOrderUpdates(params: {
-  accessToken: string;
-  orderId: string;
-  onUpdate: OrderUpdateHandler;
-  signal: AbortSignal;
-}) {
-  let response: Response;
-
-  try {
-    response = await fetch(resolveConfiguredApiUrl(API_BASE_URL, `/orders/${params.orderId}/stream`), {
-      method: "GET",
-      headers: {
-        Accept: "text/event-stream",
-        Authorization: `Bearer ${params.accessToken}`
-      },
-      signal: params.signal
-    });
-  } catch (error) {
-    throw toReachabilityError(error);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Order stream request failed (${response.status})`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader || typeof TextDecoder !== "function") {
-    throw new Error("Authenticated SSE streaming is not available in this runtime");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const { completeEvents, remainder } = parseSseEventChunks(buffer);
-    buffer = remainder;
-
-    for (const eventBlock of completeEvents) {
-      const data = readSseEventData(eventBlock);
-      if (!data) {
-        continue;
-      }
-
-      params.onUpdate(orderSchema.parse(JSON.parse(data)));
-    }
-  }
-
-  const trailingData = readSseEventData(buffer);
-  if (trailingData) {
-    params.onUpdate(orderSchema.parse(JSON.parse(trailingData)));
-  }
 }
 
 async function streamOrders(params: {
@@ -237,42 +172,10 @@ async function streamOrders(params: {
   }
 }
 
-function startOrderPolling(params: {
-  client: GazelleApiClient;
-  orderId: string;
-  onUpdate: OrderUpdateHandler;
-  onError?: OrderUpdateErrorHandler;
-}) {
-  let disposed = false;
-
-  const poll = async () => {
-    if (disposed) {
-      return;
-    }
-
-    try {
-      params.onUpdate(await params.client.getOrder(params.orderId));
-    } catch (error) {
-      if (!disposed) {
-        params.onError?.(error);
-      }
-    }
-  };
-
-  const intervalHandle = setInterval(() => {
-    void poll();
-  }, fallbackOrderUpdatePollMs);
-
-  return () => {
-    disposed = true;
-    clearInterval(intervalHandle);
-  };
-}
-
 function startOrdersPolling(params: {
   client: GazelleApiClient;
   onEvent: OrdersStreamEventHandler;
-  onError?: OrderUpdateErrorHandler;
+  onError?: OrdersStreamErrorHandler;
 }) {
   let disposed = false;
 
@@ -341,7 +244,7 @@ export const apiClient = Object.assign(baseApiClient, {
 
     return cloverCardEntryConfigSchema.parse(JSON.parse(await response.text()));
   },
-  subscribeToOrders(onEvent: OrdersStreamEventHandler, onError?: OrderUpdateErrorHandler) {
+  subscribeToOrders(onEvent: OrdersStreamEventHandler, onError?: OrdersStreamErrorHandler) {
     let disposed = false;
     let fallbackCleanup = () => {};
     const abortController = new AbortController();
@@ -393,78 +296,6 @@ export const apiClient = Object.assign(baseApiClient, {
         }
 
         onError?.(new Error("Orders stream closed"));
-        startFallback();
-      } catch (error) {
-        if (disposed || isAbortError(error)) {
-          return;
-        }
-
-        onError?.(error);
-        startFallback();
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      abortController.abort();
-      stopFallback();
-    };
-  },
-  subscribeToOrderUpdates(orderId: string, onUpdate: OrderUpdateHandler, onError?: OrderUpdateErrorHandler) {
-    let disposed = false;
-    let fallbackCleanup = () => {};
-    const abortController = new AbortController();
-
-    const stopFallback = () => {
-      fallbackCleanup();
-      fallbackCleanup = () => {};
-    };
-
-    const startFallback = () => {
-      if (disposed) {
-        return;
-      }
-
-      stopFallback();
-      fallbackCleanup = startOrderPolling({
-        client: baseApiClient,
-        orderId,
-        onUpdate,
-        onError
-      });
-    };
-
-    if (
-      typeof fetch !== "function" ||
-      typeof TextDecoder !== "function" ||
-      typeof currentAccessToken !== "string" ||
-      currentAccessToken.length === 0
-    ) {
-      // TODO: Upgrade to native authenticated SSE once the Expo runtime reliably supports it everywhere we ship.
-      startFallback();
-
-      return () => {
-        disposed = true;
-        abortController.abort();
-        stopFallback();
-      };
-    }
-
-    const streamAccessToken = currentAccessToken;
-
-    void (async () => {
-      try {
-        await streamOrderUpdates({
-          accessToken: streamAccessToken,
-          orderId,
-          onUpdate,
-          signal: abortController.signal
-        });
-        if (disposed) {
-          return;
-        }
-
-        onError?.(new Error("Order update stream closed"));
         startFallback();
       } catch (error) {
         if (disposed || isAbortError(error)) {

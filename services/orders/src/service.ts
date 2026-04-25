@@ -512,13 +512,8 @@ async function sendOrderStateNotification(params: {
 
   if (deps.eventBusPublisher) {
     const event: OrderEvent = {
-      orderId: order.id,
-      locationId: order.locationId,
-      status: payload.status,
       userId,
-      occurredAt: payload.occurredAt,
-      pickupCode: order.pickupCode,
-      note: payload.note
+      order
     };
     try {
       await publishOrderEvent(deps.eventBusPublisher, event);

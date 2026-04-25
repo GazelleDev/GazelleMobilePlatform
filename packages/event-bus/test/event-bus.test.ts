@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { type Order } from "@lattelink/contracts-orders";
 import {
   orderEventSchema,
   orderStatusChannel,
@@ -17,51 +18,37 @@ describe("channel helpers", () => {
 });
 
 describe("orderEventSchema", () => {
-  const validEvent: OrderEvent = {
-    orderId: "order-1",
+  const validOrder: Order = {
+    id: "123e4567-e89b-12d3-a456-426614174000",
     locationId: "loc-1",
     status: "IN_PREP",
+    items: [],
+    total: { currency: "USD", amountCents: 530 },
+    pickupCode: "A1B",
+    timeline: [
+      {
+        status: "IN_PREP",
+        occurredAt: "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  };
+  const validEvent: OrderEvent = {
     userId: "user-1",
-    occurredAt: "2024-01-01T00:00:00.000Z",
-    pickupCode: "A1B"
+    order: validOrder
   };
 
   it("parses a valid event", () => {
     expect(orderEventSchema.safeParse(validEvent).success).toBe(true);
   });
 
-  it("rejects event with missing orderId", () => {
-    const input = { ...validEvent, orderId: undefined };
-    expect(orderEventSchema.safeParse(input).success).toBe(false);
-  });
-
-  it("rejects event with missing locationId", () => {
-    const input = { ...validEvent, locationId: undefined };
-    expect(orderEventSchema.safeParse(input).success).toBe(false);
-  });
-
-  it("rejects event with missing status", () => {
-    const input = { ...validEvent, status: undefined };
+  it("rejects event with missing order", () => {
+    const input = { ...validEvent, order: undefined };
     expect(orderEventSchema.safeParse(input).success).toBe(false);
   });
 
   it("rejects event with missing userId", () => {
     const input = { ...validEvent, userId: undefined };
     expect(orderEventSchema.safeParse(input).success).toBe(false);
-  });
-
-  it("rejects event with missing occurredAt", () => {
-    const input = { ...validEvent, occurredAt: undefined };
-    expect(orderEventSchema.safeParse(input).success).toBe(false);
-  });
-
-  it("rejects event with missing pickupCode", () => {
-    const input = { ...validEvent, pickupCode: undefined };
-    expect(orderEventSchema.safeParse(input).success).toBe(false);
-  });
-
-  it("accepts event with optional note", () => {
-    expect(orderEventSchema.safeParse({ ...validEvent, note: "Extra hot" }).success).toBe(true);
   });
 
   it("rejects non-object", () => {
