@@ -1349,8 +1349,52 @@ describe("payments service", () => {
     await app.close();
   });
 
-  it("accepts provider-style payment ids on refund requests", async () => {
+  it("accepts provider-style payment ids on refund requests without a stored charge row", async () => {
+    stubLiveCloverOauthEnv();
+
+    const fetchMock = vi.fn<typeof fetch>();
+    let refundBody: Record<string, unknown> | undefined;
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+
+      if (url === "https://apisandbox.dev.clover.com/oauth/v2/token") {
+        return new Response(
+          JSON.stringify({
+            access_token: "oauth-access-token-1",
+            refresh_token: "oauth-refresh-token-1",
+            token_type: "Bearer",
+            access_token_expiration: Math.floor(Date.now() / 1000) + 3600,
+            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      if (url === "https://scl-sandbox.dev.clover.com/pakms/apikey") {
+        return new Response(JSON.stringify({ apiAccessKey: "oauth-api-access-key-1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "https://scl-sandbox.dev.clover.com/v1/refunds") {
+        refundBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            id: "clv-refund-provider-1",
+            status: "REFUNDED",
+            message: "Refund accepted"
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`unexpected live Clover refund URL: ${url}`);
+    });
+
     const app = await buildApp();
+    await connectCloverOauth(app, "merchant-sbx");
 
     const refund = await app.inject({
       method: "POST",
@@ -1366,14 +1410,13 @@ describe("payments service", () => {
       }
     });
 
-    expect(refund.statusCode).toBe(404);
+    expect(refund.statusCode).toBe(200);
     expect(refund.json()).toMatchObject({
-      code: "PAYMENT_NOT_FOUND",
-      details: {
-        orderId: "123e4567-e89b-12d3-a456-426614174028",
-        paymentId: "pi_provider_payment_id"
-      }
+      status: "REFUNDED",
+      provider: "CLOVER",
+      paymentId: "pi_provider_payment_id"
     });
+    expect(refundBody).toMatchObject({ charge: "pi_provider_payment_id" });
     await app.close();
   });
 
@@ -1419,7 +1462,25 @@ describe("payments service", () => {
     const app = await buildApp();
     const requestId = "payments-trace-1";
 
-    const invalidRefund = await app.inject({
+    const charge = await app.inject({
+      method: "POST",
+      url: "/v1/payments/charges",
+      headers: internalHeaders({
+        "x-request-id": requestId
+      }),
+      payload: {
+        orderId: "123e4567-e89b-12d3-a456-426614174025",
+        amountCents: 500,
+        currency: "USD",
+        applePayToken: "apple-pay-success-token",
+        idempotencyKey: "trace-charge"
+      }
+    });
+
+    expect(charge.statusCode).toBe(200);
+    expect(charge.headers["x-request-id"]).toBe(requestId);
+
+    const refund = await app.inject({
       method: "POST",
       url: "/v1/payments/refunds",
       headers: internalHeaders({
@@ -1427,16 +1488,16 @@ describe("payments service", () => {
       }),
       payload: {
         orderId: "123e4567-e89b-12d3-a456-426614174025",
-        paymentId: "123e4567-e89b-12d3-a456-426614174026",
+        paymentId: charge.json().paymentId,
         amountCents: 500,
         currency: "USD",
         reason: "unknown payment",
-        idempotencyKey: "missing-payment"
+        idempotencyKey: "trace-refund"
       }
     });
 
-    expect(invalidRefund.statusCode).toBe(404);
-    expect(invalidRefund.headers["x-request-id"]).toBe(requestId);
+    expect(refund.statusCode).toBe(200);
+    expect(refund.headers["x-request-id"]).toBe(requestId);
 
     const metricsResponse = await app.inject({ method: "GET", url: "/metrics" });
     expect(metricsResponse.statusCode).toBe(200);
@@ -1450,7 +1511,7 @@ describe("payments service", () => {
       })
     });
     expect(metricsResponse.json().requests.total).toBeGreaterThanOrEqual(1);
-    expect(metricsResponse.json().requests.status4xx).toBeGreaterThanOrEqual(1);
+    expect(metricsResponse.json().requests.status2xx).toBeGreaterThanOrEqual(2);
 
     await app.close();
   });

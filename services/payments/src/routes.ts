@@ -3837,26 +3837,29 @@ export async function registerRoutes(app: FastifyInstance) {
       return existingRefund;
     }
 
-    const chargeLookup = await repository.findLatestChargeForOrder(input.orderId);
-    const chargeResult = chargeLookup?.charge;
-    if (!chargeResult || chargeResult.paymentId !== input.paymentId) {
-      return reply.status(404).send(
+    const chargeLookup = await repository.findChargeByProviderPaymentId(input.paymentId);
+    if (chargeLookup && chargeLookup.charge.orderId !== input.orderId) {
+      return reply.status(409).send(
         serviceErrorSchema.parse({
-          code: "PAYMENT_NOT_FOUND",
-          message: "Payment not found for refund",
+          code: "PAYMENT_ORDER_MISMATCH",
+          message: "Payment does not belong to this order",
           requestId: request.id,
-          details: { orderId: input.orderId, paymentId: input.paymentId }
+          details: {
+            orderId: input.orderId,
+            paymentId: input.paymentId,
+            chargeOrderId: chargeLookup.charge.orderId
+          }
         })
       );
     }
 
-    if (chargeResult.status !== "SUCCEEDED") {
+    if (chargeLookup?.charge.status && chargeLookup.charge.status !== "SUCCEEDED") {
       return reply.status(409).send(
         serviceErrorSchema.parse({
           code: "PAYMENT_NOT_REFUNDABLE",
-          message: `Payment in status ${chargeResult.status} is not refundable`,
+          message: `Payment in status ${chargeLookup.charge.status} is not refundable`,
           requestId: request.id,
-          details: { orderId: input.orderId, paymentId: input.paymentId, status: chargeResult.status }
+          details: { orderId: input.orderId, paymentId: input.paymentId, status: chargeLookup.charge.status }
         })
       );
     }
@@ -3881,7 +3884,7 @@ export async function registerRoutes(app: FastifyInstance) {
         request: input,
         requestId: request.id,
         logger: request.log,
-        providerPaymentId: chargeLookup?.providerPaymentId,
+        providerPaymentId: chargeLookup?.providerPaymentId ?? input.paymentId,
         repository,
         oauthConfig: cloverOAuthConfig,
         locationId: input.locationId
