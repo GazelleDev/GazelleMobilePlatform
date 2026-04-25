@@ -1947,6 +1947,7 @@ label.field > span {
   font-size: 12px;
   line-height: 1.45;
   color: var(--color-text-2);
+  white-space: pre-wrap;
 }
 
 .dash-ticket-callouts {
@@ -1961,6 +1962,7 @@ label.field > span {
   color: #9a6700;
   font-size: 12px;
   line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .dash-ticket-total {
@@ -2022,6 +2024,7 @@ label.field > span {
   font-size: 12px;
   color: var(--color-text-2);
   margin-top: 2px;
+  white-space: pre-wrap;
 }
 
 .line-item > span {

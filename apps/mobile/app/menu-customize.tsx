@@ -500,12 +500,7 @@ export default function MenuCustomizeModalScreen() {
                   <TextInput
                     value={customization.notes}
                     onChangeText={(value) =>
-                      setCustomization((prev) =>
-                        normalizeCustomization({
-                          ...prev,
-                          notes: value
-                        })
-                      )
+                      setCustomization((prev) => ({ ...prev, notes: value }))
                     }
                     placeholder="No foam, easy ice, half sweet..."
                     placeholderTextColor={uiPalette.textMuted}
