@@ -400,10 +400,6 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
       </div>
       <div class="dash-store-board">
         <div class="dash-store-board__meta">
-          <div>
-            <div class="dash-panel-title">Ticket strip</div>
-            <h3 class="dash-surface-title">${orderedTickets.length} tickets in view</h3>
-          </div>
           <span class="dash-inline-note">${escapeHtml(formatRelativeRefresh(state.lastRefreshedAt, state.loading))}</span>
         </div>
         <div class="dash-store-ticket-strip" role="list" aria-label="Store tickets">
