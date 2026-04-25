@@ -2476,9 +2476,45 @@ export async function registerRoutes(app: FastifyInstance) {
 
       sendEvent({ type: "snapshot", orders: parsedOrders.data });
 
+      request.raw.on("close", handleDisconnect);
+
       if (!eventBusSubscriber) {
-        // No event bus — send snapshot only and close
-        cleanup(null);
+        let pollTimeout: ReturnType<typeof setTimeout> | undefined;
+        const pollOrders = async () => {
+          if (closed) {
+            return;
+          }
+          const pollHeaders: Record<string, string> = {
+            "x-request-id": request.id,
+            ...(gatewayInternalApiToken ? { "x-gateway-token": gatewayInternalApiToken } : {}),
+            ...(locationId ? { "x-operator-location-id": locationId } : {})
+          };
+          try {
+            const pollResponse = await fetch(`${ordersBaseUrl}/v1/orders`, {
+              method: "GET",
+              headers: pollHeaders
+            });
+            if (pollResponse.ok) {
+              const pollParsed = z.array(orderSchema).safeParse(await pollResponse.json());
+              if (pollParsed.success) {
+                sendEvent({ type: "snapshot", orders: pollParsed.data });
+              }
+            }
+          } catch {
+            // ignore upstream errors in polling context
+          }
+          if (!closed) {
+            pollTimeout = setTimeout(() => void pollOrders(), orderStreamPollIntervalMs * 10);
+          }
+        };
+        const cleanupWithPoll = () => {
+          if (pollTimeout) {
+            clearTimeout(pollTimeout);
+          }
+          cleanup(null);
+        };
+        handleDisconnect = cleanupWithPoll;
+        pollTimeout = setTimeout(() => void pollOrders(), orderStreamPollIntervalMs * 10);
         return;
       }
 
@@ -2521,7 +2557,6 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       handleDisconnect = () => cleanup(unsubscribe);
-      request.raw.on("close", handleDisconnect);
     }
   );
 

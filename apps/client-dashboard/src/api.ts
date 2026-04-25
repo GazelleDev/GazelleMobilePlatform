@@ -719,6 +719,10 @@ export function subscribeToAdminOrderStream(params: {
             }
           }
         }
+        // stream closed normally — notify so caller can reconnect or fall back to polling
+        if (!closed) {
+          onError();
+        }
       })
       .catch(() => {
         if (closed) {

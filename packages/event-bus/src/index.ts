@@ -38,8 +38,8 @@ export class EventBusSubscriber {
 
   constructor(redisUrl: string) {
     this.subscriber = new Redis(redisUrl, { lazyConnect: true });
-    this.subscriber.on("pmessage", (_pattern: string, channel: string, message: string) => {
-      this.dispatch(channel, message);
+    this.subscriber.on("pmessage", (pattern: string, _channel: string, message: string) => {
+      this.dispatch(pattern, message);
     });
     this.subscriber.on("message", (channel: string, message: string) => {
       this.dispatch(channel, message);
@@ -86,8 +86,6 @@ export class EventBusSubscriber {
       await this.subscriber.connect();
       this.started = true;
     }
-    // psubscribe delivers to the handler via "pmessage" → dispatch uses the actual channel
-    // We store the handler under the pattern key so dispatch can fan-out
     let set = this.handlers.get(pattern);
     if (!set) {
       set = new Set();

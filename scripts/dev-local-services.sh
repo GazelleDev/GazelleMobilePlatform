@@ -58,6 +58,7 @@ CATALOG_UPSTREAM_HOST="${CATALOG_UPSTREAM_HOST:-127.0.0.1}"
 LOYALTY_UPSTREAM_HOST="${LOYALTY_UPSTREAM_HOST:-127.0.0.1}"
 NOTIFICATIONS_UPSTREAM_HOST="${NOTIFICATIONS_UPSTREAM_HOST:-127.0.0.1}"
 LOCAL_CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-http://127.0.0.1:4173,http://localhost:4173,http://127.0.0.1:5173,http://localhost:5173}"
+VALKEY_URL="${VALKEY_URL:-}"
 
 start_service() {
   local label="$1"
@@ -84,11 +85,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 start_service "identity:3000" env PORT=3000 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" pnpm -C "${ROOT_DIR}" --filter @lattelink/identity dev
-start_service "orders:3001" env PORT=3001 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" CATALOG_SERVICE_BASE_URL="http://${CATALOG_UPSTREAM_HOST}:3002" ORDERS_INTERNAL_API_TOKEN="${ORDERS_INTERNAL_API_TOKEN:-}" LOYALTY_INTERNAL_API_TOKEN="${LOYALTY_INTERNAL_API_TOKEN:-}" NOTIFICATIONS_INTERNAL_API_TOKEN="${NOTIFICATIONS_INTERNAL_API_TOKEN:-}" pnpm -C "${ROOT_DIR}" --filter @lattelink/orders dev
+start_service "orders:3001" env PORT=3001 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" CATALOG_SERVICE_BASE_URL="http://${CATALOG_UPSTREAM_HOST}:3002" ORDERS_INTERNAL_API_TOKEN="${ORDERS_INTERNAL_API_TOKEN:-}" LOYALTY_INTERNAL_API_TOKEN="${LOYALTY_INTERNAL_API_TOKEN:-}" NOTIFICATIONS_INTERNAL_API_TOKEN="${NOTIFICATIONS_INTERNAL_API_TOKEN:-}" VALKEY_URL="${VALKEY_URL}" pnpm -C "${ROOT_DIR}" --filter @lattelink/orders dev
 start_service "catalog:3002" env PORT=3002 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" pnpm -C "${ROOT_DIR}" --filter @lattelink/catalog dev
 start_service "payments:3003" env PORT=3003 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" ORDERS_INTERNAL_API_TOKEN="${ORDERS_INTERNAL_API_TOKEN:-}" pnpm -C "${ROOT_DIR}" --filter @lattelink/payments dev
 start_service "loyalty:3004" env PORT=3004 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" LOYALTY_INTERNAL_API_TOKEN="${LOYALTY_INTERNAL_API_TOKEN:-}" pnpm -C "${ROOT_DIR}" --filter @lattelink/loyalty dev
-start_service "notifications:3005" env PORT=3005 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" NOTIFICATIONS_INTERNAL_API_TOKEN="${NOTIFICATIONS_INTERNAL_API_TOKEN:-}" pnpm -C "${ROOT_DIR}" --filter @lattelink/notifications dev
+start_service "notifications:3005" env PORT=3005 HOST="${BIND_HOST}" GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" NOTIFICATIONS_INTERNAL_API_TOKEN="${NOTIFICATIONS_INTERNAL_API_TOKEN:-}" VALKEY_URL="${VALKEY_URL}" pnpm -C "${ROOT_DIR}" --filter @lattelink/notifications dev
 
 start_service \
   "gateway:8080" \
@@ -103,14 +104,15 @@ start_service \
   NOTIFICATIONS_SERVICE_BASE_URL="http://${NOTIFICATIONS_UPSTREAM_HOST}:3005" \
   ORDERS_INTERNAL_API_TOKEN="${ORDERS_INTERNAL_API_TOKEN:-}" \
   GATEWAY_INTERNAL_API_TOKEN="${GATEWAY_INTERNAL_API_TOKEN:-}" \
+  VALKEY_URL="${VALKEY_URL}" \
   pnpm -C "${ROOT_DIR}" --filter @lattelink/gateway dev
 
 if [[ "${START_MENU_SYNC_WORKER:-0}" == "1" ]]; then
   start_service "menu-sync-worker" env MENU_SYNC_INTERVAL_MS=60000 pnpm -C "${ROOT_DIR}" --filter @lattelink/menu-sync-worker dev
 fi
 
-if [[ "${START_NOTIFICATIONS_DISPATCH_WORKER:-0}" == "1" ]]; then
-  start_service "notifications-dispatch-worker" env NOTIFICATIONS_SERVICE_BASE_URL="http://127.0.0.1:3005" pnpm -C "${ROOT_DIR}" --filter @lattelink/notifications-dispatch-worker dev
+if [[ "${START_NOTIFICATIONS_DISPATCH_WORKER:-1}" == "1" ]]; then
+  start_service "notifications-dispatch-worker" env NOTIFICATIONS_SERVICE_BASE_URL="http://127.0.0.1:3005" NOTIFICATIONS_INTERNAL_API_TOKEN="${NOTIFICATIONS_INTERNAL_API_TOKEN:-}" pnpm -C "${ROOT_DIR}" --filter @lattelink/notifications-dispatch-worker dev
 fi
 
 echo "[dev-services] all services started"
