@@ -3870,6 +3870,7 @@ export async function registerRoutes(app: FastifyInstance) {
 
     const locationSummaryResult = await fetchInternalLocationSummary({
       catalogBaseUrl,
+      gatewayToken: gatewayInternalToken,
       requestId: request.id,
       locationId: input.locationId
     });
