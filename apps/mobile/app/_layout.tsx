@@ -12,6 +12,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthSessionProvider, useAuthSession } from "../src/auth/session";
 import { CartProvider } from "../src/cart/store";
 import { CheckoutFlowProvider } from "../src/orders/flow";
+import { useActiveOrderRealtimeSync } from "../src/orders/useActiveOrderRealtimeSync";
 import { uiPalette } from "../src/ui/system";
 import { usePushNotificationRegistration } from "../src/notifications/usePushNotificationRegistration";
 
@@ -40,6 +41,7 @@ void SplashScreen.preventAutoHideAsync();
 function AppInitializer() {
   const { isAuthenticated } = useAuthSession();
   usePushNotificationRegistration(isAuthenticated);
+  useActiveOrderRealtimeSync(isAuthenticated);
   return null;
 }
 

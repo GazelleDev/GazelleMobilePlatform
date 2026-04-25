@@ -22,6 +22,7 @@ describe("gateway", () => {
   let previousFreeClientDashboardDomain: string | undefined;
   let previousNodeEnv: string | undefined;
   let queuedOrderStatuses: Map<string, Array<"PENDING_PAYMENT" | "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED">>;
+  let queuedOrderPayloads: Map<string, Array<ReturnType<typeof buildOrderPayload>>>;
 
   function buildOrderPayload(
     orderId: string,
@@ -90,6 +91,7 @@ describe("gateway", () => {
     previousFreeClientDashboardDomain = process.env.FREE_CLIENT_DASHBOARD_DOMAIN;
     previousNodeEnv = process.env.NODE_ENV;
     queuedOrderStatuses = new Map();
+    queuedOrderPayloads = new Map();
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
     process.env.ORDERS_SERVICE_BASE_URL = "http://orders.internal";
     process.env.CATALOG_SERVICE_BASE_URL = "http://catalog.internal";
@@ -905,6 +907,18 @@ describe("gateway", () => {
       const getOrderMatch = url.match(/\/v1\/orders\/([0-9a-f-]{36})$/);
       if (getOrderMatch && method === "GET") {
         const orderId = getOrderMatch[1];
+        const queuedPayloadsForOrder = queuedOrderPayloads.get(orderId);
+        if (queuedPayloadsForOrder?.length) {
+          const nextPayload = queuedPayloadsForOrder.shift() ?? buildOrderPayload(orderId, "IN_PREP");
+          if (queuedPayloadsForOrder.length === 0) {
+            queuedOrderPayloads.delete(orderId);
+          }
+          return new Response(JSON.stringify(nextPayload), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+
         const queuedStatusesForOrder = queuedOrderStatuses.get(orderId);
         const nextStatus = queuedStatusesForOrder?.shift() ?? "IN_PREP";
         if (queuedStatusesForOrder && queuedStatusesForOrder.length === 0) {
@@ -2170,6 +2184,46 @@ describe("gateway", () => {
       return url === `http://orders.internal/v1/orders/${orderId}` && (init?.method ?? "GET") === "GET";
     });
     expect(orderFetchCalls).toHaveLength(2);
+
+    await app.close();
+  });
+
+  it("streams order timeline revisions even when the status string does not change", async () => {
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174118";
+    const initialOrder = buildOrderPayload(orderId, "IN_PREP");
+    const noteUpdatedOrder = {
+      ...initialOrder,
+      timeline: [
+        ...initialOrder.timeline,
+        {
+          status: "IN_PREP" as const,
+          occurredAt: new Date(Date.now() + 1_000).toISOString(),
+          note: "Barista marked the order as almost ready"
+        }
+      ]
+    };
+    const completedOrder = buildOrderPayload(orderId, "COMPLETED");
+
+    queuedOrderPayloads.set(orderId, [initialOrder, noteUpdatedOrder, completedOrder]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${orderId}/stream`,
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dataEvents = response.body
+      .split("\n\n")
+      .filter((block) => block.startsWith("data: "))
+      .map((block) => block.trim());
+    expect(dataEvents).toHaveLength(3);
+    expect(dataEvents[0]).toContain(`"status":"IN_PREP"`);
+    expect(dataEvents[1]).toContain(`"status":"IN_PREP"`);
+    expect(dataEvents[1]).toContain(`"Barista marked the order as almost ready"`);
+    expect(dataEvents[2]).toContain(`"status":"COMPLETED"`);
 
     await app.close();
   });

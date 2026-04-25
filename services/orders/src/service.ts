@@ -528,7 +528,6 @@ async function sendOrderStateNotification(params: {
         "event bus unavailable while publishing order-state event"
       );
     }
-    return;
   }
 
   const headers: Record<string, string> = {

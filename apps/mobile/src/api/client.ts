@@ -271,6 +271,12 @@ export const apiClient = Object.assign(baseApiClient, {
           onUpdate,
           signal: abortController.signal
         });
+        if (disposed) {
+          return;
+        }
+
+        onError?.(new Error("Order update stream closed"));
+        startFallback();
       } catch (error) {
         if (disposed || isAbortError(error)) {
           return;

@@ -967,6 +967,20 @@ function isTerminalOrderStatus(status: z.output<typeof orderSchema>["status"]) {
   return status === "COMPLETED" || status === "CANCELED";
 }
 
+function buildOrderStreamRevision(order: z.output<typeof orderSchema>) {
+  const latestTimelineEntry = order.timeline[order.timeline.length - 1];
+
+  return JSON.stringify({
+    status: order.status,
+    pickupCode: order.pickupCode,
+    totalAmountCents: order.total.amountCents,
+    timelineLength: order.timeline.length,
+    latestTimelineStatus: latestTimelineEntry?.status ?? null,
+    latestTimelineOccurredAt: latestTimelineEntry?.occurredAt ?? null,
+    latestTimelineNote: latestTimelineEntry?.note ?? null
+  });
+}
+
 async function resolveAuthenticatedUserId(params: {
   request: FastifyRequest;
   reply: FastifyReply;
@@ -2177,6 +2191,7 @@ export async function registerRoutes(app: FastifyInstance) {
       let closed = false;
       let pollTimeout: ReturnType<typeof setTimeout> | undefined;
       let lastSeenStatus = initialOrderResult.order.status;
+      let lastSeenRevision = buildOrderStreamRevision(initialOrderResult.order);
 
       const cleanup = () => {
         if (pollTimeout) {
@@ -2233,9 +2248,14 @@ export async function registerRoutes(app: FastifyInstance) {
           return;
         }
 
-        if (nextOrderResult.order.status !== lastSeenStatus) {
+        const nextRevision = buildOrderStreamRevision(nextOrderResult.order);
+
+        if (nextRevision !== lastSeenRevision) {
+          lastSeenRevision = nextRevision;
           lastSeenStatus = nextOrderResult.order.status;
           sendEvent(nextOrderResult.order);
+        } else {
+          lastSeenStatus = nextOrderResult.order.status;
         }
 
         if (isTerminalOrderStatus(lastSeenStatus)) {

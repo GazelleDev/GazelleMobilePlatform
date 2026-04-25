@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useQueryClient } from "@tanstack/react-query";
 import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useRouter } from "expo-router";
@@ -16,13 +15,10 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   findActiveOrder,
-  orderHistoryQueryKey,
-  sortOrdersByLatestActivity,
   useCancelOrderMutation,
   useOrderHistoryQuery,
   type OrderHistoryEntry
 } from "../account/data";
-import { apiClient } from "../api/client";
 import { OrderStatusPill, SectionHeader } from "../components";
 import { getOrdersRecoveryCopy } from "../auth/recovery";
 import { useAuthSession } from "../auth/session";
@@ -431,7 +427,6 @@ function OrdersHeader({
 
 export function OrdersScreen() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const { isAuthenticated, isHydrating, authRecoveryState } = useAuthSession();
   const { clearFailure, clearRetryOrder } = useCheckoutFlow();
@@ -460,37 +455,6 @@ export function OrdersScreen() {
   const isInitialOrdersLoading = isAuthenticated && ordersQuery.isLoading && !ordersQuery.data;
   const shouldShowInitialLoading = !didFinishInitialReveal && (isHydrating || isInitialOrdersLoading);
   const recoveryCopy = getOrdersRecoveryCopy(authRecoveryState);
-
-  useEffect(() => {
-    if (!isAuthenticated || !activeOrder?.id) {
-      return;
-    }
-
-    return apiClient.subscribeToOrderUpdates(
-      activeOrder.id,
-      (updatedOrder) => {
-        const nextOrder = updatedOrder as OrderHistoryEntry;
-
-        queryClient.setQueryData<OrderHistoryEntry[] | undefined>(orderHistoryQueryKey, (currentOrders) => {
-          if (!currentOrders) {
-            return currentOrders;
-          }
-
-          const hasExistingOrder = currentOrders.some((order) => order.id === nextOrder.id);
-          const nextOrders = hasExistingOrder
-            ? currentOrders.map((order) => (order.id === nextOrder.id ? nextOrder : order))
-            : [nextOrder, ...currentOrders];
-
-          return sortOrdersByLatestActivity(nextOrders);
-        });
-      },
-      (error) => {
-        if (__DEV__) {
-          console.warn("Order update subscription failed", error);
-        }
-      }
-    );
-  }, [activeOrder?.id, isAuthenticated, queryClient]);
 
   useEffect(() => {
     if (didFinishInitialReveal) return;
