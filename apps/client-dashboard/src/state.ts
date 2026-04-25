@@ -31,6 +31,7 @@ export type AppState = {
   appConfig: AppConfig | null;
   orders: OperatorOrder[];
   orderFilter: OperatorOrderFilter;
+  storeTicketFilter: "all" | "needs_action" | "in_progress" | "ready" | "closed";
   menuCategories: OperatorMenuCategory[];
   menuCustomizationDrafts: Record<string, MenuItemCustomizationGroup[]>;
   newsCards: OperatorNewsCard[];
@@ -97,6 +98,7 @@ export const state: AppState = {
   appConfig: null,
   orders: [],
   orderFilter: "active",
+  storeTicketFilter: "all",
   menuCategories: [],
   menuCustomizationDrafts: {},
   newsCards: [],
@@ -176,6 +178,7 @@ export function resetDashboardData() {
     : null;
   state.appConfig = null;
   state.orders = [];
+  state.storeTicketFilter = "all";
   state.menuCategories = [];
   state.menuCustomizationDrafts = {};
   state.newsCards = [];

@@ -1563,30 +1563,49 @@ label.field > span {
 
 .dash-store-summary {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
 }
 
-.dash-store-summary__pill {
-  display: inline-flex;
+.dash-store-summary__rail {
+  display: inline-grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
+  gap: 6px;
+  width: min(100%, 760px);
+  padding: 6px;
   border: 1px solid var(--color-border);
   border-radius: 999px;
   background: var(--color-surface);
-  color: var(--color-text-2);
   box-shadow: var(--shadow-xs);
 }
 
-.dash-store-summary__pill span {
+.dash-store-summary__tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-text-2);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.dash-store-summary__tab span {
   font-size: 12px;
   font-weight: 600;
 }
 
-.dash-store-summary__pill strong {
+.dash-store-summary__tab strong {
   min-width: 22px;
   height: 22px;
   display: inline-flex;
@@ -1600,10 +1619,14 @@ label.field > span {
   font-weight: 700;
 }
 
-.dash-store-summary__pill--active {
-  border-color: var(--color-accent-border);
+.dash-store-summary__tab--active {
   background: var(--color-accent-subtle);
   color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--color-accent-border);
+}
+
+.dash-store-summary__tab--active strong {
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .dash-store-board {
@@ -2559,6 +2582,17 @@ label.field > span {
 
   .dash-live-pill {
     margin-left: 0;
+  }
+
+  .dash-store-summary {
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .dash-store-summary__rail {
+    width: max-content;
+    min-width: 100%;
   }
 
   .dash-ticket-heading,

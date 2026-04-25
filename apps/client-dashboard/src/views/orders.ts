@@ -21,6 +21,7 @@ import { getSelectedOrder, getVisibleOrders } from "../orders-runtime.js";
 import { renderLocationSelectionNotice, renderOrderStatusBadge, renderSectionHeading } from "./common.js";
 
 type StoreLaneTone = "needs-action" | "in-progress" | "ready";
+type StoreTicketFilter = "all" | "needs_action" | "in_progress" | "ready" | "closed";
 
 function renderOrderFilterRow(activeOrderCount: number, completedOrderCount: number) {
   return (
@@ -91,31 +92,51 @@ function renderStoreModeSummary(orders: readonly OperatorOrder[], completedOrder
   const inProgressCount = orders.filter((order) => order.status === "IN_PREP").length;
   const readyCount = orders.filter((order) => order.status === "READY").length;
   const needsActionCount = orders.filter((order) => order.status === "PAID").length;
+  const filters: Array<{ key: StoreTicketFilter; label: string; count: number }> = [
+    { key: "all", label: "All", count: orders.length },
+    { key: "needs_action", label: "Needs action", count: needsActionCount },
+    { key: "in_progress", label: "In progress", count: inProgressCount },
+    { key: "ready", label: "Ready", count: readyCount },
+    { key: "closed", label: "Closed", count: completedOrders.length }
+  ];
 
   return `
-    <div class="dash-store-summary" aria-label="Store board summary">
-      <div class="dash-store-summary__pill dash-store-summary__pill--active">
-        <span>All</span>
-        <strong>${orders.length}</strong>
-      </div>
-      <div class="dash-store-summary__pill">
-        <span>Needs action</span>
-        <strong>${needsActionCount}</strong>
-      </div>
-      <div class="dash-store-summary__pill">
-        <span>In progress</span>
-        <strong>${inProgressCount}</strong>
-      </div>
-      <div class="dash-store-summary__pill">
-        <span>Ready</span>
-        <strong>${readyCount}</strong>
-      </div>
-      <div class="dash-store-summary__pill">
-        <span>Closed</span>
-        <strong>${completedOrders.length}</strong>
+    <div class="dash-store-summary" aria-label="Store board filters">
+      <div class="dash-store-summary__rail">
+        ${filters
+          .map(
+            (filter) => `
+              <button
+                class="dash-store-summary__tab ${state.storeTicketFilter === filter.key ? "dash-store-summary__tab--active" : ""}"
+                type="button"
+                data-action="set-store-ticket-filter"
+                data-store-ticket-filter="${filter.key}"
+              >
+                <span>${escapeHtml(filter.label)}</span>
+                <strong>${filter.count}</strong>
+              </button>
+            `
+          )
+          .join("")}
       </div>
     </div>
   `;
+}
+
+function filterStoreTickets(orders: readonly OperatorOrder[], filter: StoreTicketFilter) {
+  switch (filter) {
+    case "needs_action":
+      return orders.filter((order) => order.status === "PAID");
+    case "in_progress":
+      return orders.filter((order) => order.status === "IN_PREP");
+    case "ready":
+      return orders.filter((order) => order.status === "READY");
+    case "closed":
+      return orders.filter((order) => order.status === "COMPLETED" || order.status === "CANCELED");
+    case "all":
+    default:
+      return [...orders];
+  }
 }
 
 function getStoreTicketPriority(order: OperatorOrder) {
@@ -363,10 +384,10 @@ function renderStoreTicket(order: OperatorOrder, appConfig: AppConfig | null) {
 }
 
 function renderStoreModeBoard(appConfig: AppConfig | null) {
-  const visibleOrders = getVisibleOrders();
-  const completedOrders = visibleOrders.filter((order) => order.status === "COMPLETED" || order.status === "CANCELED");
+  const storeOrders = [...state.orders];
+  const completedOrders = storeOrders.filter((order) => order.status === "COMPLETED" || order.status === "CANCELED");
   const selectedLocation = getSelectedLocation();
-  const orderedTickets = sortStoreTickets(visibleOrders);
+  const orderedTickets = sortStoreTickets(filterStoreTickets(storeOrders, state.storeTicketFilter));
   const storeHeading = isAllLocationsSelected()
     ? state.storeConfig?.storeName ?? state.appConfig?.brand.brandName ?? "Store mode"
     : state.storeConfig?.storeName ??
@@ -388,7 +409,7 @@ function renderStoreModeBoard(appConfig: AppConfig | null) {
         title: locationHeading,
         description: "A horizontally scrolling prep board for active tickets, modifiers, and handoff actions.",
         actions: `
-          ${renderStoreModeSummary(visibleOrders, completedOrders)}
+          ${renderStoreModeSummary(storeOrders, completedOrders)}
           <button class="button button--ghost" type="button" data-action="refresh" ${state.loading ? "disabled" : ""}>
             ${state.loading ? '<span class="spinner"></span>' : "Refresh"}
           </button>

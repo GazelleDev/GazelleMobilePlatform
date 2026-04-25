@@ -209,6 +209,21 @@ export function registerEvents() {
       return;
     }
 
+    if (action === "set-store-ticket-filter") {
+      const filter = actionElement.dataset.storeTicketFilter;
+      if (
+        filter === "all" ||
+        filter === "needs_action" ||
+        filter === "in_progress" ||
+        filter === "ready" ||
+        filter === "closed"
+      ) {
+        state.storeTicketFilter = filter;
+        render();
+      }
+      return;
+    }
+
     if (action === "select-order") {
       const orderId = actionElement.dataset.orderId;
       if (orderId) {
