@@ -563,6 +563,15 @@
         }
       }
     },
+    "/admin/orders/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/admin/menu": {
       "get": {
         "responses": {
