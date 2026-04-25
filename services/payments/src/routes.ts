@@ -129,7 +129,7 @@ const refundStatusSchema = z.enum(["REFUNDED", "REJECTED"]);
 
 const refundResponseSchema = z.object({
   refundId: z.string().uuid(),
-  provider: z.literal("CLOVER"),
+  provider: z.enum(["CLOVER", "STRIPE"]),
   orderId: z.string().uuid(),
   paymentId: z.string().min(1),
   status: refundStatusSchema,
@@ -258,7 +258,7 @@ type PersistedRefundRow = {
   order_id: string;
   payment_id: string;
   idempotency_key: string;
-  provider: "CLOVER";
+  provider: "CLOVER" | "STRIPE";
   status: "REFUNDED" | "REJECTED";
   amount_cents: number;
   currency: "USD";
@@ -2377,14 +2377,14 @@ function createSimulatedRefundResponse(input: RefundRequest): RefundResponse {
   const shouldReject = input.reason.toLowerCase().includes("reject");
   return refundResponseSchema.parse({
     refundId: randomUUID(),
-    provider: "CLOVER",
+    provider: "STRIPE",
     orderId: input.orderId,
     paymentId: input.paymentId,
     status: shouldReject ? "REJECTED" : "REFUNDED",
     amountCents: input.amountCents,
     currency: input.currency,
     occurredAt: new Date().toISOString(),
-    message: shouldReject ? "Clover rejected the refund" : "Clover accepted the refund"
+    message: shouldReject ? "Stripe rejected the refund" : "Stripe accepted the refund"
   });
 }
 
@@ -3878,17 +3878,70 @@ export async function registerRoutes(app: FastifyInstance) {
       return savedRefund;
     }
 
+    if (!input.locationId) {
+      return reply.status(409).send(
+        serviceErrorSchema.parse({
+          code: "LOCATION_REQUIRED",
+          message: "Location ID is required for Stripe refund",
+          requestId: request.id,
+          details: { orderId: input.orderId, paymentId: input.paymentId }
+        })
+      );
+    }
+
+    const locationSummaryResult = await fetchInternalLocationSummary({
+      catalogBaseUrl,
+      requestId: request.id,
+      locationId: input.locationId
+    });
+
+    if (!locationSummaryResult.ok) {
+      return reply.status(502).send(
+        serviceErrorSchema.parse({
+          code: "CATALOG_LOCATION_UNAVAILABLE",
+          message: "Unable to load location payment profile for refund",
+          requestId: request.id,
+          details: { locationId: input.locationId }
+        })
+      );
+    }
+
+    const stripeAccountId = locationSummaryResult.response.paymentProfile?.stripeAccountId;
+    if (!stripeAccountId) {
+      return reply.status(409).send(
+        serviceErrorSchema.parse({
+          code: "STRIPE_ACCOUNT_NOT_CONFIGURED",
+          message: "Stripe account not configured for this location",
+          requestId: request.id,
+          details: { locationId: input.locationId }
+        })
+      );
+    }
+
     try {
-      const refundResponse = await executeLiveRefund({
-        config: cloverProvider,
-        request: input,
-        requestId: request.id,
-        logger: request.log,
-        providerPaymentId: chargeLookup?.providerPaymentId ?? input.paymentId,
-        repository,
-        oauthConfig: cloverOAuthConfig,
-        locationId: input.locationId
+      await stripeClient.refunds.create(
+        {
+          payment_intent: input.paymentId,
+          amount: input.amountCents
+        },
+        {
+          stripeAccount: stripeAccountId,
+          idempotencyKey: input.idempotencyKey
+        }
+      );
+
+      const refundResponse = refundResponseSchema.parse({
+        refundId: randomUUID(),
+        provider: "STRIPE",
+        orderId: input.orderId,
+        paymentId: input.paymentId,
+        status: "REFUNDED",
+        amountCents: input.amountCents,
+        currency: input.currency,
+        occurredAt: new Date().toISOString(),
+        message: "Stripe refund succeeded"
       });
+
       const savedRefund = await repository.saveRefund({ request: input, response: refundResponse });
       logPaymentsMutation(request, "refund accepted", {
         orderId: savedRefund.orderId,
@@ -3896,42 +3949,19 @@ export async function registerRoutes(app: FastifyInstance) {
         refundId: savedRefund.refundId,
         status: savedRefund.status,
         provider: savedRefund.provider,
-        providerMode: cloverProvider.mode
+        providerMode: "live"
       });
       return savedRefund;
     } catch (error) {
-      const serviceError = readThrownServiceError(error);
-      const message = error instanceof Error ? error.message : "Live Clover refund failed";
-      const misconfigurationMessage =
-        cloverOAuthConfig.misconfigurationReason ??
-        cloverProvider.misconfigurationReason ??
-        "Clover provider is misconfigured";
-      if (serviceError?.code === "CLOVER_CREDENTIALS_UNAVAILABLE") {
-        return reply.status(serviceError.statusCode).send(
-          serviceErrorSchema.parse({
-            code: serviceError.code,
-            message: serviceError.message,
-            requestId: request.id
-          })
-        );
-      }
-      if (message === misconfigurationMessage || message === "Clover provider is misconfigured") {
-        return reply.status(503).send(
-          serviceErrorSchema.parse({
-            code: "PROVIDER_MISCONFIGURED",
-            message: misconfigurationMessage,
-            requestId: request.id
-          })
-        );
-      }
+      const message = error instanceof Error ? error.message : "Live Stripe refund failed";
 
       request.log.error(
         { error, requestId: request.id, orderId: input.orderId, paymentId: input.paymentId },
-        "live Clover refund failed"
+        "live Stripe refund failed"
       );
       return reply.status(502).send(
         serviceErrorSchema.parse({
-          code: "CLOVER_REFUND_ERROR",
+          code: "STRIPE_REFUND_ERROR",
           message,
           requestId: request.id
         })

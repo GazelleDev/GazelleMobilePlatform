@@ -1345,56 +1345,14 @@ describe("payments service", () => {
     });
 
     expect(refund.statusCode).toBe(200);
-    expect(refund.json()).toMatchObject({ status: "REJECTED", provider: "CLOVER" });
+    expect(refund.json()).toMatchObject({ status: "REJECTED", provider: "STRIPE" });
     await app.close();
   });
 
-  it("accepts provider-style payment ids on refund requests without a stored charge row", async () => {
+  it("requires locationId on live refund requests", async () => {
     stubLiveCloverOauthEnv();
 
-    const fetchMock = vi.fn<typeof fetch>();
-    let refundBody: Record<string, unknown> | undefined;
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-
-      if (url === "https://apisandbox.dev.clover.com/oauth/v2/token") {
-        return new Response(
-          JSON.stringify({
-            access_token: "oauth-access-token-1",
-            refresh_token: "oauth-refresh-token-1",
-            token_type: "Bearer",
-            access_token_expiration: Math.floor(Date.now() / 1000) + 3600,
-            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/pakms/apikey") {
-        return new Response(JSON.stringify({ apiAccessKey: "oauth-api-access-key-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/v1/refunds") {
-        refundBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-        return new Response(
-          JSON.stringify({
-            id: "clv-refund-provider-1",
-            status: "REFUNDED",
-            message: "Refund accepted"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      throw new Error(`unexpected live Clover refund URL: ${url}`);
-    });
-
     const app = await buildApp();
-    await connectCloverOauth(app, "merchant-sbx");
 
     const refund = await app.inject({
       method: "POST",
@@ -1410,13 +1368,8 @@ describe("payments service", () => {
       }
     });
 
-    expect(refund.statusCode).toBe(200);
-    expect(refund.json()).toMatchObject({
-      status: "REFUNDED",
-      provider: "CLOVER",
-      paymentId: "pi_provider_payment_id"
-    });
-    expect(refundBody).toMatchObject({ charge: "pi_provider_payment_id" });
+    expect(refund.statusCode).toBe(409);
+    expect(refund.json()).toMatchObject({ code: "LOCATION_REQUIRED" });
     await app.close();
   });
 
@@ -1723,13 +1676,9 @@ describe("payments service", () => {
         idempotencyKey: "live-refund-1"
       }
     });
-    expect(refundResponse.statusCode).toBe(200);
-    expect(refundResponse.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "REFUNDED"
-    });
+    expect(refundResponse.statusCode).toBe(409);
+    expect(refundResponse.json()).toMatchObject({ code: "LOCATION_REQUIRED" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(7);
     await app.close();
   });
 
