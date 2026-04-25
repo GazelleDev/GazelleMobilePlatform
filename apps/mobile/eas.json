@@ -28,6 +28,7 @@
       "channel": "beta",
       "env": {
         "APP_VARIANT": "beta",
+        "IOS_BUNDLE_IDENTIFIER": "com.lattelink.rawaq.beta",
         "APP_DISPLAY_NAME_BASE": "LatteLink",
         "EXPO_PUBLIC_BRAND_NAME": "LatteLink",
         "EXPO_PUBLIC_API_BASE_URL": "https://api.nomly.us/v1",
