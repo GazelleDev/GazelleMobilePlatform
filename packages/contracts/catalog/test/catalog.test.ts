@@ -312,11 +312,26 @@ describe("contracts-catalog", () => {
         "content-type": "image/png"
       },
       assetUrl: "https://media.example.com/locations/flagship-01/menu/iced-latte.png",
+      variantUploads: [
+        {
+          variant: "mobile-list",
+          uploadMethod: "PUT",
+          uploadUrl: "https://example.r2.cloudflarestorage.com/bucket/mobile-list/key",
+          uploadHeaders: {
+            "content-type": "image/jpeg"
+          },
+          assetUrl: "https://media.example.com/locations/flagship-01/menu/mobile-list/iced-latte.jpg",
+          contentType: "image/jpeg",
+          width: 320,
+          quality: 0.72
+        }
+      ],
       expiresAt: "2026-04-23T22:00:00.000Z"
     });
 
     expect(uploadRequest.contentType).toBe("image/png");
     expect(uploadResponse.uploadMethod).toBe("PUT");
+    expect(uploadResponse.variantUploads[0]?.variant).toBe("mobile-list");
     expect(catalogContract.routes.adminMenuItemImageUpload.path).toBe("/admin/menu/:itemId/image-upload");
   });
 

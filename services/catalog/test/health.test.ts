@@ -50,6 +50,7 @@ describe("catalog service", () => {
     const response = await app.inject({ method: "GET", url: "/v1/menu" });
 
     expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("public, max-age=60, stale-while-revalidate=300");
     const parsed = menuResponseSchema.parse(response.json());
     expect(parsed.categories.length).toBeGreaterThan(0);
     await app.close();

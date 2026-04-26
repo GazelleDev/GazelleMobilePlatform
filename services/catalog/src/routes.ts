@@ -37,6 +37,7 @@ const payloadSchema = z.object({
 const locationIdQuerySchema = z.object({
   locationId: z.string().min(1).optional()
 });
+const publicCatalogCacheControl = "public, max-age=60, stale-while-revalidate=300";
 
 const menuItemParamsSchema = z.object({
   itemId: z.string().min(1)
@@ -167,24 +168,29 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   });
 
-  app.get("/v1/app-config", async (request) => {
+  app.get("/v1/app-config", async (request, reply) => {
+    reply.header("cache-control", publicCatalogCacheControl);
     const { locationId } = locationIdQuerySchema.parse(request.query);
     return repository.getAppConfig(locationId ?? DEFAULT_LOCATION_ID);
   });
-  app.get("/v1/menu", async (request) => {
+  app.get("/v1/menu", async (request, reply) => {
+    reply.header("cache-control", publicCatalogCacheControl);
     const { locationId } = locationIdQuerySchema.parse(request.query);
     return repository.getMenu(locationId ?? DEFAULT_LOCATION_ID);
   });
-  app.get("/v1/cards", async (request) => {
+  app.get("/v1/cards", async (request, reply) => {
+    reply.header("cache-control", publicCatalogCacheControl);
     const { locationId } = locationIdQuerySchema.parse(request.query);
     return homeNewsCardsResponseSchema.parse(await repository.getHomeNewsCards(locationId ?? DEFAULT_LOCATION_ID));
   });
-  app.get("/v1/store/cards", async (request) => {
+  app.get("/v1/store/cards", async (request, reply) => {
+    reply.header("cache-control", publicCatalogCacheControl);
     const { locationId } = locationIdQuerySchema.parse(request.query);
     return homeNewsCardsResponseSchema.parse(await repository.getHomeNewsCards(locationId ?? DEFAULT_LOCATION_ID));
   });
 
-  app.get("/v1/store/config", async (request) => {
+  app.get("/v1/store/config", async (request, reply) => {
+    reply.header("cache-control", publicCatalogCacheControl);
     const { locationId } = locationIdQuerySchema.parse(request.query);
     return repository.getStoreConfig(locationId ?? DEFAULT_LOCATION_ID);
   });

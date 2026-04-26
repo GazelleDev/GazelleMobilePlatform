@@ -15,6 +15,7 @@ import {
   formatUsd,
   resolveAppConfigData,
   resolveMenuData,
+  resolveMenuImageUrl,
   resolveStoreConfigData,
   useAppConfigQuery,
   useMenuQuery,
@@ -217,15 +218,29 @@ function CartItemArtwork({
   imageUrl?: string;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const optimizedImageUrl = resolveMenuImageUrl(imageUrl, "list");
+  const [activeImageUrl, setActiveImageUrl] = useState(optimizedImageUrl);
 
   useEffect(() => {
     setImageFailed(false);
-  }, [imageUrl]);
+    setActiveImageUrl(optimizedImageUrl);
+  }, [optimizedImageUrl]);
 
   return (
     <View style={styles.itemIconWrap}>
-      {imageUrl && !imageFailed ? (
-        <Image source={{ uri: imageUrl }} style={styles.itemArtwork} resizeMode="contain" onError={() => setImageFailed(true)} />
+      {activeImageUrl && !imageFailed ? (
+        <Image
+          source={{ uri: activeImageUrl }}
+          style={styles.itemArtwork}
+          resizeMode="contain"
+          onError={() => {
+            if (imageUrl && activeImageUrl !== imageUrl) {
+              setActiveImageUrl(imageUrl);
+              return;
+            }
+            setImageFailed(true);
+          }}
+        />
       ) : (
         <Ionicons name={resolveItemIcon(itemName)} size={18} color={uiPalette.accent} />
       )}

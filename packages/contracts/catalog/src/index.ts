@@ -252,11 +252,23 @@ export const adminMenuItemImageUploadRequestSchema = z.object({
   sizeBytes: z.number().int().positive()
 });
 
+export const adminMenuItemImageVariantUploadSchema = z.object({
+  variant: z.enum(["mobile-list", "mobile-hero"]),
+  uploadMethod: z.literal("PUT"),
+  uploadUrl: z.string().url(),
+  uploadHeaders: z.record(z.string(), z.string()).default({}),
+  assetUrl: z.string().url(),
+  contentType: z.literal("image/jpeg"),
+  width: z.number().int().positive(),
+  quality: z.number().positive().max(1)
+});
+
 export const adminMenuItemImageUploadResponseSchema = z.object({
   uploadMethod: z.literal("PUT"),
   uploadUrl: z.string().url(),
   uploadHeaders: z.record(z.string(), z.string()).default({}),
   assetUrl: z.string().url(),
+  variantUploads: z.array(adminMenuItemImageVariantUploadSchema).default([]),
   expiresAt: z.string().datetime()
 });
 
@@ -724,6 +736,7 @@ export type HomeNewsCardCreate = z.output<typeof homeNewsCardCreateSchema>;
 export type HomeNewsCardUpdate = z.output<typeof homeNewsCardUpdateSchema>;
 export type HomeNewsCardVisibilityUpdate = z.output<typeof homeNewsCardVisibilityUpdateSchema>;
 export type AdminMenuItemImageUploadRequest = z.output<typeof adminMenuItemImageUploadRequestSchema>;
+export type AdminMenuItemImageVariantUpload = z.output<typeof adminMenuItemImageVariantUploadSchema>;
 export type AdminMenuItemImageUploadResponse = z.output<typeof adminMenuItemImageUploadResponseSchema>;
 export type MenuCategory = z.output<typeof menuCategorySchema>;
 export type MenuResponse = z.output<typeof menuResponseSchema>;

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import {
   appConfigSchema,
   isLoyaltyVisible,
@@ -19,6 +19,39 @@ import {
   type StoreConfigResponse
 } from "@lattelink/contracts-catalog";
 import { apiClient, catalogApiClient } from "../api/client";
+
+const catalogMenuQueryKey = ["catalog", "menu"] as const;
+const catalogHomeNewsCardsQueryKey = ["catalog", "home-news-cards"] as const;
+const catalogStoreConfigQueryKey = ["catalog", "store-config"] as const;
+const catalogAppConfigQueryKey = ["catalog", "app-config"] as const;
+const catalogStaleTimeMs = 60_000;
+
+export type MenuImageVariant = "list" | "hero";
+
+function replaceLastExtension(pathname: string, nextExtension: string) {
+  return pathname.replace(/\.[^/.]+$/, `.${nextExtension}`);
+}
+
+export function resolveMenuImageUrl(imageUrl: string | undefined, variant: MenuImageVariant) {
+  if (!imageUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(imageUrl);
+    if (!url.pathname.includes("/menu-items/") || !url.pathname.includes("/original/")) {
+      return imageUrl;
+    }
+
+    url.pathname = replaceLastExtension(
+      url.pathname.replace("/original/", variant === "list" ? "/mobile-list/" : "/mobile-hero/"),
+      "jpg"
+    );
+    return url.toString();
+  } catch {
+    return imageUrl;
+  }
+}
 
 const sizeGroup: MenuItemCustomizationGroup = menuItemCustomizationGroupSchema.parse({
   id: "size",
@@ -337,61 +370,95 @@ function filterVisibleCategories(menu: MenuResponse): MenuCategory[] {
     .filter((category) => category.items.length > 0);
 }
 
+async function fetchMenu(): Promise<MenuResponse> {
+  const response = menuResponseSchema.parse(await apiClient.get<unknown>("/menu"));
+  return {
+    ...response,
+    categories: filterVisibleCategories(response)
+  };
+}
+
+async function fetchHomeNewsCards(): Promise<HomeNewsCardsResponse> {
+  const response = homeNewsCardsResponseSchema.parse(await apiClient.get<unknown>("/store/cards"));
+  return {
+    ...response,
+    cards: response.cards.filter((card) => card.visible).sort((left, right) => left.sortOrder - right.sortOrder)
+  };
+}
+
+async function fetchStoreConfig(): Promise<StoreConfigResponse> {
+  return storeConfigResponseSchema.parse(await apiClient.get<unknown>("/store/config"));
+}
+
+async function fetchAppConfig(): Promise<AppConfig> {
+  try {
+    return await apiClient.appConfig();
+  } catch (primaryError) {
+    try {
+      return await catalogApiClient.appConfig();
+    } catch {
+      if (!__DEV__) {
+        throw primaryError;
+      }
+      return fallbackAppConfig;
+    }
+  }
+}
+
+export function prefetchCatalogQueries(queryClient: QueryClient) {
+  void Promise.allSettled([
+    queryClient.prefetchQuery({
+      queryKey: catalogMenuQueryKey,
+      queryFn: fetchMenu,
+      staleTime: catalogStaleTimeMs
+    }),
+    queryClient.prefetchQuery({
+      queryKey: catalogAppConfigQueryKey,
+      queryFn: fetchAppConfig,
+      staleTime: catalogStaleTimeMs
+    }),
+    queryClient.prefetchQuery({
+      queryKey: catalogStoreConfigQueryKey,
+      queryFn: fetchStoreConfig,
+      staleTime: catalogStaleTimeMs
+    }),
+    queryClient.prefetchQuery({
+      queryKey: catalogHomeNewsCardsQueryKey,
+      queryFn: fetchHomeNewsCards,
+      staleTime: catalogStaleTimeMs
+    })
+  ]);
+}
+
 export function useMenuQuery() {
   return useQuery({
-    queryKey: ["catalog", "menu"],
-    queryFn: async (): Promise<MenuResponse> => {
-      const response = menuResponseSchema.parse(await apiClient.get<unknown>("/menu"));
-      return {
-        ...response,
-        categories: filterVisibleCategories(response)
-      };
-    },
-    staleTime: 60_000
+    queryKey: catalogMenuQueryKey,
+    queryFn: fetchMenu,
+    staleTime: catalogStaleTimeMs
   });
 }
 
 export function useHomeNewsCardsQuery() {
   return useQuery({
-    queryKey: ["catalog", "home-news-cards"],
-    queryFn: async (): Promise<HomeNewsCardsResponse> => {
-      const response = homeNewsCardsResponseSchema.parse(await apiClient.get<unknown>("/store/cards"));
-      return {
-        ...response,
-        cards: response.cards.filter((card) => card.visible).sort((left, right) => left.sortOrder - right.sortOrder)
-      };
-    },
-    staleTime: 60_000
+    queryKey: catalogHomeNewsCardsQueryKey,
+    queryFn: fetchHomeNewsCards,
+    staleTime: catalogStaleTimeMs
   });
 }
 
 export function useStoreConfigQuery() {
   return useQuery({
-    queryKey: ["catalog", "store-config"],
-    queryFn: async (): Promise<StoreConfigResponse> =>
-      storeConfigResponseSchema.parse(await apiClient.get<unknown>("/store/config")),
-    staleTime: 60_000
+    queryKey: catalogStoreConfigQueryKey,
+    queryFn: fetchStoreConfig,
+    staleTime: catalogStaleTimeMs
   });
 }
 
 export function useAppConfigQuery() {
   return useQuery({
-    queryKey: ["catalog", "app-config"],
-    queryFn: async (): Promise<AppConfig> => {
-      try {
-        return await apiClient.appConfig();
-      } catch (primaryError) {
-        try {
-          return await catalogApiClient.appConfig();
-        } catch {
-          if (!__DEV__) {
-            throw primaryError;
-          }
-          return fallbackAppConfig;
-        }
-      }
-    },
-    staleTime: 60_000
+    queryKey: catalogAppConfigQueryKey,
+    queryFn: fetchAppConfig,
+    staleTime: catalogStaleTimeMs
   });
 }
 

@@ -13,6 +13,10 @@ const allowedImageContentTypes = new Set([
   "image/heic",
   "image/heif"
 ]);
+const menuImageVariantDefinitions = [
+  { variant: "mobile-list", width: 320, quality: 0.72 },
+  { variant: "mobile-hero", width: 960, quality: 0.78 }
+] as const;
 
 function trimToUndefined(value: string | undefined) {
   const next = value?.trim();
@@ -89,6 +93,14 @@ function buildObjectKey(params: {
   return `brands/${brandId}/locations/${locationId}/menu-items/${itemId}/original/${timestamp}-${randomUUID().slice(0, 8)}-${stem}.${extension}`;
 }
 
+function buildVariantObjectKey(objectKey: string, variant: (typeof menuImageVariantDefinitions)[number]["variant"]) {
+  const lastSlashIndex = objectKey.lastIndexOf("/");
+  const fileName = lastSlashIndex >= 0 ? objectKey.slice(lastSlashIndex + 1) : objectKey;
+  const fileStem = fileName.replace(/\.[^.]+$/, "") || "menu-image";
+
+  return objectKey.replace(`/original/${fileName}`, `/${variant}/${fileStem}.jpg`);
+}
+
 export class MenuImageUploadUnavailableError extends Error {
   constructor(message = "Menu image uploads are not configured.") {
     super(message);
@@ -161,17 +173,48 @@ export function createMenuImageUploadService(env: NodeJS.ProcessEnv = process.en
       }
 
       const objectKey = buildObjectKey(input);
-      const uploadUrl = await getSignedUrl(
-        client,
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: objectKey,
-          ContentType: input.contentType
-        }),
-        {
-          expiresIn: uploadExpirySeconds
-        }
-      );
+      const [uploadUrl, variantUploads] = await Promise.all([
+        getSignedUrl(
+          client,
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: objectKey,
+            ContentType: input.contentType
+          }),
+          {
+            expiresIn: uploadExpirySeconds
+          }
+        ),
+        Promise.all(
+          menuImageVariantDefinitions.map(async (definition) => {
+            const variantKey = buildVariantObjectKey(objectKey, definition.variant);
+            const variantUploadUrl = await getSignedUrl(
+              client,
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: variantKey,
+                ContentType: "image/jpeg"
+              }),
+              {
+                expiresIn: uploadExpirySeconds
+              }
+            );
+
+            return {
+              variant: definition.variant,
+              uploadMethod: "PUT" as const,
+              uploadUrl: variantUploadUrl,
+              uploadHeaders: {
+                "content-type": "image/jpeg"
+              },
+              assetUrl: new URL(variantKey, ensureTrailingSlash(publicBaseUrl)).toString(),
+              contentType: "image/jpeg" as const,
+              width: definition.width,
+              quality: definition.quality
+            };
+          })
+        )
+      ]);
 
       return {
         uploadMethod: "PUT",
@@ -180,6 +223,7 @@ export function createMenuImageUploadService(env: NodeJS.ProcessEnv = process.en
           "content-type": input.contentType
         },
         assetUrl: new URL(objectKey, ensureTrailingSlash(publicBaseUrl)).toString(),
+        variantUploads,
         expiresAt: new Date(Date.now() + uploadExpirySeconds * 1000).toISOString()
       };
     }

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { formatUsd, type MenuItem } from "../menu/catalog";
+import { formatUsd, resolveMenuImageUrl, type MenuItem } from "../menu/catalog";
 import { uiPalette, uiTypography } from "../ui/system";
 
 export type MenuItemRowProps = {
@@ -19,26 +19,33 @@ function MenuItemArtwork({
   onReady?: () => void;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const optimizedImageUrl = resolveMenuImageUrl(imageUrl, "list");
+  const [activeImageUrl, setActiveImageUrl] = useState(optimizedImageUrl);
 
   useEffect(() => {
     setImageFailed(false);
-  }, [imageUrl]);
+    setActiveImageUrl(optimizedImageUrl);
+  }, [optimizedImageUrl]);
 
   useEffect(() => {
-    if (!imageUrl) {
+    if (!activeImageUrl) {
       onReady?.();
     }
-  }, [imageUrl, onReady]);
+  }, [activeImageUrl, onReady]);
 
   return (
     <View style={styles.menuImage}>
-      {imageUrl && !imageFailed ? (
+      {activeImageUrl && !imageFailed ? (
         <Image
-          source={{ uri: imageUrl }}
+          source={{ uri: activeImageUrl }}
           style={styles.menuImagePhoto}
           resizeMode="cover"
           onLoadEnd={onReady}
           onError={() => {
+            if (imageUrl && activeImageUrl !== imageUrl) {
+              setActiveImageUrl(imageUrl);
+              return;
+            }
             setImageFailed(true);
             onReady?.();
           }}

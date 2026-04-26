@@ -22,7 +22,7 @@ import {
 import { OrderStatusPill, SectionHeader } from "../components";
 import { getOrdersRecoveryCopy } from "../auth/recovery";
 import { useAuthSession } from "../auth/session";
-import { formatUsd, resolveMenuData, useMenuQuery, type MenuItem } from "../menu/catalog";
+import { formatUsd, resolveMenuData, resolveMenuImageUrl, useMenuQuery, type MenuItem } from "../menu/catalog";
 import { getTabBarBottomOffset, TAB_BAR_HEIGHT } from "../navigation/tabBarMetrics";
 import { useCheckoutFlow } from "../orders/flow";
 import {
@@ -149,15 +149,29 @@ function OrderItemThumbnail({
   const label = item.itemName?.trim() || menuItem?.name || "Item";
   const imageUrl = menuItem?.imageUrl;
   const [imageFailed, setImageFailed] = useState(false);
+  const optimizedImageUrl = resolveMenuImageUrl(imageUrl, "list");
+  const [activeImageUrl, setActiveImageUrl] = useState(optimizedImageUrl);
 
   useEffect(() => {
     setImageFailed(false);
-  }, [imageUrl]);
+    setActiveImageUrl(optimizedImageUrl);
+  }, [optimizedImageUrl]);
 
   return (
     <View style={[styles.orderThumb, stacked ? styles.orderThumbStacked : null]}>
-      {imageUrl && !imageFailed ? (
-        <Image source={{ uri: imageUrl }} style={styles.orderThumbImage} resizeMode="cover" onError={() => setImageFailed(true)} />
+      {activeImageUrl && !imageFailed ? (
+        <Image
+          source={{ uri: activeImageUrl }}
+          style={styles.orderThumbImage}
+          resizeMode="cover"
+          onError={() => {
+            if (imageUrl && activeImageUrl !== imageUrl) {
+              setActiveImageUrl(imageUrl);
+              return;
+            }
+            setImageFailed(true);
+          }}
+        />
       ) : (
         <Ionicons name={resolveOrderItemIcon(label)} size={16} color={uiPalette.accent} />
       )}

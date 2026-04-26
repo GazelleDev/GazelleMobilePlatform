@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMobileLoyaltyVisible, isMobileOrderTrackingEnabled, resolveAppConfigData } from "../src/menu/catalog";
+import { isMobileLoyaltyVisible, isMobileOrderTrackingEnabled, resolveAppConfigData, resolveMenuImageUrl } from "../src/menu/catalog";
 
 describe("mobile catalog config", () => {
   it("falls back to the default brand config when app-config is unavailable", () => {
@@ -37,5 +37,17 @@ describe("mobile catalog config", () => {
     expect(isMobileOrderTrackingEnabled(config)).toBe(false);
     expect(config.featureFlags.menuEditing).toBe(false);
     expect(config.fulfillment.mode).toBe("staff");
+  });
+
+  it("resolves optimized mobile menu image variants from original media URLs", () => {
+    const original =
+      "https://media.nomly.us/brands/rawaqcoffee/locations/rawaqcoffee01/menu-items/latte/original/2026-04-24T03-18-42-279Z-447a193e-latte.png";
+
+    expect(resolveMenuImageUrl(original, "list")).toBe(
+      "https://media.nomly.us/brands/rawaqcoffee/locations/rawaqcoffee01/menu-items/latte/mobile-list/2026-04-24T03-18-42-279Z-447a193e-latte.jpg"
+    );
+    expect(resolveMenuImageUrl(original, "hero")).toBe(
+      "https://media.nomly.us/brands/rawaqcoffee/locations/rawaqcoffee01/menu-items/latte/mobile-hero/2026-04-24T03-18-42-279Z-447a193e-latte.jpg"
+    );
   });
 });

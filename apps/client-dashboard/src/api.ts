@@ -61,6 +61,7 @@ export type OperatorDashboardSnapshot = {
 };
 
 type RequestMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type MenuImageVariantUpload = z.output<typeof adminMenuItemImageUploadResponseSchema>["variantUploads"][number];
 
 export class ApiRequestError extends Error {
   statusCode: number;
@@ -244,6 +245,87 @@ async function uploadBinary(params: {
   if (!response.ok) {
     throw new Error(`Image upload failed (${response.status}).`);
   }
+}
+
+function canCreateMenuImageVariant(file: File) {
+  return file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp";
+}
+
+function loadImageFromObjectUrl(objectUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to read image for optimization."));
+    image.decoding = "async";
+    image.src = objectUrl;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, contentType: string, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+          return;
+        }
+        reject(new Error("Unable to encode optimized image variant."));
+      },
+      contentType,
+      quality
+    );
+  });
+}
+
+async function createMenuImageVariantBlob(file: File, upload: MenuImageVariantUpload) {
+  if (!canCreateMenuImageVariant(file) || typeof document === "undefined" || typeof Image === "undefined") {
+    return null;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await loadImageFromObjectUrl(objectUrl);
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+      throw new Error("Image dimensions could not be determined.");
+    }
+
+    const targetWidth = Math.max(1, Math.min(upload.width, sourceWidth));
+    const targetHeight = Math.max(1, Math.round((sourceHeight / sourceWidth) * targetWidth));
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Image optimization is not available in this browser.");
+    }
+
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+    return await canvasToBlob(canvas, upload.contentType, upload.quality);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function uploadMenuItemImageVariants(file: File, variantUploads: MenuImageVariantUpload[]) {
+  await Promise.all(
+    variantUploads.map(async (upload) => {
+      const blob = await createMenuImageVariantBlob(file, upload);
+      if (!blob) {
+        return;
+      }
+
+      await uploadBinary({
+        uploadUrl: upload.uploadUrl,
+        method: upload.uploadMethod,
+        headers: upload.uploadHeaders,
+        body: blob
+      });
+    })
+  );
 }
 
 export async function signInOperatorWithPassword(params: { apiBaseUrl: string; email: string; password: string }) {
@@ -534,6 +616,7 @@ export async function uploadOperatorMenuItemImage(
     headers: upload.uploadHeaders,
     body: file
   });
+  await uploadMenuItemImageVariants(file, upload.variantUploads);
 
   return upload.assetUrl;
 }

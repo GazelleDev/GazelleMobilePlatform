@@ -15,6 +15,7 @@ import { CheckoutFlowProvider } from "../src/orders/flow";
 import { useOrdersRealtimeSync } from "../src/orders/useOrdersRealtimeSync";
 import { uiPalette } from "../src/ui/system";
 import { usePushNotificationRegistration } from "../src/notifications/usePushNotificationRegistration";
+import { prefetchCatalogQueries } from "../src/menu/catalog";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,8 +28,8 @@ const queryClient = new QueryClient({
   }
 });
 
-const MIN_SPLASH_DURATION_MS = 2400;
-const SPLASH_FADE_DURATION_MS = 600;
+const MIN_SPLASH_DURATION_MS = 650;
+const SPLASH_FADE_DURATION_MS = 180;
 const splashStartedAt = Date.now();
 
 SplashScreen.setOptions({
@@ -42,6 +43,11 @@ function AppInitializer() {
   const { isAuthenticated } = useAuthSession();
   usePushNotificationRegistration(isAuthenticated);
   useOrdersRealtimeSync(isAuthenticated);
+
+  useEffect(() => {
+    prefetchCatalogQueries(queryClient);
+  }, []);
+
   return null;
 }
 

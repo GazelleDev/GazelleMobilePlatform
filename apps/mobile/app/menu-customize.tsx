@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   describeCustomizationSelection,
   priceMenuItemCustomization,
@@ -35,6 +35,7 @@ import { CustomizationGroupSection } from "../src/menu/CustomizationGroupSection
 import {
   formatUsd,
   resolveMenuData,
+  resolveMenuImageUrl,
   useMenuQuery,
   type MenuItem,
   type MenuItemCustomizationGroup,
@@ -223,26 +224,33 @@ function ProductImage({
   onReady?: () => void;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const optimizedImageUrl = resolveMenuImageUrl(imageUrl, "hero");
+  const [activeImageUrl, setActiveImageUrl] = useState(optimizedImageUrl);
 
   useEffect(() => {
     setImageFailed(false);
-  }, [imageUrl]);
+    setActiveImageUrl(optimizedImageUrl);
+  }, [optimizedImageUrl]);
 
   useEffect(() => {
-    if (!imageUrl) {
+    if (!activeImageUrl) {
       onReady?.();
     }
-  }, [imageUrl, onReady]);
+  }, [activeImageUrl, onReady]);
 
   return (
     <View style={styles.heroImage}>
-      {imageUrl && !imageFailed ? (
+      {activeImageUrl && !imageFailed ? (
         <Image
-          source={{ uri: imageUrl }}
+          source={{ uri: activeImageUrl }}
           style={styles.heroImagePhoto}
           resizeMode="cover"
           onLoadEnd={onReady}
           onError={() => {
+            if (imageUrl && activeImageUrl !== imageUrl) {
+              setActiveImageUrl(imageUrl);
+              return;
+            }
             setImageFailed(true);
             onReady?.();
           }}
@@ -306,10 +314,8 @@ export default function MenuCustomizeModalScreen() {
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(true);
   const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
-  const [readyHeroItemId, setReadyHeroItemId] = useState<string | null>(null);
 
-  const heroReady = !item || !item.imageUrl || readyHeroItemId === item.id;
-  const shouldShowInitialLoading = !didFinishInitialReveal && (isInitialLoading || (Boolean(item) && !heroReady));
+  const shouldShowInitialLoading = !didFinishInitialReveal && isInitialLoading;
 
   useEffect(() => {
     setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
@@ -323,15 +329,6 @@ export default function MenuCustomizeModalScreen() {
     loadingOpacity.stopAnimation();
     loadingOpacity.setValue(1);
   }, [itemId, loadingOpacity]);
-
-  useEffect(() => {
-    if (!item) {
-      setReadyHeroItemId(null);
-      return;
-    }
-
-    setReadyHeroItemId(item.imageUrl ? null : item.id);
-  }, [item?.id, item?.imageUrl]);
 
   const resolvedCustomization = useMemo(
     () => (item ? resolveCartCustomization(item.customizationGroups, customization) : resolveCartCustomization([], customization)),
@@ -374,18 +371,6 @@ export default function MenuCustomizeModalScreen() {
   );
   const priceLine = formatUsd(selectedUnitPriceCents);
   const metaLine = customizationPreview;
-  const handleHeroReady = useCallback(() => {
-    if (!item?.id) return;
-
-    const activeItemId = item.id;
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setReadyHeroItemId((currentItemId) => (currentItemId === activeItemId ? currentItemId : activeItemId));
-      });
-    });
-  }, [item?.id]);
-
   useEffect(() => {
     if (didFinishInitialReveal) return;
 
@@ -470,7 +455,7 @@ export default function MenuCustomizeModalScreen() {
             contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
           >
             <View style={styles.heroWrap}>
-              <ProductImage imageUrl={item.imageUrl} onReady={handleHeroReady} />
+              <ProductImage imageUrl={item.imageUrl} />
             </View>
 
             <View style={styles.content}>

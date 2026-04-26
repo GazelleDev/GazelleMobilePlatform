@@ -618,6 +618,7 @@ async function proxyUpstream<TResponse>(params: {
   additionalHeaders?: Record<string, string | undefined>;
   forwardUserIdHeader?: boolean;
   forwardQuery?: boolean;
+  forwardCacheControl?: boolean;
   timeoutMs?: number;
   responseSchema: z.ZodType<TResponse>;
 }) {
@@ -632,6 +633,7 @@ async function proxyUpstream<TResponse>(params: {
     additionalHeaders,
     forwardUserIdHeader = true,
     forwardQuery = false,
+    forwardCacheControl = false,
     timeoutMs = toPositiveInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS, defaultUpstreamTimeoutMs),
     responseSchema
   } = params;
@@ -708,6 +710,7 @@ async function proxyUpstream<TResponse>(params: {
 
   const rawBody = await upstreamResponse.text();
   const parsedBody = parseJsonSafely(rawBody);
+  const cacheControl = forwardCacheControl ? upstreamResponse.headers.get("cache-control") : null;
 
   if (!upstreamResponse.ok) {
     const upstreamError = apiErrorSchema.safeParse(parsedBody);
@@ -737,6 +740,10 @@ async function proxyUpstream<TResponse>(params: {
         details: parsedResponse.error.flatten()
       })
     );
+  }
+
+  if (cacheControl) {
+    reply.header("cache-control", cacheControl);
   }
 
   return reply.status(upstreamResponse.status).send(parsedResponse.data);
@@ -2085,6 +2092,7 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: "/v1/menu",
       forwardQuery: true,
+      forwardCacheControl: true,
       responseSchema: menuResponseSchema
     })
   );
@@ -2098,6 +2106,7 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: "/v1/app-config",
       forwardQuery: true,
+      forwardCacheControl: true,
       responseSchema: appConfigSchema
     })
   );
@@ -2111,6 +2120,7 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: "/v1/store/config",
       forwardQuery: true,
+      forwardCacheControl: true,
       responseSchema: storeConfigResponseSchema
     })
   );
@@ -2124,6 +2134,7 @@ export async function registerRoutes(app: FastifyInstance) {
       method: "GET",
       path: "/v1/store/cards",
       forwardQuery: true,
+      forwardCacheControl: true,
       responseSchema: homeNewsCardsResponseSchema
     })
   );
@@ -2973,6 +2984,7 @@ export async function registerRoutes(app: FastifyInstance) {
         method: "GET",
         path: "/v1/cards",
         forwardQuery: true,
+        forwardCacheControl: true,
         responseSchema: homeNewsCardsResponseSchema
       })
   );

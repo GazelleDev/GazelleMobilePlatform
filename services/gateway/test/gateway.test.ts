@@ -738,7 +738,7 @@ describe("gateway", () => {
               }
             ]
           }),
-          { status: 200, headers: { "content-type": "application/json" } }
+          { status: 200, headers: { "content-type": "application/json", "cache-control": "public, max-age=60" } }
         );
       }
 
@@ -1872,6 +1872,7 @@ describe("gateway", () => {
     });
     const requestedUrls = fetchMock.mock.calls.map(([input]) => (typeof input === "string" ? input : input.url));
     expect(requestedUrls).toContain("http://catalog.internal/v1/menu");
+    expect(response.headers["cache-control"]).toBe("public, max-age=60");
     await app.close();
   });
 

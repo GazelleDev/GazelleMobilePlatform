@@ -6,7 +6,7 @@ import { Image, Platform, ScrollView, StyleSheet, Text, View } from "react-nativ
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { GlassActionPill } from "../src/cart/GlassActionPill";
-import { formatUsd, resolveMenuData, useMenuQuery, type MenuItem } from "../src/menu/catalog";
+import { formatUsd, resolveMenuData, resolveMenuImageUrl, useMenuQuery, type MenuItem } from "../src/menu/catalog";
 import { useCheckoutFlow, type CheckoutConfirmation } from "../src/orders/flow";
 import { formatOrderDateTime } from "../src/orders/history";
 import { uiPalette, uiTypography } from "../src/ui/system";
@@ -72,15 +72,29 @@ function OrderItemThumbnail({
   imageUrl?: string;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const optimizedImageUrl = resolveMenuImageUrl(imageUrl, "list");
+  const [activeImageUrl, setActiveImageUrl] = useState(optimizedImageUrl);
 
   useEffect(() => {
     setImageFailed(false);
-  }, [imageUrl]);
+    setActiveImageUrl(optimizedImageUrl);
+  }, [optimizedImageUrl]);
 
   return (
     <View style={styles.menuLikeImage}>
-      {imageUrl && !imageFailed ? (
-        <Image source={{ uri: imageUrl }} style={styles.menuLikeImagePhoto} resizeMode="cover" onError={() => setImageFailed(true)} />
+      {activeImageUrl && !imageFailed ? (
+        <Image
+          source={{ uri: activeImageUrl }}
+          style={styles.menuLikeImagePhoto}
+          resizeMode="cover"
+          onError={() => {
+            if (imageUrl && activeImageUrl !== imageUrl) {
+              setActiveImageUrl(imageUrl);
+              return;
+            }
+            setImageFailed(true);
+          }}
+        />
       ) : (
         <Ionicons name={resolveOrderItemIcon(label)} size={22} color={uiPalette.accent} />
       )}

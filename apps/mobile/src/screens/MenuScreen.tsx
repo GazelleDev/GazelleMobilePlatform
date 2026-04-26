@@ -220,43 +220,16 @@ export function MenuScreen() {
   const headerExpandedHeight = insets.top + MENU_HEADER_EXPANDED_HEIGHT;
   const headerCollapsedHeight = insets.top + MENU_HEADER_COLLAPSED_HEIGHT;
   const headerCollapseDistance = headerExpandedHeight - headerCollapsedHeight;
-  const [loadedImageIds, setLoadedImageIds] = useState<Set<string>>(() => new Set());
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(true);
   const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
   const sections = useMemo(() => buildSections(menu?.categories ?? []), [menu?.categories]);
-  const menuItems = useMemo(() => menu?.categories.flatMap((category) => category.items) ?? [], [menu?.categories]);
-  const requiredImageIds = useMemo(() => menuItems.filter((item) => Boolean(item.imageUrl)).map((item) => item.id), [menuItems]);
-  const imagesReady = requiredImageIds.length === 0 || requiredImageIds.every((itemId) => loadedImageIds.has(itemId));
-  const shouldShowInitialLoading = !didFinishInitialReveal && (isInitialLoading || !menu || !imagesReady);
+  const shouldShowInitialLoading = !didFinishInitialReveal && (isInitialLoading || !menu);
 
   const setScrollViewRef = useCallback((node: ScrollView | null) => {
     scrollViewRef.current = node;
   }, []);
-
-  const handleMenuItemReady = useCallback(
-    (itemId: string) => {
-      if (didFinishInitialReveal) return;
-
-      setLoadedImageIds((current) => {
-        if (current.has(itemId)) {
-          return current;
-        }
-
-        const next = new Set(current);
-        next.add(itemId);
-        return next;
-      });
-    },
-    [didFinishInitialReveal]
-  );
-
-  useEffect(() => {
-    if (didFinishInitialReveal) return;
-
-    setLoadedImageIds(new Set());
-  }, [didFinishInitialReveal, requiredImageIds]);
 
   useEffect(() => {
     if (didFinishInitialReveal) return;
@@ -423,7 +396,6 @@ export function MenuScreen() {
                   key={item.id}
                   item={item}
                   isLast={index === section.items.length - 1}
-                  onImageReady={() => handleMenuItemReady(item.id)}
                   onPress={(selectedItem) => router.push({ pathname: "/menu-customize", params: { itemId: selectedItem.id } })}
                 />
               ))}
