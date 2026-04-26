@@ -459,6 +459,15 @@
         }
       }
     },
+    "/orders/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/orders/{orderId}": {
       "get": {
         "parameters": [
