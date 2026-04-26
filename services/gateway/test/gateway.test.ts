@@ -1,4 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const eventBusMocks = vi.hoisted(() => ({
+  close: vi.fn(),
+  subscribeToAllOrderEvents: vi.fn(),
+  subscribeToOrderEvents: vi.fn(),
+  subscribeToOrderStatus: vi.fn()
+}));
+
+vi.mock("@lattelink/event-bus", () => ({
+  EventBusSubscriber: vi.fn().mockImplementation(() => ({
+    close: eventBusMocks.close,
+    subscribeToAllOrderEvents: eventBusMocks.subscribeToAllOrderEvents,
+    subscribeToOrderEvents: eventBusMocks.subscribeToOrderEvents,
+    subscribeToOrderStatus: eventBusMocks.subscribeToOrderStatus
+  }))
+}));
+
 import { buildApp } from "../src/app.js";
 
 describe("gateway", () => {
@@ -18,6 +35,7 @@ describe("gateway", () => {
   let previousGatewayInternalToken: string | undefined;
   let previousOrdersInternalToken: string | undefined;
   let previousGatewayOrderStreamPollMs: string | undefined;
+  let previousValkeyUrl: string | undefined;
   let previousCorsAllowedOrigins: string | undefined;
   let previousFreeClientDashboardDomain: string | undefined;
   let previousNodeEnv: string | undefined;
@@ -89,6 +107,7 @@ describe("gateway", () => {
     previousGatewayInternalToken = process.env.GATEWAY_INTERNAL_API_TOKEN;
     previousOrdersInternalToken = process.env.ORDERS_INTERNAL_API_TOKEN;
     previousGatewayOrderStreamPollMs = process.env.GATEWAY_ORDER_STREAM_POLL_MS;
+    previousValkeyUrl = process.env.VALKEY_URL;
     previousCorsAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS;
     previousFreeClientDashboardDomain = process.env.FREE_CLIENT_DASHBOARD_DOMAIN;
     previousNodeEnv = process.env.NODE_ENV;
@@ -96,6 +115,13 @@ describe("gateway", () => {
     queuedOrderPayloads = new Map();
     queuedOrderListPayloads = [];
     failOrderListFetchWhenQueueEmpty = false;
+    eventBusMocks.close.mockReset();
+    eventBusMocks.subscribeToAllOrderEvents.mockReset();
+    eventBusMocks.subscribeToAllOrderEvents.mockResolvedValue(() => undefined);
+    eventBusMocks.subscribeToOrderEvents.mockReset();
+    eventBusMocks.subscribeToOrderEvents.mockResolvedValue(() => undefined);
+    eventBusMocks.subscribeToOrderStatus.mockReset();
+    eventBusMocks.subscribeToOrderStatus.mockResolvedValue(() => undefined);
     process.env.IDENTITY_SERVICE_BASE_URL = "http://identity.internal";
     process.env.ORDERS_SERVICE_BASE_URL = "http://orders.internal";
     process.env.CATALOG_SERVICE_BASE_URL = "http://catalog.internal";
@@ -1681,6 +1707,12 @@ describe("gateway", () => {
       process.env.GATEWAY_ORDER_STREAM_POLL_MS = previousGatewayOrderStreamPollMs;
     }
 
+    if (previousValkeyUrl === undefined) {
+      delete process.env.VALKEY_URL;
+    } else {
+      process.env.VALKEY_URL = previousValkeyUrl;
+    }
+
     if (previousCorsAllowedOrigins === undefined) {
       delete process.env.CORS_ALLOWED_ORIGINS;
     } else {
@@ -2231,6 +2263,61 @@ describe("gateway", () => {
     await app.close();
   });
 
+  it("continues polling customer order list changes when the event bus is configured", async () => {
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
+    process.env.VALKEY_URL = "redis://valkey.test:6379";
+    failOrderListFetchWhenQueueEmpty = true;
+    const app = await buildApp();
+    const initialOrder = buildOrderPayload("123e4567-e89b-12d3-a456-426614174153", "PAID");
+    const newOrder = buildOrderPayload("123e4567-e89b-12d3-a456-426614174154", "PENDING_PAYMENT");
+    queuedOrderListPayloads = [[initialOrder], [newOrder, initialOrder]];
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/orders/stream",
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(eventBusMocks.subscribeToAllOrderEvents).toHaveBeenCalledOnce();
+    const dataEvents = response.body
+      .split("\n\n")
+      .filter((block) => block.startsWith("data: "))
+      .map((block) => block.trim());
+    expect(dataEvents).toHaveLength(2);
+    expect(dataEvents[0]).toContain('"id":"123e4567-e89b-12d3-a456-426614174153"');
+    expect(dataEvents[1]).toContain('"id":"123e4567-e89b-12d3-a456-426614174154"');
+
+    await app.close();
+  });
+
+  it("keeps customer order list polling alive when event bus subscription fails", async () => {
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
+    process.env.VALKEY_URL = "redis://valkey.test:6379";
+    eventBusMocks.subscribeToAllOrderEvents.mockRejectedValueOnce(new Error("subscription failed"));
+    failOrderListFetchWhenQueueEmpty = true;
+    const app = await buildApp();
+    const initialOrder = buildOrderPayload("123e4567-e89b-12d3-a456-426614174155", "PAID");
+    const newOrder = buildOrderPayload("123e4567-e89b-12d3-a456-426614174156", "READY");
+    queuedOrderListPayloads = [[initialOrder], [newOrder, initialOrder]];
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/orders/stream",
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    const dataEvents = response.body
+      .split("\n\n")
+      .filter((block) => block.startsWith("data: "))
+      .map((block) => block.trim());
+    expect(dataEvents).toHaveLength(2);
+    expect(dataEvents[1]).toContain('"id":"123e4567-e89b-12d3-a456-426614174156"');
+
+    await app.close();
+  });
+
   it("closes the order stream after sending a terminal update", async () => {
     process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
     const app = await buildApp();
@@ -2257,6 +2344,33 @@ describe("gateway", () => {
       return url === `http://orders.internal/v1/orders/${orderId}` && (init?.method ?? "GET") === "GET";
     });
     expect(orderFetchCalls).toHaveLength(2);
+
+    await app.close();
+  });
+
+  it("continues polling customer order status changes when the event bus is configured", async () => {
+    process.env.GATEWAY_ORDER_STREAM_POLL_MS = "5";
+    process.env.VALKEY_URL = "redis://valkey.test:6379";
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174119";
+    queuedOrderStatuses.set(orderId, ["IN_PREP", "READY", "COMPLETED"]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/orders/${orderId}/stream`,
+      headers: authHeader
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(eventBusMocks.subscribeToOrderStatus).toHaveBeenCalledOnce();
+    const dataEvents = response.body
+      .split("\n\n")
+      .filter((block) => block.startsWith("data: "))
+      .map((block) => block.trim());
+    expect(dataEvents).toHaveLength(3);
+    expect(dataEvents[0]).toContain(`"status":"IN_PREP"`);
+    expect(dataEvents[1]).toContain(`"status":"READY"`);
+    expect(dataEvents[2]).toContain(`"status":"COMPLETED"`);
 
     await app.close();
   });

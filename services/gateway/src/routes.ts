@@ -2361,7 +2361,8 @@ export async function registerRoutes(app: FastifyInstance) {
       orders: initialOrdersResult.orders
     });
 
-      if (eventBusSubscriber) {
+    if (eventBusSubscriber) {
+      try {
         unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToAllOrderEvents((event) => {
           if (event.userId !== userId) {
             return;
@@ -2372,8 +2373,17 @@ export async function registerRoutes(app: FastifyInstance) {
             order: event.order
           });
         });
-        return;
+      } catch (error) {
+        request.log.warn(
+          {
+            requestId: request.id,
+            userId,
+            err: error
+          },
+          "orders stream event bus subscription failed; continuing with polling"
+        );
       }
+    }
 
     pollTimeout = setTimeout(() => {
       void pollForUpdates();
@@ -2450,8 +2460,6 @@ export async function registerRoutes(app: FastifyInstance) {
         reply.raw.flushHeaders();
       }
 
-      // This stream prefers Valkey-backed order events for live updates and falls back to polling
-      // only when the event bus is unavailable.
       let closed = false;
       let pollTimeout: ReturnType<typeof setTimeout> | undefined;
       let unsubscribeFromOrderEvents: (() => void) | null = null;
@@ -2553,23 +2561,36 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       if (eventBusSubscriber) {
-        unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToOrderStatus(orderId, (event) => {
-          if (closed || event.userId !== userId || event.order.id !== orderId) {
-            return;
-          }
+        try {
+          unsubscribeFromOrderEvents = await eventBusSubscriber.subscribeToOrderStatus(orderId, (event) => {
+            if (closed || event.userId !== userId || event.order.id !== orderId) {
+              return;
+            }
 
-          sendEvent(event.order);
-          lastSeenStatus = event.order.status;
-          if (isTerminalOrderStatus(lastSeenStatus)) {
-            cleanup();
-          }
-        });
-        return;
+            lastSeenRevision = buildOrderStreamRevision(event.order);
+            sendEvent(event.order);
+            lastSeenStatus = event.order.status;
+            if (isTerminalOrderStatus(lastSeenStatus)) {
+              cleanup();
+            }
+          });
+        } catch (error) {
+          request.log.warn(
+            {
+              requestId: request.id,
+              orderId,
+              err: error
+            },
+            "order stream event bus subscription failed; continuing with polling"
+          );
+        }
       }
 
-      pollTimeout = setTimeout(() => {
-        void pollForUpdates();
-      }, orderStreamPollIntervalMs);
+      if (!closed) {
+        pollTimeout = setTimeout(() => {
+          void pollForUpdates();
+        }, orderStreamPollIntervalMs);
+      }
     }
   );
 
@@ -2774,6 +2795,9 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       let closed = false;
+      let pollTimeout: ReturnType<typeof setTimeout> | undefined;
+      let unsubscribe: (() => void) | null = null;
+      let lastSeenRevision = buildOrdersStreamRevision(parsedOrders.data);
 
       const sendEvent = (data: unknown) => {
         if (closed || reply.raw.destroyed || reply.raw.writableEnded) {
@@ -2782,65 +2806,67 @@ export async function registerRoutes(app: FastifyInstance) {
         reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
       };
 
-      const cleanup = (unsubscribe: (() => void) | null) => {
+      const cleanup = () => {
+        if (pollTimeout) {
+          clearTimeout(pollTimeout);
+          pollTimeout = undefined;
+        }
+        unsubscribe?.();
+        unsubscribe = null;
         if (closed) {
           return;
         }
         closed = true;
-        unsubscribe?.();
         request.raw.removeListener("close", handleDisconnect);
         if (!reply.raw.destroyed && !reply.raw.writableEnded) {
           reply.raw.end();
         }
       };
 
-      let handleDisconnect = () => cleanup(null);
+      const handleDisconnect = () => {
+        cleanup();
+      };
+
+      const pollOrders = async () => {
+        if (closed) {
+          return;
+        }
+
+        const pollHeaders: Record<string, string> = {
+          "x-request-id": request.id,
+          ...(gatewayInternalApiToken ? { "x-gateway-token": gatewayInternalApiToken } : {}),
+          ...(locationId ? { "x-operator-location-id": locationId } : {})
+        };
+
+        try {
+          const pollResponse = await fetch(`${ordersBaseUrl}/v1/orders`, {
+            method: "GET",
+            headers: pollHeaders
+          });
+          if (pollResponse.ok) {
+            const pollParsed = z.array(orderSchema).safeParse(await pollResponse.json());
+            if (pollParsed.success) {
+              const nextRevision = buildOrdersStreamRevision(pollParsed.data);
+              if (nextRevision !== lastSeenRevision) {
+                lastSeenRevision = nextRevision;
+                sendEvent({ type: "snapshot", orders: pollParsed.data });
+              }
+            }
+          }
+        } catch {
+          // Keep the SSE connection open through transient upstream failures.
+        }
+
+        if (!closed) {
+          pollTimeout = setTimeout(() => void pollOrders(), orderStreamPollIntervalMs * 10);
+        }
+      };
 
       sendEvent({ type: "snapshot", orders: parsedOrders.data });
 
       request.raw.on("close", handleDisconnect);
 
-      if (!eventBusSubscriber) {
-        let pollTimeout: ReturnType<typeof setTimeout> | undefined;
-        const pollOrders = async () => {
-          if (closed) {
-            return;
-          }
-          const pollHeaders: Record<string, string> = {
-            "x-request-id": request.id,
-            ...(gatewayInternalApiToken ? { "x-gateway-token": gatewayInternalApiToken } : {}),
-            ...(locationId ? { "x-operator-location-id": locationId } : {})
-          };
-          try {
-            const pollResponse = await fetch(`${ordersBaseUrl}/v1/orders`, {
-              method: "GET",
-              headers: pollHeaders
-            });
-            if (pollResponse.ok) {
-              const pollParsed = z.array(orderSchema).safeParse(await pollResponse.json());
-              if (pollParsed.success) {
-                sendEvent({ type: "snapshot", orders: pollParsed.data });
-              }
-            }
-          } catch {
-            // ignore upstream errors in polling context
-          }
-          if (!closed) {
-            pollTimeout = setTimeout(() => void pollOrders(), orderStreamPollIntervalMs * 10);
-          }
-        };
-        const cleanupWithPoll = () => {
-          if (pollTimeout) {
-            clearTimeout(pollTimeout);
-          }
-          cleanup(null);
-        };
-        handleDisconnect = cleanupWithPoll;
-        pollTimeout = setTimeout(() => void pollOrders(), orderStreamPollIntervalMs * 10);
-        return;
-      }
-
-      let unsubscribe: (() => void) | null = null;
+      pollTimeout = setTimeout(() => void pollOrders(), orderStreamPollIntervalMs * 10);
 
       const handleOrderEvent = (event: OrderEvent) => {
         if (closed) {
@@ -2854,17 +2880,28 @@ export async function registerRoutes(app: FastifyInstance) {
         sendEvent({ type: "order_update", order: event.order });
       };
 
-      if (locationId) {
-        unsubscribe = await eventBusSubscriber.subscribeToOrderEvents(locationId, (ev) => {
-          handleOrderEvent(ev);
-        });
-      } else {
-        unsubscribe = await eventBusSubscriber.subscribeToAllOrderEvents((ev) => {
-          handleOrderEvent(ev);
-        });
+      if (eventBusSubscriber) {
+        try {
+          if (locationId) {
+            unsubscribe = await eventBusSubscriber.subscribeToOrderEvents(locationId, (ev) => {
+              handleOrderEvent(ev);
+            });
+          } else {
+            unsubscribe = await eventBusSubscriber.subscribeToAllOrderEvents((ev) => {
+              handleOrderEvent(ev);
+            });
+          }
+        } catch (error) {
+          request.log.warn(
+            {
+              requestId: request.id,
+              locationId,
+              err: error
+            },
+            "admin orders stream event bus subscription failed; continuing with polling"
+          );
+        }
       }
-
-      handleDisconnect = () => cleanup(unsubscribe);
     }
   );
 
