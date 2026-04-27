@@ -542,7 +542,7 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     textTransform: "uppercase",
     color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily,
+    fontFamily: uiTypography.headerFamily,
     fontWeight: "600"
   },
   tabsWrap: {
@@ -560,6 +560,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     lineHeight: 32,
     color: uiPalette.text,
+    fontFamily: uiTypography.headerFamily,
     fontWeight: "600"
   },
   sectionStickyHeader: {

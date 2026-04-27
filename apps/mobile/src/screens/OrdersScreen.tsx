@@ -705,7 +705,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     textTransform: "uppercase",
     color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily,
+    fontFamily: uiTypography.headerFamily,
     fontWeight: "600"
   },
   screenContentNoTopPadding: {

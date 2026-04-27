@@ -46,7 +46,8 @@ export const uiPalette = {
 } as const;
 
 export const uiTypography = {
-  displayFamily: Platform.select({ ios: "Georgia", android: "serif", default: "Georgia" }),
+  displayFamily: Platform.select({ ios: undefined, android: "sans-serif-medium", default: undefined }),
+  headerFamily: Platform.select({ ios: "Georgia", android: "serif", default: "Georgia" }),
   bodyFamily: Platform.select({ ios: undefined, android: "sans-serif", default: undefined }),
   monoFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" })
 } as const;

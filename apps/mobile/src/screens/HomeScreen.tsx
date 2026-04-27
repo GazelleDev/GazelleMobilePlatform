@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
     fontSize: 40,
     lineHeight: 46,
     color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily,
+    fontFamily: uiTypography.headerFamily,
     fontWeight: "600",
     letterSpacing: -1.4
   },
@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     letterSpacing: 1.9,
     color: uiPalette.text,
-    fontFamily: uiTypography.displayFamily,
+    fontFamily: uiTypography.headerFamily,
     fontWeight: "600"
   },
   inlineLink: {
