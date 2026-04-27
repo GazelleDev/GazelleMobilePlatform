@@ -12,6 +12,8 @@ on:
       - publish-images
     types:
       - completed
+    branches:
+      - develop
 
 permissions:
   contents: read
