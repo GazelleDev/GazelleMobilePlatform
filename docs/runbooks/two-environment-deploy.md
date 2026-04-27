@@ -39,6 +39,7 @@ These should be configured as GitHub Environment vars unless they are sensitive:
 - `CLIENT_DASHBOARD_DOMAIN`
 - `DEPLOY_PATH`
 - `IMAGE_REGISTRY_PREFIX`
+- `DEPLOY_ENABLED`
 - `PASSKEY_RP_ID`
 - `COMPOSE_PROJECT_NAME`
 - `CORS_ALLOWED_ORIGINS`
@@ -63,6 +64,7 @@ Recommended values:
   - `API_DOMAIN=api-dev.nomly.us`
   - `CLIENT_DASHBOARD_DOMAIN=app-dev.nomly.us`
   - `COMPOSE_PROJECT_NAME=lattelink-dev`
+  - `DEPLOY_ENABLED=false` until the dev droplet is provisioned and reachable
   - `PAYMENTS_PROVIDER_MODE=simulated`
   - `ALLOW_DEV_CUSTOMER_LOGIN=true`
 
@@ -70,6 +72,7 @@ Recommended values:
   - `API_DOMAIN=api.nomly.us`
   - `CLIENT_DASHBOARD_DOMAIN=app.nomly.us`
   - `COMPOSE_PROJECT_NAME=lattelink-prod`
+  - `DEPLOY_ENABLED=false` until the production droplet is provisioned and reachable
   - `PAYMENTS_PROVIDER_MODE=live`
   - `ALLOW_DEV_CUSTOMER_LOGIN=false`
 

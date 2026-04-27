@@ -58,6 +58,7 @@ jobs:
       - name: Check deploy prerequisites
         id: deploy-check
         env:
+          DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -95,6 +96,12 @@ jobs:
           CATALOG_MEDIA_UPLOAD_MAX_BYTES: ${{ vars.CATALOG_MEDIA_UPLOAD_MAX_BYTES }}
           CATALOG_MEDIA_UPLOAD_EXPIRY_SECONDS: ${{ vars.CATALOG_MEDIA_UPLOAD_EXPIRY_SECONDS }}
         run: |
+          if [ "${DEPLOY_ENABLED:-false}" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping dev deploy because DEPLOY_ENABLED is not true for this environment."
+            exit 0
+          fi
+
           missing=0
           for required in DEPLOY_HOST DEPLOY_USER DEPLOY_KEY GATEWAY_INTERNAL_API_TOKEN ORDERS_INTERNAL_API_TOKEN LOYALTY_INTERNAL_API_TOKEN NOTIFICATIONS_INTERNAL_API_TOKEN JWT_SECRET LETSENCRYPT_EMAIL API_DOMAIN IMAGE_REGISTRY_PREFIX; do
             if [ -z "${!required}" ]; then
