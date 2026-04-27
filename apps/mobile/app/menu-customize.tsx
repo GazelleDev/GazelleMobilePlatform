@@ -314,8 +314,10 @@ export default function MenuCustomizeModalScreen() {
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(true);
   const [didFinishInitialReveal, setDidFinishInitialReveal] = useState(false);
+  const [readyHeroItemId, setReadyHeroItemId] = useState<string | null>(null);
 
-  const shouldShowInitialLoading = !didFinishInitialReveal && isInitialLoading;
+  const heroReady = !item || !item.imageUrl || readyHeroItemId === item.id;
+  const shouldShowInitialLoading = !didFinishInitialReveal && (isInitialLoading || (Boolean(item) && !heroReady));
 
   useEffect(() => {
     setCustomization(item ? buildDefaultCustomization(item.customizationGroups) : DEFAULT_CUSTOMIZATION);
@@ -455,7 +457,7 @@ export default function MenuCustomizeModalScreen() {
             contentContainerStyle={[styles.scrollContent, { paddingBottom: footerClearance }]}
           >
             <View style={styles.heroWrap}>
-              <ProductImage imageUrl={item.imageUrl} />
+              <ProductImage imageUrl={item.imageUrl} onReady={() => setReadyHeroItemId(item.id)} />
             </View>
 
             <View style={styles.content}>
