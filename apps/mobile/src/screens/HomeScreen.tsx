@@ -29,7 +29,7 @@ import { TAB_BAR_HEIGHT, getTabBarBottomOffset } from "../navigation/tabBarMetri
 import { Button, GlassCard, ScreenBackdrop, TabBarDepthBackdrop, uiPalette, uiTypography } from "../ui/system";
 
 const HEADER_TOP_PADDING = 8;
-const HEADER_EXPANDED_HEIGHT = 144;
+const HEADER_EXPANDED_HEIGHT = 130;
 const HEADER_COLLAPSED_HEIGHT = 92;
 const HEADER_SNAP_VELOCITY_THRESHOLD = 0.2;
 const HEADER_SNAP_EDGE_TOLERANCE = 2;
