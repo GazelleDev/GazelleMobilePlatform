@@ -872,33 +872,6 @@ describe("gateway", () => {
         );
       }
 
-      const payOrderMatch = url.match(/\/v1\/orders\/([0-9a-f-]{36})\/pay$/);
-      if (payOrderMatch && method === "POST") {
-        const orderId = payOrderMatch[1];
-        return new Response(
-          JSON.stringify({
-            id: orderId,
-            locationId: "flagship-01",
-            status: "PAID",
-            items: [],
-            total: { currency: "USD", amountCents: 530 },
-            pickupCode: "PAID01",
-            timeline: [
-              {
-                status: "PENDING_PAYMENT",
-                occurredAt: new Date(Date.now() - 60000).toISOString()
-              },
-              {
-                status: "PAID",
-                occurredAt: new Date().toISOString(),
-                note: "Payment accepted"
-              }
-            ]
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
       if (url.endsWith("/v1/orders") && method === "GET") {
         if (queuedOrderListPayloads.length > 0) {
           return new Response(JSON.stringify(queuedOrderListPayloads.shift()), {
@@ -1376,35 +1349,6 @@ describe("gateway", () => {
         );
       }
 
-      if (url.endsWith("/v1/payments/clover/oauth/status") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            providerMode: "live",
-            oauthConfigured: true,
-            connected: true,
-            credentialSource: "oauth",
-            merchantId: "test-merchant-123",
-            connectedMerchantId: "test-merchant-123",
-            accessTokenExpiresAt: "2026-04-03T12:00:00.000Z",
-            apiAccessKeyConfigured: true
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url.endsWith("/v1/payments/clover/card-entry-config") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            enabled: true,
-            providerMode: "live",
-            environment: "production",
-            tokenizeEndpoint: "https://token.clover.com/v1/tokens",
-            apiAccessKey: "public-api-access-key",
-            merchantId: "test-merchant-123"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
       if (url.endsWith("/v1/payments/stripe/mobile-session") && method === "POST") {
         const headers = new Headers((init?.headers ?? {}) as HeadersInit);
         const body = JSON.parse(String(init?.body ?? "{}")) as { orderId?: string };
@@ -1500,18 +1444,6 @@ describe("gateway", () => {
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
-      if (url.endsWith("/v1/payments/clover/webhooks/verification-code") && method === "GET") {
-        return new Response(
-          JSON.stringify({
-            available: true,
-            verificationCode: "verify-me-123",
-            receivedAt: "2026-04-03T12:00:00.000Z",
-            expiresAt: "2026-04-03T12:15:00.000Z"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
       if (url.endsWith("/v1/payments/clover/oauth/connect") && method === "GET") {
         return new Response(
           JSON.stringify({
@@ -1561,32 +1493,6 @@ describe("gateway", () => {
             accessTokenExpiresAt: "2026-04-03T13:00:00.000Z",
             apiAccessKeyConfigured: true
           }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url.endsWith("/v1/payments/webhooks/clover") && method === "POST") {
-        const body = JSON.parse(String(init?.body ?? "{}")) as {
-          verificationCode?: string;
-          orderId?: string;
-          paymentId?: string;
-        };
-        return new Response(
-          JSON.stringify(
-            body.verificationCode
-              ? {
-                  accepted: true,
-                  verificationCode: body.verificationCode
-                }
-              : {
-                  accepted: true,
-                  kind: "CHARGE",
-                  orderId: body.orderId ?? "123e4567-e89b-12d3-a456-426614174099",
-                  paymentId: body.paymentId ?? "123e4567-e89b-12d3-a456-426614174098",
-                  status: "SUCCEEDED",
-                  orderApplied: true
-                }
-          ),
           { status: 200, headers: { "content-type": "application/json" } }
         );
       }
@@ -2111,28 +2017,22 @@ describe("gateway", () => {
 
   it("forwards orders lifecycle routes", async () => {
     const app = await buildApp();
-    const orderId = "123e4567-e89b-12d3-a456-426614174113";
-
-    const payResponse = await app.inject({
+    const createResponse = await app.inject({
       method: "POST",
-      url: `/v1/orders/${orderId}/pay`,
+      url: "/v1/orders",
       headers: authHeader,
       payload: {
-        applePayWallet: {
-          version: "EC_v1",
-          data: "wallet-success-token",
-          signature: "signature-value",
-          header: {
-            ephemeralPublicKey: "ephemeral-key",
-            publicKeyHash: "public-key-hash",
-            transactionId: "transaction-id"
-          }
-        },
-        idempotencyKey: "pay-1"
+        quoteId: "123e4567-e89b-12d3-a456-426614174111",
+        quoteHash: "gateway-quote-hash"
       }
     });
-    expect(payResponse.statusCode).toBe(200);
-    expect(payResponse.json()).toMatchObject({ id: orderId, status: "PAID" });
+    expect(createResponse.statusCode).toBe(200);
+    expect(createResponse.json()).toMatchObject({
+      id: "123e4567-e89b-12d3-a456-426614174112",
+      status: "PENDING_PAYMENT"
+    });
+
+    const orderId = createResponse.json().id as string;
 
     const getResponse = await app.inject({
       method: "GET",
@@ -3153,64 +3053,6 @@ describe("gateway", () => {
     await app.close();
   });
 
-  it("forwards public Clover OAuth status through the gateway", async () => {
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/payments/clover/oauth/status"
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      providerMode: "live",
-      connected: true,
-      credentialSource: "oauth",
-      connectedMerchantId: "test-merchant-123"
-    });
-
-    const statusCall = fetchMock.mock.calls.find(([input]) =>
-      (typeof input === "string" ? input : input.url).endsWith("/v1/payments/clover/oauth/status")
-    );
-    expect(statusCall).toBeDefined();
-    if (statusCall) {
-      expect(typeof statusCall[0] === "string" ? statusCall[0] : statusCall[0].url).toBe(
-        "http://payments.internal/v1/payments/clover/oauth/status"
-      );
-    }
-
-    await app.close();
-  });
-
-  it("forwards authenticated Clover card-entry config reads through the gateway", async () => {
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/payments/clover/card-entry-config",
-      headers: authHeader
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      enabled: true,
-      providerMode: "live",
-      tokenizeEndpoint: "https://token.clover.com/v1/tokens",
-      apiAccessKey: "public-api-access-key",
-      merchantId: "test-merchant-123"
-    });
-
-    const configCall = fetchMock.mock.calls.find(([input]) =>
-      (typeof input === "string" ? input : input.url).endsWith("/v1/payments/clover/card-entry-config")
-    );
-    expect(configCall).toBeDefined();
-    if (configCall) {
-      expect(typeof configCall[0] === "string" ? configCall[0] : configCall[0].url).toBe(
-        "http://payments.internal/v1/payments/clover/card-entry-config"
-      );
-    }
-
-    await app.close();
-  });
-
   it("forwards Stripe mobile payment session creation through the gateway", async () => {
     const app = await buildApp();
     const orderId = "123e4567-e89b-12d3-a456-426614174112";
@@ -3312,32 +3154,6 @@ describe("gateway", () => {
     await app.close();
   });
 
-  it("forwards Clover webhook verification-code reads through the gateway", async () => {
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/payments/clover/webhooks/verification-code"
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      available: true,
-      verificationCode: "verify-me-123"
-    });
-
-    const verificationCodeCall = fetchMock.mock.calls.find(([input]) =>
-      (typeof input === "string" ? input : input.url).endsWith("/v1/payments/clover/webhooks/verification-code")
-    );
-    expect(verificationCodeCall).toBeDefined();
-    if (verificationCodeCall) {
-      expect(typeof verificationCodeCall[0] === "string" ? verificationCodeCall[0] : verificationCodeCall[0].url).toBe(
-        "http://payments.internal/v1/payments/clover/webhooks/verification-code"
-      );
-    }
-
-    await app.close();
-  });
-
   it("preserves Clover OAuth callback redirects through the gateway", async () => {
     const app = await buildApp();
     const response = await app.inject({
@@ -3352,35 +3168,6 @@ describe("gateway", () => {
       (typeof input === "string" ? input : input.url).includes("/v1/payments/clover/oauth/callback?merchant_id=test-merchant-123")
     );
     expect(callbackCall).toBeDefined();
-
-    await app.close();
-  });
-
-  it("forwards Clover webhook verification requests through the gateway", async () => {
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      payload: {
-        verificationCode: "verify-me-123"
-      }
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      accepted: true,
-      verificationCode: "verify-me-123"
-    });
-
-    const webhookCall = fetchMock.mock.calls.find(([input]) =>
-      (typeof input === "string" ? input : input.url).endsWith("/v1/payments/webhooks/clover")
-    );
-    expect(webhookCall).toBeDefined();
-    if (webhookCall) {
-      expect(typeof webhookCall[0] === "string" ? webhookCall[0] : webhookCall[0].url).toBe(
-        "http://payments.internal/v1/payments/webhooks/clover"
-      );
-    }
 
     await app.close();
   });
@@ -3432,29 +3219,6 @@ describe("gateway", () => {
     await app.close();
   });
 
-  it("rate limits public Clover OAuth read routes when configured threshold is reached", async () => {
-    vi.stubEnv("GATEWAY_RATE_LIMIT_PAYMENTS_READ_MAX", "1");
-    vi.stubEnv("GATEWAY_RATE_LIMIT_WINDOW_MS", "60000");
-    const app = await buildApp();
-
-    try {
-      const firstResponse = await app.inject({
-        method: "GET",
-        url: "/v1/payments/clover/oauth/status"
-      });
-      expect(firstResponse.statusCode).toBe(200);
-
-      const secondResponse = await app.inject({
-        method: "GET",
-        url: "/v1/payments/clover/oauth/status"
-      });
-      expect(secondResponse.statusCode).toBe(429);
-    } finally {
-      vi.unstubAllEnvs();
-      await app.close();
-    }
-  });
-
   it("rate limits Clover OAuth refresh writes when configured threshold is reached", async () => {
     vi.stubEnv("GATEWAY_RATE_LIMIT_PAYMENTS_WRITE_MAX", "1");
     vi.stubEnv("GATEWAY_RATE_LIMIT_WINDOW_MS", "60000");
@@ -3470,35 +3234,6 @@ describe("gateway", () => {
       const secondResponse = await app.inject({
         method: "POST",
         url: "/v1/payments/clover/oauth/refresh"
-      });
-      expect(secondResponse.statusCode).toBe(429);
-    } finally {
-      vi.unstubAllEnvs();
-      await app.close();
-    }
-  });
-
-  it("rate limits Clover webhook ingress at the gateway when configured threshold is reached", async () => {
-    vi.stubEnv("GATEWAY_RATE_LIMIT_PAYMENTS_WEBHOOK_MAX", "1");
-    vi.stubEnv("GATEWAY_RATE_LIMIT_WINDOW_MS", "60000");
-    const app = await buildApp();
-
-    try {
-      const firstResponse = await app.inject({
-        method: "POST",
-        url: "/v1/payments/webhooks/clover",
-        payload: {
-          verificationCode: "verify-me-123"
-        }
-      });
-      expect(firstResponse.statusCode).toBe(200);
-
-      const secondResponse = await app.inject({
-        method: "POST",
-        url: "/v1/payments/webhooks/clover",
-        payload: {
-          verificationCode: "verify-me-123"
-        }
       });
       expect(secondResponse.statusCode).toBe(429);
     } finally {

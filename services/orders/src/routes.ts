@@ -6,7 +6,6 @@ import {
   orderPaymentContextSchema,
   ordersPaymentReconciliationSchema,
   orderSchema,
-  payOrderRequestSchema,
   quoteRequestSchema
 } from "@lattelink/contracts-orders";
 import { z } from "zod";
@@ -19,7 +18,6 @@ import {
   createQuote,
   getOrderForRead,
   listOrdersForRead,
-  processPayment,
   reconcilePaymentWebhook,
   type CancelOrderSource,
   type PosAdapter,
@@ -497,41 +495,6 @@ export async function registerRoutes(app: FastifyInstance) {
         locationId: result.order.locationId,
         status: result.order.status,
         totalAmountCents: result.order.total.amountCents
-      });
-      return result.order;
-    }
-  );
-
-  app.post(
-    "/v1/orders/:orderId/pay",
-    {
-      preHandler: app.rateLimit(ordersWriteRateLimit)
-    },
-    async (request, reply) => {
-      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
-        return;
-      }
-
-      const { orderId } = orderIdParamsSchema.parse(request.params);
-      const input = payOrderRequestSchema.parse(request.body);
-      const requestUserContext = parseRequestUserContext(request);
-      const result = await processPayment({
-        orderId,
-        input,
-        requestId: request.id,
-        requestUserContext,
-        deps: getServiceDeps(request)
-      });
-
-      if ("error" in result) {
-        return sendServiceError(reply, request, result.error);
-      }
-
-      logOrderMutation(request, "order payment accepted", {
-        orderId: result.order.id,
-        locationId: result.order.locationId,
-        status: result.order.status,
-        pickupCode: result.order.pickupCode
       });
       return result.order;
     }

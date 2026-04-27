@@ -281,6 +281,35 @@ describe.sequential("orders + payments e2e", () => {
     return orderSchema.parse(createResponse.json());
   }
 
+  async function reconcileCharge(input: {
+    orderId: string;
+    eventId: string;
+    paymentId?: string;
+    provider?: "STRIPE" | "CLOVER";
+    status?: "SUCCEEDED" | "DECLINED" | "TIMEOUT";
+  }) {
+    if (!ordersApp) {
+      throw new Error("Orders app not initialized");
+    }
+
+    return ordersApp.inject({
+      method: "POST",
+      url: "/v1/orders/internal/payments/reconcile",
+      headers: {
+        "x-internal-token": internalPaymentsToken
+      },
+      payload: {
+        eventId: input.eventId,
+        provider: input.provider ?? "STRIPE",
+        kind: "CHARGE",
+        orderId: input.orderId,
+        paymentId: input.paymentId ?? `pi-${input.orderId}`,
+        status: input.status ?? "SUCCEEDED",
+        occurredAt: "2026-03-11T00:00:00.000Z"
+      }
+    });
+  }
+
   beforeEach(async () => {
     previousPaymentsBaseUrl = process.env.PAYMENTS_SERVICE_BASE_URL;
     previousLoyaltyBaseUrl = process.env.LOYALTY_SERVICE_BASE_URL;
@@ -381,65 +410,40 @@ describe.sequential("orders + payments e2e", () => {
     }
   });
 
-  it("blocks further pay attempts after a timeout until reconciliation lands", async () => {
+  it("leaves orders pending on timeout reconciliation until a later success arrives", async () => {
     const order = await createOrder();
 
-    const firstTimeout = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-timeout-token",
-        idempotencyKey: "timeout-attempt-1"
-      }
+    const timeoutPaymentId = `pi-timeout-${order.id}`;
+    const firstTimeout = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt_timeout_attempt_1",
+      paymentId: timeoutPaymentId,
+      status: "TIMEOUT"
     });
-    expect(firstTimeout.statusCode).toBe(504);
-    expect(firstTimeout.json()).toMatchObject({ code: "PAYMENT_TIMEOUT" });
-
-    const secondTimeout = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-timeout-token",
-        idempotencyKey: "timeout-attempt-1"
-      }
-    });
-    expect(secondTimeout.statusCode).toBe(409);
-    expect(secondTimeout.json()).toMatchObject({ code: "PAYMENT_RECONCILIATION_PENDING" });
-    expect(secondTimeout.json().details.paymentId).toBe(firstTimeout.json().details.paymentId);
-
-    const blockedRecovery = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "timeout-recovery-2"
-      }
-    });
-    expect(blockedRecovery.statusCode).toBe(409);
-    expect(blockedRecovery.json()).toMatchObject({
-      code: "PAYMENT_RECONCILIATION_PENDING",
-      details: expect.objectContaining({
-        paymentId: firstTimeout.json().details.paymentId,
-        status: "TIMEOUT"
-      })
+    expect(firstTimeout.statusCode).toBe(200);
+    expect(firstTimeout.json()).toMatchObject({
+      accepted: true,
+      applied: false,
+      orderStatus: "PENDING_PAYMENT"
     });
 
-    const reconciledPayment = await ordersApp.inject({
-      method: "POST",
-      url: "/v1/orders/internal/payments/reconcile",
-      headers: {
-        "x-internal-token": internalPaymentsToken
-      },
-      payload: {
-        eventId: "evt_timeout_recovery_1",
-        provider: "CLOVER",
-        kind: "CHARGE",
-        orderId: order.id,
-        paymentId: firstTimeout.json().details.paymentId,
-        status: "SUCCEEDED",
-        occurredAt: "2026-03-11T00:00:00.000Z",
-        message: "Charge settled asynchronously"
-      }
+    const secondTimeout = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt_timeout_attempt_2",
+      paymentId: timeoutPaymentId,
+      status: "TIMEOUT"
+    });
+    expect(secondTimeout.statusCode).toBe(200);
+    expect(secondTimeout.json()).toMatchObject({
+      accepted: true,
+      applied: false,
+      orderStatus: "PENDING_PAYMENT"
+    });
+
+    const reconciledPayment = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt_timeout_recovery_1",
+      paymentId: timeoutPaymentId
     });
     expect(reconciledPayment.statusCode).toBe(200);
     expect(reconciledPayment.json()).toMatchObject({
@@ -456,74 +460,69 @@ describe.sequential("orders + payments e2e", () => {
     expect(orderSchema.parse(getOrder.json()).status).toBe("PAID");
   });
 
-  it("cancels declined orders and blocks recovery attempts on the same order", async () => {
+  it("ignores declined reconciliation until a later success settles the order", async () => {
     const order = await createOrder();
 
-    const declinedPayment = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-decline-token",
-        idempotencyKey: "decline-attempt-1"
-      }
+    const declinedPayment = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt_decline_attempt_1",
+      paymentId: `pi-decline-${order.id}`,
+      status: "DECLINED"
     });
-    expect(declinedPayment.statusCode).toBe(402);
+    expect(declinedPayment.statusCode).toBe(200);
     expect(declinedPayment.json()).toMatchObject({
-      code: "PAYMENT_DECLINED",
-      details: expect.objectContaining({
-        orderId: order.id,
-        orderStatus: "CANCELED"
-      })
+      accepted: true,
+      applied: false,
+      orderStatus: "PENDING_PAYMENT"
     });
 
-    const canceledOrder = await ordersApp.inject({
+    const pendingOrder = await ordersApp.inject({
       method: "GET",
       url: `/v1/orders/${order.id}`
     });
-    expect(canceledOrder.statusCode).toBe(200);
-    expect(orderSchema.parse(canceledOrder.json()).status).toBe("CANCELED");
+    expect(pendingOrder.statusCode).toBe(200);
+    expect(orderSchema.parse(pendingOrder.json()).status).toBe("PENDING_PAYMENT");
 
-    const recoveredPayment = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "decline-recovery-2"
-      }
+    const recoveredPayment = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt_decline_recovery_2",
+      paymentId: `pi-decline-${order.id}`
     });
-    expect(recoveredPayment.statusCode).toBe(409);
-    expect(recoveredPayment.json()).toMatchObject({ code: "ORDER_NOT_PAYABLE" });
+    expect(recoveredPayment.statusCode).toBe(200);
+    expect(recoveredPayment.json()).toMatchObject({
+      accepted: true,
+      applied: true,
+      orderStatus: "PAID"
+    });
   });
 
-  it("keeps successful payments idempotent for repeated keys", async () => {
+  it("keeps successful payment reconciliation idempotent for repeated events", async () => {
     const order = await createOrder();
 
-    const firstPay = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "pay-success-idem"
-      }
+    const firstPay = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt-pay-success-idem",
+      paymentId: `pi-success-${order.id}`
     });
-    const secondPay = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "pay-success-idem"
-      }
+    const secondPay = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt-pay-success-idem",
+      paymentId: `pi-success-${order.id}`
     });
 
     expect(firstPay.statusCode).toBe(200);
     expect(secondPay.statusCode).toBe(200);
+    expect(firstPay.json()).toMatchObject({ accepted: true, applied: true, orderStatus: "PAID" });
+    expect(secondPay.json()).toMatchObject({ accepted: true, applied: false, orderStatus: "PAID" });
 
-    const firstPaidOrder = orderSchema.parse(firstPay.json());
-    const secondPaidOrder = orderSchema.parse(secondPay.json());
-    expect(firstPaidOrder.status).toBe("PAID");
-    expect(secondPaidOrder.id).toBe(firstPaidOrder.id);
-    expect(secondPaidOrder.timeline).toHaveLength(firstPaidOrder.timeline.length);
-    expect(firstPaidOrder.timeline).toHaveLength(2);
+    const paidOrderResponse = await ordersApp.inject({
+      method: "GET",
+      url: `/v1/orders/${order.id}`
+    });
+    expect(paidOrderResponse.statusCode).toBe(200);
+    const paidOrder = orderSchema.parse(paidOrderResponse.json());
+    expect(paidOrder.status).toBe("PAID");
+    expect(paidOrder.timeline).toHaveLength(2);
 
     const directSubmitOrder = await paymentsApp.inject({
       method: "POST",
@@ -531,7 +530,7 @@ describe.sequential("orders + payments e2e", () => {
       headers: {
         "x-internal-token": internalPaymentsToken
       },
-      payload: firstPaidOrder
+      payload: paidOrder
     });
     expect(directSubmitOrder.statusCode).toBe(200);
     expect(directSubmitOrder.json()).toMatchObject({
@@ -539,21 +538,20 @@ describe.sequential("orders + payments e2e", () => {
     });
   });
 
-  it("exposes a paid order through list and detail reads after checkout", async () => {
+  it("exposes a paid order through list and detail reads after reconciliation", async () => {
     const order = await createOrder();
 
-    const payResponse = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "visibility-check-pay"
-      }
+    const payResponse = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt-visibility-check-pay"
     });
 
     expect(payResponse.statusCode).toBe(200);
-    const paidOrder = orderSchema.parse(payResponse.json());
-    expect(paidOrder.status).toBe("PAID");
+    expect(payResponse.json()).toMatchObject({
+      accepted: true,
+      applied: true,
+      orderStatus: "PAID"
+    });
 
     const listResponse = await ordersApp.inject({
       method: "GET",
@@ -562,16 +560,16 @@ describe.sequential("orders + payments e2e", () => {
     expect(listResponse.statusCode).toBe(200);
     const visibleOrders = orderSchema.array().parse(listResponse.json());
     expect(visibleOrders).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: paidOrder.id, status: "PAID" })])
+      expect.arrayContaining([expect.objectContaining({ id: order.id, status: "PAID" })])
     );
 
     const detailResponse = await ordersApp.inject({
       method: "GET",
-      url: `/v1/orders/${paidOrder.id}`
+      url: `/v1/orders/${order.id}`
     });
     expect(detailResponse.statusCode).toBe(200);
     expect(orderSchema.parse(detailResponse.json())).toMatchObject({
-      id: paidOrder.id,
+      id: order.id,
       status: "PAID"
     });
   });
@@ -579,16 +577,12 @@ describe.sequential("orders + payments e2e", () => {
   it("supports refund failure recovery on cancel retry", async () => {
     const order = await createOrder();
 
-    const paidOrderResponse = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "cancel-flow-pay"
-      }
+    const paidOrderResponse = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt-cancel-flow-pay"
     });
     expect(paidOrderResponse.statusCode).toBe(200);
-    expect(orderSchema.parse(paidOrderResponse.json()).status).toBe("PAID");
+    expect(paidOrderResponse.json()).toMatchObject({ accepted: true, orderStatus: "PAID" });
 
     const rejectedRefundCancel = await ordersApp.inject({
       method: "POST",
@@ -630,7 +624,7 @@ describe.sequential("orders + payments e2e", () => {
     expect(orderSchema.parse(repeatedCancel.json()).timeline).toHaveLength(canceledOrder.timeline.length);
   });
 
-  it("wires loyalty earn/redeem and reversal mutations across pay + cancel", async () => {
+  it("wires loyalty earn/redeem and reversal mutations across reconciliation + cancel", async () => {
     if (!loyaltyApp) {
       throw new Error("Loyalty app not initialized");
     }
@@ -651,19 +645,20 @@ describe.sequential("orders + payments e2e", () => {
     expect(seedMutation.statusCode).toBe(200);
 
     const order = await createOrder({ pointsToRedeem: 125, userId });
-    const payResponse = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      headers: {
-        "x-user-id": userId
-      },
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "loyalty-pay-idem"
-      }
+    const payResponse = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt-loyalty-pay-idem"
     });
     expect(payResponse.statusCode).toBe(200);
-    const paidOrder = orderSchema.parse(payResponse.json());
+    const paidOrderResponse = await ordersApp.inject({
+      method: "GET",
+      url: `/v1/orders/${order.id}`,
+      headers: {
+        "x-user-id": userId
+      }
+    });
+    expect(paidOrderResponse.statusCode).toBe(200);
+    const paidOrder = orderSchema.parse(paidOrderResponse.json());
     expect(paidOrder.status).toBe("PAID");
 
     const cancelResponse = await ordersApp.inject({
@@ -712,7 +707,7 @@ describe.sequential("orders + payments e2e", () => {
     );
   });
 
-  it("dispatches order-state notifications on create, pay, and cancel transitions", async () => {
+  it("dispatches order-state notifications on create, reconcile, and cancel transitions", async () => {
     if (!notificationsApp) {
       throw new Error("Notifications app not initialized");
     }
@@ -720,29 +715,15 @@ describe.sequential("orders + payments e2e", () => {
     const userId = "123e4567-e89b-12d3-a456-426614174990";
     const order = await createOrder({ pointsToRedeem: 0, userId });
 
-    const payResponse = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      headers: {
-        "x-user-id": userId
-      },
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "notify-e2e-pay-1"
-      }
+    const payResponse = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt-notify-e2e-pay-1"
     });
     expect(payResponse.statusCode).toBe(200);
 
-    const repeatedPay = await ordersApp.inject({
-      method: "POST",
-      url: `/v1/orders/${order.id}/pay`,
-      headers: {
-        "x-user-id": userId
-      },
-      payload: {
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "notify-e2e-pay-1"
-      }
+    const repeatedPay = await reconcileCharge({
+      orderId: order.id,
+      eventId: "evt-notify-e2e-pay-1"
     });
     expect(repeatedPay.statusCode).toBe(200);
 

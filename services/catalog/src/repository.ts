@@ -576,10 +576,6 @@ function applyPaymentProfileToAppConfig(appConfig: AppConfig, profile?: ClientPa
         enabled: Boolean(profile.stripeAccountId),
         onboarded: readiness.ready,
         dashboardEnabled: Boolean(profile.stripeDashboardEnabled && profile.stripeAccountId)
-      },
-      clover: {
-        ...appConfig.paymentCapabilities.clover,
-        enabled: profile.cloverPosEnabled
       }
     }
   });

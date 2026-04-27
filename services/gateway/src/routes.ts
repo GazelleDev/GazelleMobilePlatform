@@ -72,7 +72,6 @@ import {
   stripeMobilePaymentSessionResponseSchema,
   orderQuoteSchema,
   orderSchema,
-  payOrderRequestSchema,
   quoteRequestSchema
 } from "@lattelink/contracts-orders";
 import { loyaltyBalanceSchema, loyaltyContract, loyaltyLedgerEntrySchema } from "@lattelink/contracts-loyalty";
@@ -128,14 +127,6 @@ const cancelOrderRequestSchema = z.object({ reason: z.string().min(1) });
 const adminOrderStatusUpdateSchema = z.object({
   status: z.enum(["IN_PREP", "READY", "COMPLETED", "CANCELED"]),
   note: z.string().min(1).optional()
-});
-const cloverCardEntryConfigResponseSchema = z.object({
-  enabled: z.boolean(),
-  providerMode: z.enum(["simulated", "live"]),
-  environment: z.enum(["sandbox", "production"]).optional(),
-  tokenizeEndpoint: z.string().url().optional(),
-  apiAccessKey: z.string().min(1).optional(),
-  merchantId: z.string().min(1).optional()
 });
 const defaultRateLimitWindowMs = 60_000;
 const defaultUpstreamTimeoutMs = 5_000;
@@ -1405,33 +1396,6 @@ export async function registerRoutes(app: FastifyInstance) {
     notifications: notificationsContract.basePath
   }));
 
-  app.get("/v1/payments/clover/oauth/status", { preHandler: app.rateLimit(paymentsReadRateLimit) }, async (request, reply) =>
-    proxyOpaqueUpstream({
-      request,
-      reply,
-      baseUrl: paymentsBaseUrl,
-      serviceLabel: "Payments",
-      method: "GET",
-      path: request.url,
-      forwardUserIdHeader: false
-    })
-  );
-
-  app.get(
-    "/v1/payments/clover/card-entry-config",
-    { preHandler: [app.rateLimit(paymentsReadRateLimit), requireCustomerAuth] },
-    async (request, reply) =>
-      proxyUpstream({
-        request,
-        reply,
-        baseUrl: paymentsBaseUrl,
-        serviceLabel: "Payments",
-        method: "GET",
-        path: request.url,
-        responseSchema: cloverCardEntryConfigResponseSchema
-      })
-  );
-
   app.post(
     "/v1/payments/stripe/mobile-session",
     { preHandler: [app.rateLimit(checkoutRateLimit), requireCustomerAuth] },
@@ -1534,21 +1498,6 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.get(
-    "/v1/payments/clover/webhooks/verification-code",
-    { preHandler: app.rateLimit(paymentsReadRateLimit) },
-    async (request, reply) =>
-      proxyOpaqueUpstream({
-        request,
-        reply,
-        baseUrl: paymentsBaseUrl,
-        serviceLabel: "Payments",
-        method: "GET",
-        path: "/v1/payments/clover/webhooks/verification-code",
-        forwardUserIdHeader: false
-      })
-  );
-
   app.get("/v1/payments/clover/oauth/connect", { preHandler: app.rateLimit(paymentsReadRateLimit) }, async (request, reply) =>
     proxyOpaqueUpstream({
       request,
@@ -1582,19 +1531,6 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Payments",
       method: "POST",
       path: request.url,
-      forwardUserIdHeader: false
-    })
-  );
-
-  app.post("/v1/payments/webhooks/clover", { preHandler: app.rateLimit(paymentsWebhookRateLimit) }, async (request, reply) =>
-    proxyOpaqueUpstream({
-      request,
-      reply,
-      baseUrl: paymentsBaseUrl,
-      serviceLabel: "Payments",
-      method: "POST",
-      path: "/v1/payments/webhooks/clover",
-      body: request.body,
       forwardUserIdHeader: false
     })
   );
@@ -2180,35 +2116,6 @@ export async function registerRoutes(app: FastifyInstance) {
       serviceLabel: "Orders",
       method: "POST",
       path: "/v1/orders",
-      body: input,
-      additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken,
-        "x-user-id": userId
-      },
-      responseSchema: orderSchema
-    });
-  });
-
-  app.post("/v1/orders/:orderId/pay", { preHandler: [app.rateLimit(checkoutRateLimit), requireCustomerAuth] }, async (request, reply) => {
-    const { orderId } = orderIdParamsSchema.parse(request.params);
-    const input = payOrderRequestSchema.parse(request.body);
-    const userId = await resolveAuthenticatedUserId({
-      request,
-      reply,
-      identityBaseUrl,
-      jwtSecretConfigured: Boolean(jwtSecret)
-    });
-    if (!userId) {
-      return;
-    }
-
-    return proxyUpstream({
-      request,
-      reply,
-      baseUrl: ordersBaseUrl,
-      serviceLabel: "Orders",
-      method: "POST",
-      path: `/v1/orders/${orderId}/pay`,
       body: input,
       additionalHeaders: {
         "x-gateway-token": gatewayInternalApiToken,

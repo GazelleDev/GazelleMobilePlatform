@@ -4,20 +4,12 @@ import { buildApp } from "../src/app.js";
 import { summarizeCloverResponseForLogs } from "../src/routes.js";
 
 const internalPaymentsToken = "orders-internal-token";
-const cloverWebhookSecret = "secret-1";
 const stripeWebhookSecret = "whsec_test_secret";
 const stripe = new Stripe("sk_test_placeholder");
 
 function internalHeaders(extraHeaders?: Record<string, string>) {
   return {
     "x-internal-token": internalPaymentsToken,
-    ...extraHeaders
-  };
-}
-
-function webhookHeaders(extraHeaders?: Record<string, string>) {
-  return {
-    "x-clover-webhook-secret": cloverWebhookSecret,
     ...extraHeaders
   };
 }
@@ -59,39 +51,10 @@ function stubLiveCloverOauthEnv() {
   vi.stubEnv("CLOVER_OAUTH_REDIRECT_URI", "https://example.test/v1/payments/clover/oauth/callback");
 }
 
-function buildChargeOrder(orderId: string, amountCents: number) {
-  return {
-    id: orderId,
-    locationId: "flagship-01",
-    status: "PENDING_PAYMENT",
-    items: [
-      {
-        itemId: "latte",
-        itemName: "Checkout Latte",
-        quantity: 1,
-        unitPriceCents: amountCents
-      }
-    ],
-    total: {
-      currency: "USD",
-      amountCents
-    },
-    pickupCode: "ABC123",
-    timeline: [
-      {
-        status: "PENDING_PAYMENT",
-        occurredAt: "2026-04-10T14:00:00.000Z",
-        source: "customer"
-      }
-    ]
-  };
-}
-
 describe("payments service", () => {
   beforeEach(() => {
     vi.stubEnv("ORDERS_INTERNAL_API_TOKEN", internalPaymentsToken);
     vi.stubEnv("GATEWAY_INTERNAL_API_TOKEN", "gateway-payments-token");
-    vi.stubEnv("CLOVER_WEBHOOK_SHARED_SECRET", cloverWebhookSecret);
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_payments");
     vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_payments");
     vi.stubEnv("STRIPE_CONNECT_WEBHOOK_SECRET", stripeWebhookSecret);
@@ -112,25 +75,22 @@ describe("payments service", () => {
     expect(ready.json()).toMatchObject({
       status: "ready",
       service: "payments",
-      persistence: expect.any(String),
-      providerMode: "simulated",
-      providerConfigured: true
+      persistence: expect.any(String)
     });
     await app.close();
   });
 
-  it("returns degraded readiness when live Clover mode is misconfigured", async () => {
+  it("keeps readiness green when live Clover OAuth is not configured", async () => {
     vi.stubEnv("PAYMENTS_PROVIDER_MODE", "live");
 
     const app = await buildApp();
     const ready = await app.inject({ method: "GET", url: "/ready" });
 
-    expect(ready.statusCode).toBe(503);
+    expect(ready.statusCode).toBe(200);
     expect(ready.json()).toMatchObject({
-      status: "degraded",
+      status: "ready",
       service: "payments",
-      providerMode: "live",
-      providerConfigured: false
+      persistence: expect.any(String)
     });
     await app.close();
   });
@@ -714,8 +674,7 @@ describe("payments service", () => {
     expect(ready.json()).toMatchObject({
       status: "ready",
       service: "payments",
-      providerMode: "live",
-      providerConfigured: true
+      persistence: expect.any(String)
     });
     await app.close();
   });
@@ -1110,16 +1069,17 @@ describe("payments service", () => {
     });
   });
 
-  it("rejects charge requests when the internal token is missing", async () => {
+  it("rejects refund requests when the internal token is missing", async () => {
     const app = await buildApp();
     const response = await app.inject({
       method: "POST",
-      url: "/v1/payments/charges",
+      url: "/v1/payments/refunds",
       payload: {
         orderId: "123e4567-e89b-12d3-a456-426614174019",
+        paymentId: "pi_missing_internal_token",
         amountCents: 825,
         currency: "USD",
-        applePayToken: "apple-pay-success-token",
+        reason: "customer cancellation",
         idempotencyKey: "missing-internal-token"
       }
     });
@@ -1134,13 +1094,14 @@ describe("payments service", () => {
     const app = await buildApp();
     const response = await app.inject({
       method: "POST",
-      url: "/v1/payments/charges",
+      url: "/v1/payments/refunds",
       headers: internalHeaders(),
       payload: {
         orderId: "123e4567-e89b-12d3-a456-426614174018",
+        paymentId: "pi_missing_internal_config",
         amountCents: 825,
         currency: "USD",
-        applePayToken: "apple-pay-success-token",
+        reason: "customer cancellation",
         idempotencyKey: "missing-internal-config"
       }
     });
@@ -1150,141 +1111,17 @@ describe("payments service", () => {
     await app.close();
   });
 
-  it("supports Clover charge success, decline, and timeout outcomes", async () => {
-    const app = await buildApp();
-    const orderId = "123e4567-e89b-12d3-a456-426614174020";
-
-    const successCharge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 825,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "charge-1"
-      }
-    });
-    expect(successCharge.statusCode).toBe(200);
-    expect(successCharge.json()).toMatchObject({
-      orderId,
-      provider: "CLOVER",
-      status: "SUCCEEDED",
-      approved: true
-    });
-
-    const declinedCharge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174021",
-        amountCents: 825,
-        currency: "USD",
-        applePayToken: "apple-pay-decline-token",
-        idempotencyKey: "charge-2"
-      }
-    });
-    expect(declinedCharge.statusCode).toBe(200);
-    expect(declinedCharge.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "DECLINED",
-      approved: false,
-      declineCode: "CARD_DECLINED"
-    });
-
-    const timeoutCharge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174022",
-        amountCents: 825,
-        currency: "USD",
-        applePayToken: "apple-pay-timeout-token",
-        idempotencyKey: "charge-3"
-      }
-    });
-    expect(timeoutCharge.statusCode).toBe(200);
-    expect(timeoutCharge.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "TIMEOUT",
-      approved: false
-    });
-
-    const walletCharge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174027",
-        amountCents: 825,
-        currency: "USD",
-        applePayWallet: {
-          version: "EC_v1",
-          data: "wallet-success-token",
-          signature: "signature-value",
-          header: {
-            ephemeralPublicKey: "ephemeral-key",
-            publicKeyHash: "public-key-hash",
-            transactionId: "transaction-id"
-          }
-        },
-        idempotencyKey: "charge-4"
-      }
-    });
-    expect(walletCharge.statusCode).toBe(200);
-    expect(walletCharge.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "SUCCEEDED",
-      approved: true
-    });
-
-    await app.close();
-  });
-
-  it("treats charge and refund requests as idempotent", async () => {
+  it("treats refund requests as idempotent", async () => {
     const app = await buildApp();
     const orderId = "123e4567-e89b-12d3-a456-426614174023";
 
-    const firstCharge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 900,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "charge-idem"
-      }
-    });
-    const secondCharge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 900,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "charge-idem"
-      }
-    });
-
-    expect(firstCharge.statusCode).toBe(200);
-    expect(secondCharge.statusCode).toBe(200);
-    expect(secondCharge.json()).toMatchObject({ paymentId: firstCharge.json().paymentId, status: "SUCCEEDED" });
-
-    const paymentId = firstCharge.json().paymentId as string;
     const firstRefund = await app.inject({
       method: "POST",
       url: "/v1/payments/refunds",
       headers: internalHeaders(),
       payload: {
         orderId,
-        paymentId,
+        paymentId: "pi_refund_idempotent",
         amountCents: 900,
         currency: "USD",
         reason: "customer cancellation",
@@ -1297,7 +1134,7 @@ describe("payments service", () => {
       headers: internalHeaders(),
       payload: {
         orderId,
-        paymentId,
+        paymentId: "pi_refund_idempotent",
         amountCents: 900,
         currency: "USD",
         reason: "customer cancellation",
@@ -1316,27 +1153,13 @@ describe("payments service", () => {
     const app = await buildApp();
     const orderId = "123e4567-e89b-12d3-a456-426614174024";
 
-    const charge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 700,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "charge-for-reject"
-      }
-    });
-    expect(charge.statusCode).toBe(200);
-
     const refund = await app.inject({
       method: "POST",
       url: "/v1/payments/refunds",
       headers: internalHeaders(),
       payload: {
         orderId,
-        paymentId: charge.json().paymentId,
+        paymentId: "pi_refund_reject",
         amountCents: 700,
         currency: "USD",
         reason: "reject this refund",
@@ -1373,39 +1196,41 @@ describe("payments service", () => {
     await app.close();
   });
 
-  it("rejects charge idempotency key reuse when the payload changes", async () => {
+  it("rejects refund idempotency key reuse when the payload changes", async () => {
     const app = await buildApp();
     const orderId = "123e4567-e89b-12d3-a456-426614174099";
 
-    const firstCharge = await app.inject({
+    const firstRefund = await app.inject({
       method: "POST",
-      url: "/v1/payments/charges",
+      url: "/v1/payments/refunds",
       headers: internalHeaders(),
       payload: {
         orderId,
+        paymentId: "pi_refund_key_reuse",
         amountCents: 800,
         currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "charge-key-reuse"
+        reason: "customer cancellation",
+        idempotencyKey: "refund-key-reuse"
       }
     });
-    expect(firstCharge.statusCode).toBe(200);
+    expect(firstRefund.statusCode).toBe(200);
 
-    const conflictingCharge = await app.inject({
+    const conflictingRefund = await app.inject({
       method: "POST",
-      url: "/v1/payments/charges",
+      url: "/v1/payments/refunds",
       headers: internalHeaders(),
       payload: {
         orderId,
+        paymentId: "pi_refund_key_reuse",
         amountCents: 825,
         currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "charge-key-reuse"
+        reason: "customer cancellation",
+        idempotencyKey: "refund-key-reuse"
       }
     });
 
-    expect(conflictingCharge.statusCode).toBe(409);
-    expect(conflictingCharge.json()).toMatchObject({
+    expect(conflictingRefund.statusCode).toBe(409);
+    expect(conflictingRefund.json()).toMatchObject({
       code: "IDEMPOTENCY_KEY_REUSE"
     });
     await app.close();
@@ -1415,24 +1240,6 @@ describe("payments service", () => {
     const app = await buildApp();
     const requestId = "payments-trace-1";
 
-    const charge = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders({
-        "x-request-id": requestId
-      }),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174025",
-        amountCents: 500,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "trace-charge"
-      }
-    });
-
-    expect(charge.statusCode).toBe(200);
-    expect(charge.headers["x-request-id"]).toBe(requestId);
-
     const refund = await app.inject({
       method: "POST",
       url: "/v1/payments/refunds",
@@ -1441,7 +1248,7 @@ describe("payments service", () => {
       }),
       payload: {
         orderId: "123e4567-e89b-12d3-a456-426614174025",
-        paymentId: charge.json().paymentId,
+        paymentId: "pi_trace_refund",
         amountCents: 500,
         currency: "USD",
         reason: "unknown payment",
@@ -1464,30 +1271,109 @@ describe("payments service", () => {
       })
     });
     expect(metricsResponse.json().requests.total).toBeGreaterThanOrEqual(1);
-    expect(metricsResponse.json().requests.status2xx).toBeGreaterThanOrEqual(2);
+    expect(metricsResponse.json().requests.status2xx).toBeGreaterThanOrEqual(1);
 
     await app.close();
   });
 
-  it("returns credentials-unavailable errors when live Clover has no stored OAuth connection", async () => {
+  it("supports live Stripe refunds via a configured location payment profile", async () => {
     vi.stubEnv("PAYMENTS_PROVIDER_MODE", "live");
+
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const stripeRefundCreateSpy = vi.spyOn(Object.getPrototypeOf(stripe.refunds), "create").mockResolvedValue({
+      id: "re_live_refund_1"
+    } as Stripe.Refund);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const headers = new Headers(init?.headers);
+
+      if (url === "http://127.0.0.1:3002/v1/catalog/internal/locations/flagship-01") {
+        expect(headers.get("x-gateway-token")).toBe("gateway-payments-token");
+        return new Response(
+          JSON.stringify({
+            brandId: "gazelle",
+            brandName: "Gazelle Coffee",
+            locationId: "flagship-01",
+            locationName: "Flagship",
+            marketLabel: "Detroit, MI",
+            storeName: "Gazelle Flagship",
+            hours: "Daily · 7:00 AM - 6:00 PM",
+            pickupInstructions: "Pickup at the espresso counter.",
+            taxRateBasisPoints: 600,
+            capabilities: {
+              menu: { source: "platform_managed" },
+              operations: {
+                fulfillmentMode: "staff",
+                liveOrderTrackingEnabled: true,
+                dashboardEnabled: true
+              },
+              loyalty: { visible: true }
+            },
+            paymentProfile: {
+              locationId: "flagship-01",
+              stripeAccountId: "acct_123456789",
+              stripeAccountType: "express",
+              stripeOnboardingStatus: "completed",
+              stripeDetailsSubmitted: true,
+              stripeChargesEnabled: true,
+              stripePayoutsEnabled: true,
+              stripeDashboardEnabled: true,
+              country: "US",
+              currency: "USD",
+              cardEnabled: true,
+              applePayEnabled: true,
+              refundsEnabled: true,
+              cloverPosEnabled: true
+            },
+            paymentReadiness: {
+              ready: true,
+              onboardingState: "completed",
+              missingRequiredFields: []
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`unexpected Stripe refund URL: ${url}`);
+    });
 
     const app = await buildApp();
     const response = await app.inject({
       method: "POST",
-      url: "/v1/payments/charges",
+      url: "/v1/payments/refunds",
       headers: internalHeaders(),
       payload: {
         orderId: "123e4567-e89b-12d3-a456-426614174030",
+        paymentId: "pi_live_refund_1",
         amountCents: 650,
         currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "live-misconfigured"
+        reason: "store canceled order",
+        idempotencyKey: "live-refund-1",
+        locationId: "flagship-01"
       }
     });
 
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toMatchObject({ code: "CLOVER_CREDENTIALS_UNAVAILABLE" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      provider: "STRIPE",
+      status: "REFUNDED",
+      orderId: "123e4567-e89b-12d3-a456-426614174030",
+      paymentId: "pi_live_refund_1"
+    });
+    expect(stripeRefundCreateSpy).toHaveBeenCalledWith(
+      {
+        payment_intent: "pi_live_refund_1",
+        amount: 650
+      },
+      {
+        stripeAccount: "acct_123456789",
+        idempotencyKey: "live-refund-1"
+      }
+    );
+
+    stripeRefundCreateSpy.mockRestore();
     await app.close();
   });
 
@@ -1497,321 +1383,40 @@ describe("payments service", () => {
 
     const app = await buildApp();
     try {
-      const firstCharge = await app.inject({
+      const firstRefund = await app.inject({
         method: "POST",
-        url: "/v1/payments/charges",
+        url: "/v1/payments/refunds",
         headers: internalHeaders(),
         payload: {
           orderId: "123e4567-e89b-12d3-a456-426614174099",
+          paymentId: "pi_rate_limit_refund_1",
           amountCents: 825,
           currency: "USD",
-          applePayToken: "apple-pay-success-token",
-          idempotencyKey: "rate-limit-charge-1"
+          reason: "customer cancellation",
+          idempotencyKey: "rate-limit-refund-1"
         }
       });
-      expect(firstCharge.statusCode).toBe(200);
+      expect(firstRefund.statusCode).toBe(200);
 
-      const secondCharge = await app.inject({
+      const secondRefund = await app.inject({
         method: "POST",
-        url: "/v1/payments/charges",
+        url: "/v1/payments/refunds",
         headers: internalHeaders(),
         payload: {
           orderId: "123e4567-e89b-12d3-a456-426614174098",
+          paymentId: "pi_rate_limit_refund_2",
           amountCents: 825,
           currency: "USD",
-          applePayToken: "apple-pay-success-token",
-          idempotencyKey: "rate-limit-charge-2"
+          reason: "customer cancellation",
+          idempotencyKey: "rate-limit-refund-2"
         }
       });
-      expect(secondCharge.statusCode).toBe(429);
-      expect(secondCharge.json()).toMatchObject({ statusCode: 429 });
+      expect(secondRefund.statusCode).toBe(429);
+      expect(secondRefund.json()).toMatchObject({ statusCode: 429 });
     } finally {
       await app.close();
       vi.unstubAllEnvs();
     }
-  });
-
-  it("supports live Clover charge + refund via configured endpoints", async () => {
-    stubLiveCloverOauthEnv();
-
-    const fetchMock = vi.fn<typeof fetch>();
-    let createOrderBody: Record<string, unknown> | undefined;
-    const lineItemBodies: Array<Record<string, unknown>> = [];
-    let payOrderBody: Record<string, unknown> | undefined;
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "https://apisandbox.dev.clover.com/oauth/v2/token") {
-        return new Response(
-          JSON.stringify({
-            access_token: "oauth-access-token-1",
-            refresh_token: "oauth-refresh-token-1",
-            token_type: "Bearer",
-            access_token_expiration: Math.floor(Date.now() / 1000) + 3600,
-            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/pakms/apikey") {
-        return new Response(
-          JSON.stringify({
-            apiAccessKey: "oauth-api-access-key-1"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/orders") {
-        createOrderBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-        return new Response(JSON.stringify({ id: "clover-order-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/orders/clover-order-1/line_items") {
-        lineItemBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-        return new Response(JSON.stringify({ id: `line-item-${lineItemBodies.length}` }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/v1/orders/clover-order-1/pay") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-1");
-        payOrderBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-        expect(payOrderBody).toMatchObject({
-          amount: 1200,
-          currency: "usd",
-          source: "clv_card_source_token"
-        });
-        return new Response(
-          JSON.stringify({
-            id: "clv-charge-1",
-            status: "APPROVED",
-            approved: true,
-            message: "Charge accepted"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/print_event") {
-        return new Response(JSON.stringify({ accepted: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/v1/refunds") {
-        return new Response(
-          JSON.stringify({
-            id: "clv-refund-1",
-            status: "REFUNDED",
-            message: "Refund accepted"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      throw new Error(`unexpected live Clover URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    await connectCloverOauth(app, "merchant-sbx");
-
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174031",
-        order: buildChargeOrder("123e4567-e89b-12d3-a456-426614174031", 1200),
-        amountCents: 1200,
-        currency: "USD",
-        paymentSourceToken: "clv_card_source_token",
-        idempotencyKey: "live-charge-1"
-      }
-    });
-    expect(chargeResponse.statusCode).toBe(200);
-    expect(chargeResponse.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "SUCCEEDED",
-      approved: true
-    });
-    expect(createOrderBody).toMatchObject({
-      total: 1200,
-      currency: "USD",
-      state: "Open",
-      groupLineItems: false
-    });
-    expect(lineItemBodies).toEqual([
-      {
-        name: "Checkout Latte",
-        alternateName: "latte",
-        price: 1200,
-        taxRates: []
-      }
-    ]);
-    expect(payOrderBody).toMatchObject({
-      external_customer_reference: "123e4567-e89b-12d3-a456-426614174031"
-    });
-
-    const internalPaymentId = chargeResponse.json().paymentId as string;
-    expect(typeof internalPaymentId).toBe("string");
-
-    const refundResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/refunds",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174031",
-        paymentId: internalPaymentId,
-        amountCents: 1200,
-        currency: "USD",
-        reason: "customer requested cancellation",
-        idempotencyKey: "live-refund-1"
-      }
-    });
-    expect(refundResponse.statusCode).toBe(409);
-    expect(refundResponse.json()).toMatchObject({ code: "LOCATION_REQUIRED" });
-
-    await app.close();
-  });
-
-  it("recovers Clover OAuth credentials when refresh token recovery is available during charge", async () => {
-    stubLiveCloverOauthEnv();
-
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "https://apisandbox.dev.clover.com/oauth/v2/token") {
-        return new Response(
-          JSON.stringify({
-            access_token: "oauth-access-token-expired",
-            refresh_token: "oauth-refresh-token-expired",
-            token_type: "Bearer",
-            access_token_expiration: Math.floor(Date.now() / 1000) - 60,
-            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/pakms/apikey") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-expired");
-        return new Response(
-          JSON.stringify({
-            apiAccessKey: "oauth-api-access-key-1"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/oauth/v2/refresh") {
-        return new Response(
-          JSON.stringify({
-            status: "Unauthorized",
-            message: "Invalid refresh token."
-          }),
-          {
-            status: 401,
-            headers: {
-              "content-type": "application/json",
-              "x-clover-recovery-available": "true"
-            }
-          }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/oauth/v2/recovery") {
-        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({
-          client_id: "clover-app-id",
-          client_secret: "clover-app-secret",
-          recovery_token: "oauth-refresh-token-expired"
-        });
-        return new Response(
-          JSON.stringify({
-            access_token: "oauth-access-token-recovered",
-            refresh_token: "oauth-refresh-token-recovered",
-            token_type: "Bearer",
-            access_token_expiration: Math.floor(Date.now() / 1000) + 3600,
-            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-recovery-1/orders") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-recovered");
-        return new Response(JSON.stringify({ id: "clover-order-recovery-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-recovery-1/orders/clover-order-recovery-1/line_items") {
-        return new Response(JSON.stringify({ id: "line-item-recovery-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/v1/orders/clover-order-recovery-1/pay") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-recovered");
-        return new Response(
-          JSON.stringify({
-            id: "oauth-recovered-charge-1",
-            status: "APPROVED",
-            approved: true,
-            message: "Charge accepted"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-recovery-1/print_event") {
-        return new Response(JSON.stringify({ accepted: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      throw new Error(`unexpected live Clover URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    await connectCloverOauth(app, "merchant-recovery-1");
-
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174191",
-        order: buildChargeOrder("123e4567-e89b-12d3-a456-426614174191", 1200),
-        amountCents: 1200,
-        currency: "USD",
-        paymentSourceToken: "clv_card_source_token",
-        idempotencyKey: "live-charge-recovery-1"
-      }
-    });
-
-    expect(chargeResponse.statusCode).toBe(200);
-    expect(chargeResponse.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "SUCCEEDED",
-      approved: true
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(8);
-    await app.close();
   });
 
   it("accepts live order submission when Clover print_event fails after order creation", async () => {
@@ -1960,709 +1565,4 @@ describe("payments service", () => {
     await app.close();
   });
 
-  it("uses apiAccessKey tokenization auth for live Apple Pay wallet charges", async () => {
-    stubLiveCloverOauthEnv();
-
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "https://apisandbox.dev.clover.com/oauth/v2/token") {
-        return new Response(
-          JSON.stringify({
-            access_token: "oauth-access-token-1",
-            refresh_token: "oauth-refresh-token-1",
-            token_type: "Bearer",
-            access_token_expiration: Math.floor(Date.now() / 1000) + 3600,
-            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/pakms/apikey") {
-        return new Response(
-          JSON.stringify({
-            apiAccessKey: "test-public-api-access-key"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://token-sandbox.dev.clover.com/v1/tokens") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("apikey")).toBe("test-public-api-access-key");
-        expect(headers.get("authorization")).toBeNull();
-        expect(headers.get("content-type")).toBe("application/json");
-        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({
-          encryptedWallet: {
-            applePayPaymentData: {
-              version: "EC_v1",
-              data: "wallet-payment-data"
-            }
-          }
-        });
-
-        return new Response(
-          JSON.stringify({
-            id: "clv_source_token_1"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/orders") {
-        return new Response(JSON.stringify({ id: "clover-order-wallet-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/orders/clover-order-wallet-1/line_items") {
-        return new Response(JSON.stringify({ id: "line-item-wallet-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/v1/orders/clover-order-wallet-1/pay") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-1");
-        expect(headers.get("apikey")).toBeNull();
-
-        return new Response(
-          JSON.stringify({
-            id: "clv-charge-wallet-1",
-            status: "APPROVED",
-            approved: true,
-            message: "Charge accepted"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-sbx/print_event") {
-        return new Response(JSON.stringify({ accepted: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      throw new Error(`unexpected live Clover URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    await connectCloverOauth(app, "merchant-sbx");
-
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174088",
-        order: buildChargeOrder("123e4567-e89b-12d3-a456-426614174088", 1200),
-        amountCents: 1200,
-        currency: "USD",
-        applePayWallet: {
-          version: "EC_v1",
-          data: "wallet-payment-data",
-          signature: "wallet-signature",
-          header: {
-            ephemeralPublicKey: "ephemeral-key",
-            publicKeyHash: "public-key-hash",
-            transactionId: "transaction-id"
-          }
-        },
-        idempotencyKey: "live-wallet-charge-1"
-      }
-    });
-
-    expect(chargeResponse.statusCode).toBe(200);
-    expect(chargeResponse.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "SUCCEEDED",
-      approved: true
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(7);
-    await app.close();
-  });
-
-  it("stores Clover OAuth credentials from callback and uses them for live wallet charges", async () => {
-    stubLiveCloverOauthEnv();
-
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "https://apisandbox.dev.clover.com/oauth/v2/token") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("content-type")).toBe("application/json");
-        expect(JSON.parse(String(init?.body ?? "{}"))).toMatchObject({
-          client_id: "clover-app-id",
-          client_secret: "clover-app-secret",
-          code: "oauth-code-1"
-        });
-
-        return new Response(
-          JSON.stringify({
-            access_token: "oauth-access-token-1",
-            refresh_token: "oauth-refresh-token-1",
-            token_type: "Bearer",
-            access_token_expiration: Math.floor(Date.now() / 1000) + 3600,
-            refresh_token_expiration: Math.floor(Date.now() / 1000) + 7200
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/pakms/apikey") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-1");
-
-        return new Response(
-          JSON.stringify({
-            apiAccessKey: "oauth-api-access-key-1"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://token-sandbox.dev.clover.com/v1/tokens") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("apikey")).toBe("oauth-api-access-key-1");
-        expect(headers.get("authorization")).toBeNull();
-
-        return new Response(
-          JSON.stringify({
-            id: "oauth-wallet-source-token"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-oauth-1/orders") {
-        return new Response(JSON.stringify({ id: "clover-order-oauth-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-oauth-1/orders/clover-order-oauth-1/line_items") {
-        return new Response(JSON.stringify({ id: "line-item-oauth-1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (url === "https://scl-sandbox.dev.clover.com/v1/orders/clover-order-oauth-1/pay") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer oauth-access-token-1");
-
-        return new Response(
-          JSON.stringify({
-            id: "oauth-charge-1",
-            status: "APPROVED",
-            approved: true,
-            message: "Charge accepted"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      if (url === "https://apisandbox.dev.clover.com/v3/merchants/merchant-oauth-1/print_event") {
-        return new Response(JSON.stringify({ accepted: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      throw new Error(`unexpected live Clover URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    const callbackResponse = await connectCloverOauth(app, "merchant-oauth-1");
-    expect(callbackResponse.statusCode).toBe(200);
-    expect(callbackResponse.json()).toMatchObject({
-      providerMode: "live",
-      oauthConfigured: true,
-      connected: true,
-      credentialSource: "oauth",
-      merchantId: "merchant-oauth-1",
-      connectedMerchantId: "merchant-oauth-1",
-      apiAccessKeyConfigured: true
-    });
-
-    const readyResponse = await app.inject({ method: "GET", url: "/ready" });
-    expect(readyResponse.statusCode).toBe(200);
-    expect(readyResponse.json()).toMatchObject({
-      status: "ready",
-      providerMode: "live",
-      providerConfigured: true
-    });
-
-    const cardEntryConfigResponse = await app.inject({
-      method: "GET",
-      url: "/v1/payments/clover/card-entry-config"
-    });
-    expect(cardEntryConfigResponse.statusCode).toBe(200);
-    expect(cardEntryConfigResponse.json()).toMatchObject({
-      enabled: true,
-      providerMode: "live",
-      tokenizeEndpoint: "https://token-sandbox.dev.clover.com/v1/tokens",
-      apiAccessKey: "oauth-api-access-key-1",
-      merchantId: "merchant-oauth-1"
-    });
-
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId: "123e4567-e89b-12d3-a456-426614174089",
-        order: buildChargeOrder("123e4567-e89b-12d3-a456-426614174089", 1200),
-        amountCents: 1200,
-        currency: "USD",
-        applePayWallet: {
-          version: "EC_v1",
-          data: "wallet-payment-data",
-          signature: "wallet-signature",
-          header: {
-            ephemeralPublicKey: "ephemeral-key",
-            publicKeyHash: "public-key-hash",
-            transactionId: "transaction-id"
-          }
-        },
-        idempotencyKey: "oauth-wallet-charge-1"
-      }
-    });
-
-    expect(chargeResponse.statusCode).toBe(200);
-    expect(chargeResponse.json()).toMatchObject({
-      provider: "CLOVER",
-      status: "SUCCEEDED",
-      approved: true
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(7);
-    await app.close();
-  });
-
-  it("reconciles charge webhooks and dispatches order updates", async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("x-internal-token")).toBe(internalPaymentsToken);
-        return new Response(
-          JSON.stringify({
-            accepted: true,
-            applied: true,
-            orderStatus: "PAID"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      throw new Error(`unexpected webhook dispatch URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    const orderId = "123e4567-e89b-12d3-a456-426614174032";
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 975,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "webhook-charge-source"
-      }
-    });
-    expect(chargeResponse.statusCode).toBe(200);
-
-    const webhookResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: webhookHeaders(),
-      payload: {
-        type: "payment.updated",
-        paymentId: chargeResponse.json().paymentId,
-        orderId,
-        status: "APPROVED",
-        message: "Settled asynchronously",
-        occurredAt: "2026-03-11T00:00:00.000Z"
-      }
-    });
-    const duplicateWebhookResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: webhookHeaders(),
-      payload: {
-        type: "payment.updated",
-        paymentId: chargeResponse.json().paymentId,
-        orderId,
-        status: "APPROVED",
-        message: "Settled asynchronously",
-        occurredAt: "2026-03-11T00:00:00.000Z"
-      }
-    });
-
-    expect(webhookResponse.statusCode).toBe(200);
-    expect(duplicateWebhookResponse.statusCode).toBe(200);
-    expect(duplicateWebhookResponse.json()).toMatchObject(webhookResponse.json());
-    expect(webhookResponse.json()).toMatchObject({
-      accepted: true,
-      kind: "CHARGE",
-      orderId,
-      status: "SUCCEEDED",
-      orderApplied: true
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await app.close();
-  });
-
-  it("reconciles refund webhooks and dispatches order updates", async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("x-internal-token")).toBe(internalPaymentsToken);
-        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-        expect(body.kind).toBe("REFUND");
-        expect(body.status).toBe("REFUNDED");
-        return new Response(
-          JSON.stringify({
-            accepted: true,
-            applied: true,
-            orderStatus: "CANCELED"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      throw new Error(`unexpected webhook dispatch URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    const orderId = "123e4567-e89b-12d3-a456-426614174033";
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 1025,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "webhook-refund-charge"
-      }
-    });
-    expect(chargeResponse.statusCode).toBe(200);
-
-    const refundResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/refunds",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        paymentId: chargeResponse.json().paymentId,
-        amountCents: 1025,
-        currency: "USD",
-        reason: "reject this refund",
-        idempotencyKey: "webhook-refund-source"
-      }
-    });
-    expect(refundResponse.statusCode).toBe(200);
-    expect(refundResponse.json()).toMatchObject({ status: "REJECTED" });
-
-    const webhookResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: webhookHeaders(),
-      payload: {
-        type: "refund.updated",
-        paymentId: chargeResponse.json().paymentId,
-        orderId,
-        status: "REFUNDED",
-        message: "Refund finalized",
-        occurredAt: "2026-03-11T01:00:00.000Z"
-      }
-    });
-    const duplicateWebhookResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: webhookHeaders(),
-      payload: {
-        type: "refund.updated",
-        paymentId: chargeResponse.json().paymentId,
-        orderId,
-        status: "REFUNDED",
-        message: "Refund finalized",
-        occurredAt: "2026-03-11T01:00:00.000Z"
-      }
-    });
-
-    expect(webhookResponse.statusCode).toBe(200);
-    expect(duplicateWebhookResponse.statusCode).toBe(200);
-    expect(duplicateWebhookResponse.json()).toMatchObject(webhookResponse.json());
-    expect(webhookResponse.json()).toMatchObject({
-      accepted: true,
-      kind: "REFUND",
-      orderId,
-      status: "REFUNDED",
-      orderApplied: true
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await app.close();
-  });
-
-  it("retries webhook reconciliation after a transient downstream failure", async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
-    let reconcileAttempts = 0;
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
-        reconcileAttempts += 1;
-        if (reconcileAttempts === 1) {
-          return new Response(
-            JSON.stringify({
-              code: "ORDERS_RECONCILIATION_FAILED",
-              message: "Orders reconciliation call failed",
-              requestId: "payments-test"
-            }),
-            { status: 502, headers: { "content-type": "application/json" } }
-          );
-        }
-
-        const headers = new Headers(init?.headers);
-        expect(headers.get("x-internal-token")).toBe(internalPaymentsToken);
-        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-        expect(body.kind).toBe("CHARGE");
-        return new Response(
-          JSON.stringify({
-            accepted: true,
-            applied: true,
-            orderStatus: "PAID"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      throw new Error(`unexpected webhook dispatch URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    const orderId = "123e4567-e89b-12d3-a456-426614174039";
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 1045,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "webhook-retry-charge"
-      }
-    });
-    expect(chargeResponse.statusCode).toBe(200);
-
-    const webhookPayload = {
-      type: "payment.updated",
-      paymentId: chargeResponse.json().paymentId,
-      orderId,
-      status: "APPROVED",
-      message: "Settled asynchronously",
-      occurredAt: "2026-03-11T02:00:00.000Z"
-    };
-
-    const firstWebhook = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: webhookHeaders(),
-      payload: webhookPayload
-    });
-    const secondWebhook = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: webhookHeaders(),
-      payload: webhookPayload
-    });
-
-    expect(firstWebhook.statusCode).toBe(502);
-    expect(firstWebhook.json()).toMatchObject({ code: "ORDERS_RECONCILIATION_FAILED" });
-    expect(secondWebhook.statusCode).toBe(200);
-    expect(secondWebhook.json()).toMatchObject({
-      accepted: true,
-      kind: "CHARGE",
-      orderId,
-      status: "SUCCEEDED",
-      orderApplied: true
-    });
-    expect(reconcileAttempts).toBe(2);
-    await app.close();
-  });
-
-  it("accepts Clover webhook verification payloads before webhook auth is configured", async () => {
-    vi.stubEnv("CLOVER_WEBHOOK_SHARED_SECRET", "");
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      payload: {
-        verificationCode: "verify-me-123"
-      }
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      accepted: true,
-      verificationCode: "verify-me-123"
-    });
-    await app.close();
-  });
-
-  it("exposes the latest Clover webhook verification code through a short-lived status endpoint", async () => {
-    vi.stubEnv("CLOVER_WEBHOOK_SHARED_SECRET", "");
-    const app = await buildApp();
-
-    const missingResponse = await app.inject({
-      method: "GET",
-      url: "/v1/payments/clover/webhooks/verification-code"
-    });
-    expect(missingResponse.statusCode).toBe(404);
-    expect(missingResponse.json()).toMatchObject({
-      code: "CLOVER_WEBHOOK_VERIFICATION_CODE_NOT_FOUND"
-    });
-
-    const webhookResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      payload: {
-        verificationCode: "verify-me-123"
-      }
-    });
-    expect(webhookResponse.statusCode).toBe(200);
-
-    const latestResponse = await app.inject({
-      method: "GET",
-      url: "/v1/payments/clover/webhooks/verification-code"
-    });
-    expect(latestResponse.statusCode).toBe(200);
-    expect(latestResponse.json()).toMatchObject({
-      available: true,
-      verificationCode: "verify-me-123"
-    });
-
-    await app.close();
-  });
-
-  it("accepts Clover webhook deliveries authenticated via x-clover-auth", async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
-    fetchMock.mockImplementation(async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-      if (url === "http://127.0.0.1:3001/v1/orders/internal/payments/reconcile") {
-        const headers = new Headers(init?.headers);
-        expect(headers.get("x-internal-token")).toBe(internalPaymentsToken);
-        return new Response(
-          JSON.stringify({
-            accepted: true,
-            applied: true,
-            orderStatus: "PAID"
-          }),
-          { status: 200, headers: { "content-type": "application/json" } }
-        );
-      }
-
-      throw new Error(`unexpected webhook dispatch URL: ${url}`);
-    });
-
-    const app = await buildApp();
-    const orderId = "123e4567-e89b-12d3-a456-426614174041";
-    const chargeResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/charges",
-      headers: internalHeaders(),
-      payload: {
-        orderId,
-        amountCents: 1145,
-        currency: "USD",
-        applePayToken: "apple-pay-success-token",
-        idempotencyKey: "webhook-clover-auth-charge"
-      }
-    });
-    expect(chargeResponse.statusCode).toBe(200);
-
-    const webhookResponse = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: {
-        "x-clover-auth": cloverWebhookSecret
-      },
-      payload: {
-        type: "payment.updated",
-        paymentId: chargeResponse.json().paymentId,
-        orderId,
-        status: "APPROVED",
-        message: "Settled asynchronously",
-        occurredAt: "2026-03-11T03:00:00.000Z"
-      }
-    });
-
-    expect(webhookResponse.statusCode).toBe(200);
-    expect(webhookResponse.json()).toMatchObject({
-      accepted: true,
-      kind: "CHARGE",
-      orderId,
-      status: "SUCCEEDED",
-      orderApplied: true
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await app.close();
-  });
-
-  it("rejects webhook requests when shared secret is configured and missing", async () => {
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      payload: {
-        type: "payment.updated",
-        paymentId: "clv-charge-unknown",
-        orderId: "123e4567-e89b-12d3-a456-426614174034",
-        status: "APPROVED"
-      }
-    });
-
-    expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ code: "UNAUTHORIZED_WEBHOOK" });
-    await app.close();
-  });
-
-  it("fails closed when Clover webhook auth is not configured", async () => {
-    vi.stubEnv("CLOVER_WEBHOOK_SHARED_SECRET", "");
-    const app = await buildApp();
-    const response = await app.inject({
-      method: "POST",
-      url: "/v1/payments/webhooks/clover",
-      headers: webhookHeaders(),
-      payload: {
-        type: "payment.updated",
-        paymentId: "clv-charge-unknown",
-        orderId: "123e4567-e89b-12d3-a456-426614174035",
-        status: "APPROVED"
-      }
-    });
-
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toMatchObject({ code: "WEBHOOK_AUTH_NOT_CONFIGURED" });
-    await app.close();
-  });
 });

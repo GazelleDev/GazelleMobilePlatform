@@ -1,10 +1,6 @@
 import { z } from "zod";
-import { apiClient } from "../api/client";
 
-type PayOrderInput = Parameters<(typeof apiClient)["payOrder"]>[1];
-export type ApplePayWalletPayload = NonNullable<PayOrderInput["applePayWallet"]>;
-
-const applePayWalletPayloadSchema = z.object({
+export const applePayWalletPayloadSchema = z.object({
   version: z.string().min(1),
   data: z.string().min(1),
   signature: z.string().min(1),
@@ -15,6 +11,7 @@ const applePayWalletPayloadSchema = z.object({
     applicationData: z.string().min(1).optional()
   })
 });
+export type ApplePayWalletPayload = z.output<typeof applePayWalletPayloadSchema>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

@@ -89,48 +89,6 @@ export const createOrderRequestSchema = z.object({
   quoteHash: z.string().min(1)
 });
 
-export const applePayWalletHeaderSchema = z.object({
-  ephemeralPublicKey: z.string().min(1),
-  publicKeyHash: z.string().min(1),
-  transactionId: z.string().min(1),
-  applicationData: z.string().min(1).optional()
-});
-
-export const applePayWalletSchema = z.object({
-  version: z.string().min(1),
-  data: z.string().min(1),
-  signature: z.string().min(1),
-  header: applePayWalletHeaderSchema
-});
-
-export const payOrderRequestSchema = z.object({
-  paymentSourceToken: z.string().min(1).optional(),
-  applePayToken: z.string().min(1).optional(),
-  applePayWallet: applePayWalletSchema.optional(),
-  idempotencyKey: z.string().min(1)
-}).superRefine((input, context) => {
-  const hasPaymentSourceToken = Boolean(input.paymentSourceToken);
-  const hasToken = Boolean(input.applePayToken);
-  const hasWallet = Boolean(input.applePayWallet);
-  const methodCount = [hasPaymentSourceToken, hasToken, hasWallet].filter(Boolean).length;
-
-  if (methodCount === 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["paymentSourceToken"],
-      message: "Provide exactly one payment method."
-    });
-  }
-
-  if (methodCount > 1) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["applePayWallet"],
-      message: "Provide exactly one payment method."
-    });
-  }
-});
-
 export const stripeMobilePaymentSessionRequestSchema = z.object({
   orderId: z.string().uuid()
 });
@@ -239,12 +197,6 @@ export const ordersContract = {
       method: "POST",
       path: "/",
       request: createOrderRequestSchema,
-      response: orderSchema
-    },
-    pay: {
-      method: "POST",
-      path: "/:orderId/pay",
-      request: payOrderRequestSchema,
       response: orderSchema
     },
     list: {

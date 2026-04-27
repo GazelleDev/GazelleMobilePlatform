@@ -24,7 +24,6 @@
 
 - `POST /orders/quote`
 - `POST /orders`
-- `POST /orders/{orderId}/pay`
 - `GET /orders`
 - `GET /orders/{orderId}`
 - `POST /orders/{orderId}/cancel`

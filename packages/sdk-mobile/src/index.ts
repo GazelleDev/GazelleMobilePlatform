@@ -16,7 +16,6 @@ import {
   createOrderRequestSchema,
   orderQuoteSchema,
   orderSchema,
-  payOrderRequestSchema,
   stripeMobilePaymentSessionRequestSchema,
   stripeMobilePaymentFinalizeRequestSchema,
   stripeMobilePaymentFinalizeResponseSchema,
@@ -194,16 +193,6 @@ export class GazelleApiClient {
   async createOrder(input: z.input<typeof createOrderRequestSchema>): Promise<z.output<typeof orderSchema>> {
     createOrderRequestSchema.parse(input);
     const data = await this.post<unknown>("/orders", input);
-    return orderSchema.parse(data);
-  }
-
-  async payOrder(
-    orderId: string,
-    input: z.input<typeof payOrderRequestSchema>
-  ): Promise<z.output<typeof orderSchema>> {
-    z.string().uuid().parse(orderId);
-    payOrderRequestSchema.parse(input);
-    const data = await this.post<unknown>(`/orders/${orderId}/pay`, input);
     return orderSchema.parse(data);
   }
 

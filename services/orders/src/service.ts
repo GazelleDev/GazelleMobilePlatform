@@ -10,14 +10,12 @@ import {
   type StoreConfigResponse
 } from "@lattelink/contracts-catalog";
 import {
-  applePayWalletSchema,
   createOrderRequestSchema,
   ordersPaymentReconciliationResultSchema,
   ordersPaymentReconciliationSchema,
   orderQuoteSchema,
   orderSchema,
   orderTimelineEntrySchema,
-  payOrderRequestSchema,
   quoteRequestSchema
 } from "@lattelink/contracts-orders";
 import { z } from "zod";
@@ -54,41 +52,6 @@ const orderStateDispatchResponseSchema = z.object({
   enqueued: z.number().int().nonnegative(),
   deduplicated: z.boolean()
 });
-
-const paymentsChargeRequestSchema = z
-  .object({
-    orderId: z.string().uuid(),
-    order: orderSchema.optional(),
-    amountCents: z.number().int().positive(),
-    currency: z.literal("USD"),
-    paymentSourceToken: z.string().min(1).optional(),
-    applePayToken: z.string().min(1).optional(),
-    applePayWallet: applePayWalletSchema.optional(),
-    idempotencyKey: z.string().min(1),
-    locationId: z.string().min(1).optional()
-  })
-  .superRefine((input, context) => {
-    const hasPaymentSourceToken = Boolean(input.paymentSourceToken);
-    const hasToken = Boolean(input.applePayToken);
-    const hasWallet = Boolean(input.applePayWallet);
-    const methodCount = [hasPaymentSourceToken, hasToken, hasWallet].filter(Boolean).length;
-
-    if (methodCount === 0) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["paymentSourceToken"],
-        message: "Provide exactly one payment method."
-      });
-    }
-
-    if (methodCount > 1) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["applePayWallet"],
-        message: "Provide exactly one payment method."
-      });
-    }
-  });
 
 const paymentsChargeStatusSchema = z.enum(["SUCCEEDED", "DECLINED", "TIMEOUT"]);
 const paymentsProviderSchema = z.enum(["CLOVER", "STRIPE"]);
@@ -216,14 +179,10 @@ export type OrderStatusUpdateInput = {
 
 type QuoteRequest = z.output<typeof quoteRequestSchema>;
 type CreateOrderRequest = z.output<typeof createOrderRequestSchema>;
-type PayOrderRequest = z.output<typeof payOrderRequestSchema>;
 type OrdersPaymentReconciliationInput = z.output<typeof ordersPaymentReconciliationSchema>;
 type OrdersPaymentReconciliationResult = z.output<typeof ordersPaymentReconciliationResultSchema>;
 type PaymentsChargeResponse = z.output<typeof paymentsChargeResponseSchema>;
 type PaymentsRefundResponse = z.output<typeof paymentsRefundResponseSchema>;
-type ChargeRequestResult =
-  | { response: PaymentsChargeResponse }
-  | { error: ServiceError; snapshot?: PaymentsChargeResponse };
 type RefundRequestResult =
   | { response: PaymentsRefundResponse }
   | { error: ServiceError; snapshot?: PaymentsRefundResponse };
@@ -315,20 +274,6 @@ function buildStoreConfigUnavailableError(details?: Record<string, unknown>) {
   });
 }
 
-function buildPendingPaymentReconciliationError(charge: PaymentsChargeResponse) {
-  return buildServiceError({
-    statusCode: 409,
-    code: "PAYMENT_RECONCILIATION_PENDING",
-    message: charge.message ?? "Previous payment attempt is still awaiting Clover reconciliation",
-    details: {
-      paymentId: charge.paymentId,
-      provider: charge.provider,
-      status: charge.status,
-      occurredAt: charge.occurredAt
-    }
-  });
-}
-
 function parseJsonSafely(rawBody: string): unknown {
   if (!rawBody) {
     return undefined;
@@ -349,15 +294,6 @@ function toRefundIdempotencyKey(orderId: string, reason: string) {
 
 function toLoyaltyIdempotencyKey(orderId: string, action: string) {
   return `order:${orderId}:loyalty:${action}`;
-}
-
-function parsePersistedChargeSnapshot(payload: unknown | undefined) {
-  if (payload === undefined) {
-    return undefined;
-  }
-
-  const parsed = paymentsChargeResponseSchema.safeParse(payload);
-  return parsed.success ? parsed.data : undefined;
 }
 
 function parsePersistedRefundSnapshot(payload: unknown | undefined) {
@@ -884,111 +820,6 @@ async function findActiveOrderForUser(params: {
   return undefined;
 }
 
-async function requestSuccessfulCharge(params: {
-  orderId: string;
-  input: PayOrderRequest;
-  order: Order;
-  requestId: string;
-  deps: OrderServiceDeps;
-}): Promise<ChargeRequestResult> {
-  const chargeRequestPayload = paymentsChargeRequestSchema.parse({
-    orderId: params.orderId,
-    order: params.order,
-    amountCents: params.order.total.amountCents,
-    currency: params.order.total.currency,
-    paymentSourceToken: params.input.paymentSourceToken,
-    applePayToken: params.input.applePayToken,
-    applePayWallet: params.input.applePayWallet,
-    idempotencyKey: params.input.idempotencyKey,
-    locationId: params.order.locationId
-  });
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "x-request-id": params.requestId
-  };
-  if (params.deps.paymentsInternalToken) {
-    headers["x-internal-token"] = params.deps.paymentsInternalToken;
-  }
-
-  let chargeResponse: Response;
-  try {
-    chargeResponse = await fetch(`${params.deps.paymentsBaseUrl}/v1/payments/charges`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(chargeRequestPayload)
-    });
-  } catch (error) {
-    params.deps.logger.warn(
-      { error, requestId: params.requestId, orderId: params.orderId },
-      "payments charge request failed before response"
-    );
-    return {
-      error: buildServiceError({
-        statusCode: 502,
-        code: "PAYMENTS_UNAVAILABLE",
-        message: "Payments service is unavailable"
-      })
-    };
-  }
-
-  const parsedChargeBody = parseJsonSafely(await chargeResponse.text());
-  if (!chargeResponse.ok) {
-    return {
-      error: buildServiceError({
-        statusCode: 502,
-        code: "PAYMENTS_ERROR",
-        message: `Payments charge request failed with status ${chargeResponse.status}`,
-        details: { upstreamBody: parsedChargeBody }
-      })
-    };
-  }
-
-  const parsedCharge = paymentsChargeResponseSchema.safeParse(parsedChargeBody);
-  if (!parsedCharge.success) {
-    return {
-      error: buildServiceError({
-        statusCode: 502,
-        code: "PAYMENTS_INVALID_RESPONSE",
-        message: "Payments service returned an invalid charge response",
-        details: parsedCharge.error.flatten()
-      })
-    };
-  }
-
-  if (parsedCharge.data.status === "DECLINED") {
-    return {
-      error: buildServiceError({
-        statusCode: 402,
-        code: "PAYMENT_DECLINED",
-        message: parsedCharge.data.message ?? "Payment was declined",
-        details: {
-          paymentId: parsedCharge.data.paymentId,
-          provider: parsedCharge.data.provider,
-          declineCode: parsedCharge.data.declineCode
-        }
-      }),
-      snapshot: parsedCharge.data
-    };
-  }
-
-  if (parsedCharge.data.status === "TIMEOUT") {
-    return {
-      error: buildServiceError({
-        statusCode: 504,
-        code: "PAYMENT_TIMEOUT",
-        message: parsedCharge.data.message ?? "Payment timed out",
-        details: {
-          paymentId: parsedCharge.data.paymentId,
-          provider: parsedCharge.data.provider
-        }
-      }),
-      snapshot: parsedCharge.data
-    };
-  }
-
-  return { response: parsedCharge.data };
-}
-
 async function requestSuccessfulRefund(params: {
   orderId: string;
   reason: string;
@@ -1194,191 +1025,6 @@ export async function createOrder(params: {
   });
 
   return { order };
-}
-
-export async function processPayment(params: {
-  orderId: string;
-  input: PayOrderRequest;
-  requestId: string;
-  requestUserContext?: RequestUserContext;
-  deps: OrderServiceDeps;
-}): Promise<{ order: Order } | { error: ServiceError }> {
-  const { orderId, input, requestId, requestUserContext, deps } = params;
-  const existingOrder = await deps.repository.getOrder(orderId);
-
-  if (!existingOrder) {
-    return {
-      error: buildServiceError({
-        statusCode: 404,
-        code: "ORDER_NOT_FOUND",
-        message: "Order not found",
-        details: { orderId }
-      })
-    };
-  }
-
-  if (existingOrder.status === "CANCELED") {
-    return {
-      error: buildServiceError({
-        statusCode: 409,
-        code: "ORDER_NOT_PAYABLE",
-        message: "Canceled orders cannot be paid",
-        details: { orderId, status: existingOrder.status }
-      })
-    };
-  }
-
-  const existingPaymentResult = await deps.repository.getPaymentOrderByIdempotency(orderId, input.idempotencyKey);
-  if (existingPaymentResult) {
-    return { order: existingPaymentResult };
-  }
-
-  if (existingOrder.status !== "PENDING_PAYMENT") {
-    return { order: existingOrder };
-  }
-
-  const persistedCharge = parsePersistedChargeSnapshot(await deps.repository.getSuccessfulCharge(orderId));
-  if (persistedCharge?.status === "TIMEOUT") {
-    return {
-      error: buildPendingPaymentReconciliationError(persistedCharge)
-    };
-  }
-
-  const orderQuote = await deps.repository.getOrderQuote(orderId);
-  if (!orderQuote) {
-    return {
-      error: buildServiceError({
-        statusCode: 409,
-        code: "ORDER_CONTEXT_MISSING",
-        message: "Order quote context is missing",
-        details: { orderId }
-      })
-    };
-  }
-
-  const orderUserId = await resolveOrderUserId({
-    orderId,
-    requestUserContext,
-    repository: deps.repository
-  });
-  if (isServiceError(orderUserId)) {
-    return { error: orderUserId };
-  }
-
-  let successfulCharge: PaymentsChargeResponse | undefined = persistedCharge?.status === "SUCCEEDED" ? persistedCharge : undefined;
-
-  if (!successfulCharge) {
-    const requestedCharge = await requestSuccessfulCharge({
-      orderId,
-      input,
-      order: existingOrder,
-      requestId,
-      deps
-    });
-    if ("error" in requestedCharge) {
-      if (requestedCharge.snapshot) {
-        await deps.repository.setSuccessfulCharge(orderId, requestedCharge.snapshot);
-        await deps.repository.setPaymentId(orderId, requestedCharge.snapshot.paymentId);
-      }
-
-      if (requestedCharge.error.code !== "PAYMENT_TIMEOUT") {
-        const canceledTransition = transitionOrderStatus(existingOrder, "CANCELED", {
-          note: requestedCharge.snapshot?.message
-            ? `Payment failed before confirmation: ${requestedCharge.snapshot.message}`
-            : requestedCharge.error.message
-              ? `Payment failed before confirmation: ${requestedCharge.error.message}`
-              : "Payment failed before order confirmation.",
-          source: "system"
-        });
-        await deps.repository.updateOrder(orderId, canceledTransition.order);
-        await deps.repository.savePaymentIdempotency(orderId, input.idempotencyKey);
-        await sendOrderStateNotification({
-          requestId,
-          deps,
-          userId: orderUserId,
-          order: canceledTransition.order,
-          timelineEntry: canceledTransition.appliedTransitions[0]?.timelineEntry
-        });
-
-        return {
-          error: buildServiceError({
-            ...requestedCharge.error,
-            details: {
-              ...requestedCharge.error.details,
-              orderId,
-              orderStatus: canceledTransition.order.status
-            }
-          })
-        };
-      }
-
-      return { error: requestedCharge.error };
-    }
-
-    successfulCharge = requestedCharge.response;
-    await deps.repository.setSuccessfulCharge(orderId, successfulCharge);
-    await deps.repository.setPaymentId(orderId, successfulCharge.paymentId);
-  }
-
-  if (orderQuote.pointsToRedeem > 0) {
-    const redeemMutation = loyaltyMutationRequestSchema.parse({
-      type: "REDEEM",
-      userId: orderUserId,
-      orderId,
-      amountCents: orderQuote.pointsToRedeem,
-      idempotencyKey: toLoyaltyIdempotencyKey(orderId, "redeem")
-    });
-    const redeemResult = await applyLoyaltyMutation({
-      requestId,
-      deps,
-      mutation: redeemMutation,
-      failureCode: "LOYALTY_REDEEM_FAILED",
-      failureMessage: "Loyalty redeem mutation failed"
-    });
-    if (isServiceError(redeemResult)) {
-      return { error: redeemResult };
-    }
-  }
-
-  const earnMutation = loyaltyMutationRequestSchema.parse({
-    type: "EARN",
-    userId: orderUserId,
-    orderId,
-    amountCents: existingOrder.total.amountCents,
-    idempotencyKey: toLoyaltyIdempotencyKey(orderId, "earn")
-  });
-  const earnResult = await applyLoyaltyMutation({
-    requestId,
-    deps,
-    mutation: earnMutation,
-    failureCode: "LOYALTY_EARN_FAILED",
-    failureMessage: "Loyalty earn mutation failed"
-  });
-  if (isServiceError(earnResult)) {
-    return { error: earnResult };
-  }
-
-  const loyaltyParts = [
-    orderQuote.pointsToRedeem > 0 ? `redeemed ${orderQuote.pointsToRedeem} loyalty points` : undefined,
-    `Earned ${existingOrder.total.amountCents} loyalty points`
-  ].filter((value): value is string => Boolean(value));
-
-  const paidTransition = transitionOrderStatus(existingOrder, "PAID", {
-    note: `${loyaltyParts.join("; ")}.`,
-    source: "customer"
-  });
-  await deps.repository.updateOrder(orderId, paidTransition.order);
-  await deps.repository.setPaymentId(orderId, successfulCharge.paymentId);
-  await deps.repository.savePaymentIdempotency(orderId, input.idempotencyKey);
-  await sendOrderStateNotification({
-    requestId,
-    deps,
-    userId: orderUserId,
-    order: paidTransition.order,
-    timelineEntry: paidTransition.appliedTransitions[0]?.timelineEntry
-  });
-
-  return { order: paidTransition.order };
 }
 
 export async function listOrdersForRead(params: {

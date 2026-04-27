@@ -51,18 +51,7 @@ export type OrdersStreamEvent =
   | z.output<typeof ordersStreamUpdateSchema>;
 type OrdersStreamEventHandler = (event: OrdersStreamEvent) => void;
 type OrdersStreamErrorHandler = (error: unknown) => void;
-const cloverCardEntryConfigSchema = z.object({
-  enabled: z.boolean(),
-  providerMode: z.enum(["simulated", "live"]),
-  environment: z.enum(["sandbox", "production"]).optional(),
-  tokenizeEndpoint: z.string().url().optional(),
-  apiAccessKey: z.string().min(1).optional(),
-  merchantId: z.string().min(1).optional()
-});
-export type CloverCardEntryConfig = z.output<typeof cloverCardEntryConfigSchema>;
-
 type MobileApiClient = GazelleApiClient & {
-  getCloverCardEntryConfig(): Promise<CloverCardEntryConfig>;
   subscribeToOrders(
     onEvent: OrdersStreamEventHandler,
     onError?: OrdersStreamErrorHandler
@@ -219,31 +208,6 @@ baseApiClient.setAccessToken = (token?: string) => {
 };
 
 export const apiClient = Object.assign(baseApiClient, {
-  async getCloverCardEntryConfig() {
-    if (!currentAccessToken) {
-      throw new Error("Sign in again to refresh payment configuration.");
-    }
-
-    let response: Response;
-
-    try {
-      response = await fetch(resolveConfiguredApiUrl(API_BASE_URL, "/payments/clover/card-entry-config"), {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${currentAccessToken}`
-        }
-      });
-    } catch (error) {
-      throw toReachabilityError(error);
-    }
-
-    if (!response.ok) {
-      throw new Error(`Card configuration request failed (${response.status})`);
-    }
-
-    return cloverCardEntryConfigSchema.parse(JSON.parse(await response.text()));
-  },
   subscribeToOrders(onEvent: OrdersStreamEventHandler, onError?: OrdersStreamErrorHandler) {
     let disposed = false;
     let fallbackCleanup = () => {};

@@ -465,9 +465,6 @@ export function getAppConfigCapabilityLabels(config: AppConfig) {
   if (config.paymentCapabilities.refunds) {
     labels.push("Refunds");
   }
-  if (config.paymentCapabilities.clover.enabled) {
-    labels.push("Clover");
-  }
   if (isLoyaltyVisible(config)) {
     labels.push("Loyalty");
   }

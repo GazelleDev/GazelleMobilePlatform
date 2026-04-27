@@ -439,10 +439,6 @@ export const appConfigPaymentCapabilitiesSchema = z.object({
       onboarded: false,
       dashboardEnabled: false
     }),
-  clover: z.object({
-    enabled: z.boolean(),
-    merchantRef: z.string().min(1).optional()
-  })
 });
 
 export const appConfigFulfillmentModeSchema = z.enum(["staff", "time_based"]);

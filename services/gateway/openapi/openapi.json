@@ -44,24 +44,6 @@
         }
       }
     },
-    "/payments/clover/oauth/status": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/payments/clover/card-entry-config": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
     "/payments/stripe/mobile-session": {
       "post": {
         "responses": {
@@ -118,15 +100,6 @@
         }
       }
     },
-    "/payments/clover/webhooks/verification-code": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
     "/payments/clover/oauth/connect": {
       "get": {
         "responses": {
@@ -146,15 +119,6 @@
       }
     },
     "/payments/clover/oauth/refresh": {
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/payments/webhooks/clover": {
       "post": {
         "responses": {
           "200": {
@@ -433,25 +397,6 @@
         }
       },
       "get": {
-        "responses": {
-          "200": {
-            "description": "Default Response"
-          }
-        }
-      }
-    },
-    "/orders/{orderId}/pay": {
-      "post": {
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "in": "path",
-            "name": "orderId",
-            "required": true
-          }
-        ],
         "responses": {
           "200": {
             "description": "Default Response"

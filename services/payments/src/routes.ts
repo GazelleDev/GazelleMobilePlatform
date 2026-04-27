@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import Stripe from "stripe";
 import { z } from "zod";
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   allowsInMemoryPersistence,
   buildPersistenceStartupError,
@@ -19,7 +19,6 @@ import {
   stripeConnectOnboardingLinkRequestSchema
 } from "@lattelink/contracts-catalog";
 import {
-  applePayWalletSchema,
   orderPaymentContextSchema,
   orderSchema,
   ordersPaymentReconciliationResultSchema,
@@ -41,79 +40,8 @@ const payloadSchema = z.object({
 const defaultRateLimitWindowMs = 60_000;
 const defaultPaymentsWriteRateLimitMax = 60;
 const defaultWebhookRateLimitMax = 120;
-const defaultCloverWebhookVerificationCodeTtlMs = 15 * 60_000;
 const cloverCredentialsUnavailableMessage =
   "Clover merchant credentials are not configured. Complete the Clover OAuth connection flow.";
-const cloverEndpointsByEnvironment = {
-  sandbox: {
-    authorizeEndpoint: "https://sandbox.dev.clover.com/oauth/v2/authorize",
-    tokenEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/token",
-    refreshEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/refresh",
-    recoveryEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/recovery",
-    pakmsEndpoint: "https://scl-sandbox.dev.clover.com/pakms/apikey",
-    chargeEndpoint: "https://scl-sandbox.dev.clover.com/v1/charges",
-    refundEndpoint: "https://scl-sandbox.dev.clover.com/v1/refunds",
-    applePayTokenizeEndpoint: "https://token-sandbox.dev.clover.com/v1/tokens"
-  },
-  production: {
-    authorizeEndpoint: "https://www.clover.com/oauth/v2/authorize",
-    tokenEndpoint: "https://api.clover.com/oauth/v2/token",
-    refreshEndpoint: "https://api.clover.com/oauth/v2/refresh",
-    recoveryEndpoint: "https://api.clover.com/oauth/v2/recovery",
-    pakmsEndpoint: "https://scl.clover.com/pakms/apikey",
-    chargeEndpoint: "https://scl.clover.com/v1/charges",
-    refundEndpoint: "https://scl.clover.com/v1/refunds",
-    applePayTokenizeEndpoint: "https://token.clover.com/v1/tokens"
-  }
-} as const;
-
-const chargeRequestSchema = z.object({
-  orderId: z.string().uuid(),
-  order: orderSchema.optional(),
-  amountCents: z.number().int().positive(),
-  currency: z.literal("USD"),
-  paymentSourceToken: z.string().min(1).optional(),
-  applePayToken: z.string().min(1).optional(),
-  applePayWallet: applePayWalletSchema.optional(),
-  idempotencyKey: z.string().min(1),
-  locationId: z.string().min(1).optional()
-}).superRefine((input, context) => {
-  const hasPaymentSourceToken = Boolean(input.paymentSourceToken);
-  const hasToken = Boolean(input.applePayToken);
-  const hasWallet = Boolean(input.applePayWallet);
-  const methodCount = [hasPaymentSourceToken, hasToken, hasWallet].filter(Boolean).length;
-
-  if (methodCount === 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["paymentSourceToken"],
-      message: "Provide exactly one payment method."
-    });
-  }
-
-  if (methodCount > 1) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["applePayWallet"],
-      message: "Provide exactly one payment method."
-    });
-  }
-});
-
-const chargeStatusSchema = z.enum(["SUCCEEDED", "DECLINED", "TIMEOUT"]);
-
-const chargeResponseSchema = z.object({
-  paymentId: z.string().min(1),
-  provider: z.literal("CLOVER"),
-  orderId: z.string().uuid(),
-  status: chargeStatusSchema,
-  approved: z.boolean(),
-  amountCents: z.number().int().positive(),
-  currency: z.literal("USD"),
-  occurredAt: z.string().datetime(),
-  declineCode: z.string().optional(),
-  message: z.string().optional()
-});
 
 const refundRequestSchema = z.object({
   orderId: z.string().uuid(),
@@ -129,7 +57,7 @@ const refundStatusSchema = z.enum(["REFUNDED", "REJECTED"]);
 
 const refundResponseSchema = z.object({
   refundId: z.string().uuid(),
-  provider: z.enum(["CLOVER", "STRIPE"]),
+  provider: z.literal("STRIPE"),
   orderId: z.string().uuid(),
   paymentId: z.string().min(1),
   status: refundStatusSchema,
@@ -167,6 +95,17 @@ const userHeadersSchema = z.object({
   "x-user-id": z.string().uuid().optional()
 });
 
+
+const stripeWebhookAcceptedResponseSchema = z.object({
+  accepted: z.literal(true),
+  provider: z.literal("STRIPE"),
+  eventId: z.string().min(1),
+  eventType: z.string().min(1),
+  duplicate: z.boolean(),
+  livemode: z.boolean(),
+  account: z.string().min(1).optional()
+});
+
 const cloverOauthCallbackQuerySchema = z.object({
   code: z.string().min(1).optional(),
   state: z.string().min(1).optional(),
@@ -183,15 +122,6 @@ const cloverOauthConnectResponseSchema = z.object({
   stateExpiresAt: z.string().datetime()
 });
 
-const cloverCardEntryConfigResponseSchema = z.object({
-  enabled: z.boolean(),
-  providerMode: z.enum(["simulated", "live"]),
-  environment: z.enum(["sandbox", "production"]).optional(),
-  tokenizeEndpoint: z.string().url().optional(),
-  apiAccessKey: z.string().min(1).optional(),
-  merchantId: z.string().min(1).optional()
-});
-
 const cloverOauthStatusSchema = z.object({
   providerMode: z.enum(["simulated", "live"]),
   oauthConfigured: z.boolean(),
@@ -201,23 +131,6 @@ const cloverOauthStatusSchema = z.object({
   connectedMerchantId: z.string().min(1).optional(),
   accessTokenExpiresAt: z.string().datetime().optional(),
   apiAccessKeyConfigured: z.boolean()
-});
-
-const cloverWebhookVerificationCodeResponseSchema = z.object({
-  available: z.literal(true),
-  verificationCode: z.string().min(1),
-  receivedAt: z.string().datetime(),
-  expiresAt: z.string().datetime()
-});
-
-const stripeWebhookAcceptedResponseSchema = z.object({
-  accepted: z.literal(true),
-  provider: z.literal("STRIPE"),
-  eventId: z.string().min(1),
-  eventType: z.string().min(1),
-  duplicate: z.boolean(),
-  livemode: z.boolean(),
-  account: z.string().min(1).optional()
 });
 
 const cloverOauthTokenResponseSchema = z.object({
@@ -232,33 +145,16 @@ const cloverOauthTokenResponseSchema = z.object({
   merchant_id: z.string().min(1).optional()
 });
 
-export type ChargeResponse = z.output<typeof chargeResponseSchema>;
 export type RefundResponse = z.output<typeof refundResponseSchema>;
-export type ChargeRequest = z.output<typeof chargeRequestSchema>;
 export type RefundRequest = z.output<typeof refundRequestSchema>;
 type OrderPaymentReconciliation = z.output<typeof ordersPaymentReconciliationSchema>;
-
-type PersistedChargeRow = {
-  payment_id: string;
-  provider_payment_id: string | null;
-  order_id: string;
-  idempotency_key: string;
-  provider: "CLOVER";
-  status: "SUCCEEDED" | "DECLINED" | "TIMEOUT";
-  approved: boolean;
-  amount_cents: number;
-  currency: "USD";
-  occurred_at: string;
-  decline_code: string | null;
-  message: string | null;
-};
 
 type PersistedRefundRow = {
   refund_id: string;
   order_id: string;
   payment_id: string;
   idempotency_key: string;
-  provider: "CLOVER" | "STRIPE";
+  provider: "STRIPE";
   status: "REFUNDED" | "REJECTED";
   amount_cents: number;
   currency: "USD";
@@ -310,30 +206,8 @@ export type CloverConnection = {
   scope?: string;
 };
 
-type RecentCloverWebhookVerificationCode = z.output<typeof cloverWebhookVerificationCodeResponseSchema>;
-
 export type PaymentsRepository = {
   backend: "memory" | "postgres";
-  findChargeByIdempotency(orderId: string, idempotencyKey: string): Promise<ChargeResponse | undefined>;
-  saveCharge(input: {
-    request: ChargeRequest;
-    response: ChargeResponse;
-    providerPaymentId?: string;
-  }): Promise<ChargeResponse>;
-  findLatestChargeForOrder(
-    orderId: string
-  ): Promise<{ charge: ChargeResponse; providerPaymentId?: string } | undefined>;
-  findChargeByPaymentId(paymentId: string): Promise<{ charge: ChargeResponse; providerPaymentId?: string } | undefined>;
-  findChargeByProviderPaymentId(
-    providerPaymentId: string
-  ): Promise<{ charge: ChargeResponse; providerPaymentId?: string } | undefined>;
-  updateChargeStatus(input: {
-    paymentId: string;
-    status: z.output<typeof chargeStatusSchema>;
-    message?: string;
-    declineCode?: string;
-    occurredAt: string;
-  }): Promise<ChargeResponse | undefined>;
   findRefundByIdempotency(orderId: string, idempotencyKey: string): Promise<RefundResponse | undefined>;
   saveRefund(input: { request: RefundRequest; response: RefundResponse }): Promise<RefundResponse>;
   findLatestRefundForOrderAndPayment(orderId: string, paymentId: string): Promise<RefundResponse | undefined>;
@@ -359,27 +233,6 @@ export type PaymentsRepository = {
   close(): Promise<void>;
 };
 
-function toChargeResponse(row: PersistedChargeRow): ChargeResponse {
-  return chargeResponseSchema.parse({
-    paymentId: row.payment_id,
-    provider: row.provider,
-    orderId: row.order_id,
-    status: row.status,
-    approved: row.approved,
-    amountCents: row.amount_cents,
-    currency: row.currency,
-    occurredAt: new Date(row.occurred_at).toISOString(),
-    declineCode: row.decline_code ?? undefined,
-    message: row.message ?? undefined
-  });
-}
-
-function toChargeLookup(row: PersistedChargeRow) {
-  return {
-    charge: toChargeResponse(row),
-    providerPaymentId: row.provider_payment_id ?? undefined
-  };
-}
 
 function toRefundResponse(row: PersistedRefundRow): RefundResponse {
   return refundResponseSchema.parse({
@@ -423,11 +276,6 @@ function toCloverConnection(row: PersistedCloverConnectionRow): CloverConnection
 }
 
 function createInMemoryRepository(): PaymentsRepository {
-  const chargeResultsByIdempotency = new Map<string, ChargeResponse>();
-  const chargeResultByOrderId = new Map<string, ChargeResponse>();
-  const chargeResultByPaymentId = new Map<string, ChargeResponse>();
-  const providerPaymentIdByPaymentId = new Map<string, string>();
-  const internalPaymentIdByProviderPaymentId = new Map<string, string>();
   const refundResultsByIdempotency = new Map<string, RefundResponse>();
   const refundResultByRefundId = new Map<string, RefundResponse>();
   const latestRefundIdByOrderPayment = new Map<string, string>();
@@ -438,71 +286,6 @@ function createInMemoryRepository(): PaymentsRepository {
 
   return {
     backend: "memory",
-    async findChargeByIdempotency(orderId, idempotencyKey) {
-      return chargeResultsByIdempotency.get(`${orderId}:${idempotencyKey}`);
-    },
-    async saveCharge({ request, response, providerPaymentId }) {
-      const key = `${request.orderId}:${request.idempotencyKey}`;
-      chargeResultsByIdempotency.set(key, response);
-      chargeResultByOrderId.set(request.orderId, response);
-      chargeResultByPaymentId.set(response.paymentId, response);
-      const resolvedProviderPaymentId = providerPaymentId ?? response.paymentId;
-      providerPaymentIdByPaymentId.set(response.paymentId, resolvedProviderPaymentId);
-      internalPaymentIdByProviderPaymentId.set(resolvedProviderPaymentId, response.paymentId);
-      internalPaymentIdByProviderPaymentId.set(response.paymentId, response.paymentId);
-      return response;
-    },
-    async findLatestChargeForOrder(orderId) {
-      const charge = chargeResultByOrderId.get(orderId);
-      if (!charge) {
-        return undefined;
-      }
-
-      return {
-        charge,
-        providerPaymentId: providerPaymentIdByPaymentId.get(charge.paymentId)
-      };
-    },
-    async findChargeByPaymentId(paymentId) {
-      const charge = chargeResultByPaymentId.get(paymentId);
-      if (!charge) {
-        return undefined;
-      }
-      return {
-        charge,
-        providerPaymentId: providerPaymentIdByPaymentId.get(paymentId)
-      };
-    },
-    async findChargeByProviderPaymentId(providerPaymentId) {
-      const resolvedPaymentId =
-        internalPaymentIdByProviderPaymentId.get(providerPaymentId) ?? providerPaymentId;
-      const charge = chargeResultByPaymentId.get(resolvedPaymentId);
-      if (!charge) {
-        return undefined;
-      }
-      return {
-        charge,
-        providerPaymentId: providerPaymentIdByPaymentId.get(resolvedPaymentId)
-      };
-    },
-    async updateChargeStatus({ paymentId, status, message, declineCode, occurredAt }) {
-      const record = chargeResultByPaymentId.get(paymentId);
-      if (!record) {
-        return undefined;
-      }
-
-      const next = chargeResponseSchema.parse({
-        ...record,
-        status,
-        approved: status === "SUCCEEDED",
-        message: message ?? record.message,
-        declineCode: status === "DECLINED" ? declineCode ?? record.declineCode : undefined,
-        occurredAt
-      });
-      chargeResultByPaymentId.set(paymentId, next);
-      chargeResultByOrderId.set(next.orderId, next);
-      return next;
-    },
     async findRefundByIdempotency(orderId, idempotencyKey) {
       return refundResultsByIdempotency.get(`${orderId}:${idempotencyKey}`);
     },
@@ -596,116 +379,6 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
 
   return {
     backend: "postgres",
-    async findChargeByIdempotency(orderId, idempotencyKey) {
-      const row = await db
-        .selectFrom("payments_charges")
-        .selectAll()
-        .where("order_id", "=", orderId)
-        .where("idempotency_key", "=", idempotencyKey)
-        .executeTakeFirst();
-
-      return row ? toChargeResponse(row as PersistedChargeRow) : undefined;
-    },
-    async saveCharge({ request, response, providerPaymentId }) {
-      await db
-        .insertInto("payments_charges")
-        .values({
-          payment_id: response.paymentId,
-          provider_payment_id: providerPaymentId ?? null,
-          order_id: response.orderId,
-          idempotency_key: request.idempotencyKey,
-          provider: response.provider,
-          status: response.status,
-          approved: response.approved,
-          amount_cents: response.amountCents,
-          currency: response.currency,
-          occurred_at: response.occurredAt,
-          decline_code: response.declineCode ?? null,
-          message: response.message ?? null
-        })
-        .onConflict((oc) => oc.columns(["order_id", "idempotency_key"]).doNothing())
-        .execute();
-
-      const persisted = await db
-        .selectFrom("payments_charges")
-        .selectAll()
-        .where("order_id", "=", request.orderId)
-        .where("idempotency_key", "=", request.idempotencyKey)
-        .executeTakeFirstOrThrow();
-
-      return toChargeResponse(persisted as PersistedChargeRow);
-    },
-    async findLatestChargeForOrder(orderId) {
-      const row = await db
-        .selectFrom("payments_charges")
-        .selectAll()
-        .where("order_id", "=", orderId)
-        .orderBy("created_at", "desc")
-        .executeTakeFirst();
-
-      return row ? toChargeLookup(row as PersistedChargeRow) : undefined;
-    },
-    async findChargeByPaymentId(paymentId) {
-      const row = await db
-        .selectFrom("payments_charges")
-        .selectAll()
-        .where("payment_id", "=", paymentId)
-        .executeTakeFirst();
-
-      return row ? toChargeLookup(row as PersistedChargeRow) : undefined;
-    },
-    async findChargeByProviderPaymentId(providerPaymentId) {
-      const providerIdAsUuid = z.string().uuid().safeParse(providerPaymentId);
-      const row = providerIdAsUuid.success
-        ? await db
-            .selectFrom("payments_charges")
-            .selectAll()
-            .where((expressionBuilder) =>
-              expressionBuilder.or([
-                expressionBuilder("provider_payment_id", "=", providerPaymentId),
-                expressionBuilder("payment_id", "=", providerPaymentId)
-              ])
-            )
-            .orderBy("created_at", "desc")
-            .executeTakeFirst()
-        : await db
-            .selectFrom("payments_charges")
-            .selectAll()
-            .where("provider_payment_id", "=", providerPaymentId)
-            .orderBy("created_at", "desc")
-            .executeTakeFirst();
-
-      return row ? toChargeLookup(row as PersistedChargeRow) : undefined;
-    },
-    async updateChargeStatus({ paymentId, status, message, declineCode, occurredAt }) {
-      const existing = await db
-        .selectFrom("payments_charges")
-        .selectAll()
-        .where("payment_id", "=", paymentId)
-        .executeTakeFirst();
-      if (!existing) {
-        return undefined;
-      }
-
-      await db
-        .updateTable("payments_charges")
-        .set({
-          status,
-          approved: status === "SUCCEEDED",
-          message: message ?? existing.message,
-          decline_code: status === "DECLINED" ? declineCode ?? existing.decline_code : null,
-          occurred_at: occurredAt
-        })
-        .where("payment_id", "=", paymentId)
-        .execute();
-
-      const updated = await db
-        .selectFrom("payments_charges")
-        .selectAll()
-        .where("payment_id", "=", paymentId)
-        .executeTakeFirstOrThrow();
-      return toChargeResponse(updated as PersistedChargeRow);
-    },
     async findRefundByIdempotency(orderId, idempotencyKey) {
       const row = await db
         .selectFrom("payments_refunds")
@@ -956,12 +629,26 @@ async function createPaymentsRepository(logger: FastifyBaseLogger): Promise<Paym
 const providerModeSchema = z.enum(["simulated", "live"]);
 type ProviderMode = z.output<typeof providerModeSchema>;
 
+const cloverEndpointsByEnvironment = {
+  sandbox: {
+    authorizeEndpoint: "https://sandbox.dev.clover.com/oauth/v2/authorize",
+    tokenEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/token",
+    refreshEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/refresh",
+    recoveryEndpoint: "https://apisandbox.dev.clover.com/oauth/v2/recovery",
+    pakmsEndpoint: "https://scl-sandbox.dev.clover.com/pakms/apikey"
+  },
+  production: {
+    authorizeEndpoint: "https://www.clover.com/oauth/v2/authorize",
+    tokenEndpoint: "https://api.clover.com/oauth/v2/token",
+    refreshEndpoint: "https://api.clover.com/oauth/v2/refresh",
+    recoveryEndpoint: "https://api.clover.com/oauth/v2/recovery",
+    pakmsEndpoint: "https://scl.clover.com/pakms/apikey"
+  }
+} as const;
+
 export type CloverProviderConfig = {
   mode: ProviderMode;
   configured: boolean;
-  chargeEndpoint?: string;
-  refundEndpoint?: string;
-  applePayTokenizeEndpoint?: string;
   misconfigurationReason?: string;
 };
 
@@ -1104,40 +791,6 @@ function authorizeGatewayRequest(
   return false;
 }
 
-function authorizeWebhookRequest(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  sharedSecret: string | undefined
-) {
-  if (!sharedSecret) {
-    sendError(reply, {
-      statusCode: 503,
-      code: "WEBHOOK_AUTH_NOT_CONFIGURED",
-      message: "CLOVER_WEBHOOK_SHARED_SECRET must be configured before accepting Clover webhooks",
-      requestId: request.id
-    });
-    return false;
-  }
-
-  const requestHeaders = request.headers as Record<string, unknown>;
-  const providedSecret =
-    getHeaderValue(requestHeaders, "x-clover-auth") ??
-    getHeaderValue(requestHeaders, "x-clover-webhook-secret") ??
-    getHeaderValue(requestHeaders, "x-webhook-secret") ??
-    getHeaderValue(requestHeaders, "x-clover-signature");
-  if (!providedSecret || !secretsMatch(sharedSecret, providedSecret)) {
-    sendError(reply, {
-      statusCode: 401,
-      code: "UNAUTHORIZED_WEBHOOK",
-      message: "Webhook secret validation failed",
-      requestId: request.id
-    });
-    return false;
-  }
-
-  return true;
-}
-
 function requireStripeWebhookSecret(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -1203,24 +856,11 @@ function resolveCloverProviderConfig(
 ): CloverProviderConfig {
   const rawMode = env.PAYMENTS_PROVIDER_MODE ?? "simulated";
   const mode = resolveProviderMode(rawMode);
-  const environment = resolveCloverOAuthEnvironment(env.CLOVER_OAUTH_ENVIRONMENT);
-  const endpoints = cloverEndpointsByEnvironment[environment];
-
-  if (mode === "simulated") {
-    logger.info({ providerMode: mode }, "payments provider mode selected");
-    return {
-      mode,
-      configured: true
-    };
-  }
 
   logger.info({ providerMode: mode }, "payments provider mode selected");
   return {
     mode,
-    configured: true,
-    chargeEndpoint: endpoints.chargeEndpoint,
-    refundEndpoint: endpoints.refundEndpoint,
-    applePayTokenizeEndpoint: endpoints.applePayTokenizeEndpoint
+    configured: true
   };
 }
 
@@ -1289,35 +929,6 @@ function firstNumberAtPaths(value: unknown, paths: string[][]): number | undefin
   }
 
   return undefined;
-}
-
-function toIsoDate(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return undefined;
-  }
-
-  return parsed.toISOString();
-}
-
-function firstIsoDateAtPaths(value: unknown, paths: string[][]): string | undefined {
-  for (const path of paths) {
-    const candidate = readPath(value, path);
-    const parsed = toIsoDate(candidate);
-    if (parsed) {
-      return parsed;
-    }
-  }
-
-  return undefined;
-}
-
-function resolveCloverWebhookVerificationCode(value: unknown): string | undefined {
-  return firstStringAtPaths(value, [["verificationCode"], ["verification_code"]]);
 }
 
 export function summarizeCloverResponseForLogs(value: unknown): Record<string, string> {
@@ -1856,238 +1467,6 @@ export async function resolveRuntimeCloverCredentials(params: {
   return buildCloverCredentialsUnavailableError();
 }
 
-function resolveChargeStatus(params: {
-  providerStatus?: string;
-  approved?: boolean;
-  httpStatus: number;
-}): z.output<typeof chargeStatusSchema> {
-  const providerStatus = params.providerStatus?.toLowerCase();
-  if (providerStatus) {
-    if (
-      providerStatus.includes("timeout") ||
-      providerStatus.includes("timed_out") ||
-      providerStatus.includes("pending") ||
-      providerStatus.includes("processing")
-    ) {
-      return "TIMEOUT";
-    }
-    if (
-      providerStatus.includes("declin") ||
-      providerStatus.includes("reject") ||
-      providerStatus.includes("denied") ||
-      providerStatus.includes("failed") ||
-      providerStatus.includes("cancel")
-    ) {
-      return "DECLINED";
-    }
-    if (
-      providerStatus.includes("success") ||
-      providerStatus.includes("approv") ||
-      providerStatus.includes("paid") ||
-      providerStatus.includes("captur") ||
-      providerStatus.includes("complete") ||
-      providerStatus.includes("authoriz")
-    ) {
-      return "SUCCEEDED";
-    }
-  }
-
-  if (params.approved === true) {
-    return "SUCCEEDED";
-  }
-  if (params.httpStatus === 408 || params.httpStatus === 429 || params.httpStatus >= 500) {
-    return "TIMEOUT";
-  }
-  if (params.httpStatus >= 400) {
-    return "DECLINED";
-  }
-
-  return "SUCCEEDED";
-}
-
-function resolveRefundStatus(params: { providerStatus?: string; httpStatus: number }) {
-  const providerStatus = params.providerStatus?.toLowerCase();
-  if (providerStatus) {
-    if (
-      providerStatus.includes("refund") ||
-      providerStatus.includes("succeed") ||
-      providerStatus.includes("approv") ||
-      providerStatus.includes("complete")
-    ) {
-      return "REFUNDED" as const;
-    }
-    if (
-      providerStatus.includes("reject") ||
-      providerStatus.includes("declin") ||
-      providerStatus.includes("deny") ||
-      providerStatus.includes("fail")
-    ) {
-      return "REJECTED" as const;
-    }
-  }
-
-  if (params.httpStatus >= 400) {
-    return "REJECTED" as const;
-  }
-
-  return "REFUNDED" as const;
-}
-
-type CloverWebhookResolution = {
-  eventId?: string;
-  kind: "CHARGE" | "REFUND";
-  statusHint?: string;
-  approved?: boolean;
-  message?: string;
-  declineCode?: string;
-  occurredAt: string;
-  orderId?: string;
-  paymentReference?: string;
-  amountCents?: number;
-  currency?: "USD";
-};
-
-function normalizeWebhookKind(rawKind: string | undefined) {
-  if (!rawKind) {
-    return "CHARGE" as const;
-  }
-  const normalized = rawKind.toLowerCase();
-  if (normalized.includes("refund")) {
-    return "REFUND" as const;
-  }
-  return "CHARGE" as const;
-}
-
-function normalizeCurrency(rawCurrency: string | undefined): "USD" | undefined {
-  if (!rawCurrency) {
-    return undefined;
-  }
-  return rawCurrency.toUpperCase() === "USD" ? "USD" : undefined;
-}
-
-function resolveCloverWebhookPayload(payload: unknown): CloverWebhookResolution {
-  const eventType = firstStringAtPaths(payload, [
-    ["type"],
-    ["eventType"],
-    ["event_type"],
-    ["topic"],
-    ["name"],
-    ["event", "type"]
-  ]);
-  const statusHint = firstStringAtPaths(payload, [
-    ["status"],
-    ["payment", "status"],
-    ["charge", "status"],
-    ["refund", "status"],
-    ["result", "status"],
-    ["data", "status"],
-    ["event", "status"]
-  ]);
-  const kind = normalizeWebhookKind(eventType ?? statusHint);
-  const eventId = firstStringAtPaths(payload, [
-    ["eventId"],
-    ["event_id"],
-    ["id"],
-    ["event", "id"],
-    ["data", "eventId"]
-  ]);
-  const occurredAt =
-    firstIsoDateAtPaths(payload, [
-      ["occurredAt"],
-      ["occurred_at"],
-      ["timestamp"],
-      ["event", "occurredAt"],
-      ["event", "timestamp"],
-      ["createdAt"],
-      ["created_at"]
-    ]) ?? new Date().toISOString();
-  const message = firstStringAtPaths(payload, [
-    ["message"],
-    ["description"],
-    ["reason"],
-    ["error"],
-    ["result", "message"],
-    ["data", "message"]
-  ]);
-  const declineCode = firstStringAtPaths(payload, [
-    ["declineCode"],
-    ["decline_code"],
-    ["reasonCode"],
-    ["errorCode"],
-    ["code"]
-  ]);
-  const paymentReference = firstStringAtPaths(payload, [
-    ["providerPaymentId"],
-    ["provider_payment_id"],
-    ["paymentId"],
-    ["payment_id"],
-    ["chargeId"],
-    ["charge_id"],
-    ["payment", "id"],
-    ["charge", "id"],
-    ["data", "paymentId"],
-    ["data", "id"],
-    ["resource", "id"],
-    ["object", "id"]
-  ]);
-  const orderId = firstStringAtPaths(payload, [
-    ["orderId"],
-    ["order_id"],
-    ["metadata", "orderId"],
-    ["metadata", "order_id"],
-    ["payment", "metadata", "orderId"],
-    ["charge", "metadata", "orderId"],
-    ["data", "metadata", "orderId"],
-    ["externalReference"],
-    ["external_reference"]
-  ]);
-  const approved = firstBooleanAtPaths(payload, [
-    ["approved"],
-    ["payment", "approved"],
-    ["charge", "approved"],
-    ["result", "approved"],
-    ["data", "approved"]
-  ]);
-  const amountRaw = firstNumberAtPaths(payload, [
-    ["amountCents"],
-    ["amount_cents"],
-    ["amount"],
-    ["payment", "amount"],
-    ["refund", "amount"],
-    ["data", "amount"]
-  ]);
-  const amountCents =
-    amountRaw === undefined
-      ? undefined
-      : Number.isInteger(amountRaw)
-        ? amountRaw
-        : Math.round(amountRaw);
-  const currency = normalizeCurrency(
-    firstStringAtPaths(payload, [
-      ["currency"],
-      ["currencyCode"],
-      ["currency_code"],
-      ["payment", "currency"],
-      ["refund", "currency"],
-      ["data", "currency"]
-    ])
-  );
-
-  return {
-    eventId,
-    kind,
-    statusHint,
-    approved,
-    message,
-    declineCode,
-    occurredAt,
-    orderId,
-    paymentReference,
-    amountCents: amountCents && amountCents > 0 ? amountCents : undefined,
-    currency
-  };
-}
-
 function getHeaderValue(headers: Record<string, unknown>, key: string): string | undefined {
   const value = headers[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -2100,35 +1479,6 @@ function getHeaderValue(headers: Record<string, unknown>, key: string): string |
     }
   }
   return undefined;
-}
-
-function buildWebhookEventKey(params: {
-  resolved: CloverWebhookResolution;
-  kind: "CHARGE" | "REFUND";
-  orderId: string;
-  paymentId: string;
-  status: string;
-}) {
-  const { resolved, kind, orderId, paymentId, status } = params;
-  if (resolved.eventId) {
-    return `event:${kind}:${orderId}:${paymentId}:${resolved.eventId}`;
-  }
-
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        kind,
-        orderId,
-        paymentId,
-        status,
-        occurredAt: resolved.occurredAt,
-        message: resolved.message ?? "",
-        declineCode: resolved.declineCode ?? "",
-        amountCents: resolved.amountCents ?? null,
-        currency: resolved.currency ?? null
-      })
-    )
-    .digest("hex");
 }
 
 async function dispatchOrderReconciliation(params: {
@@ -2339,66 +1689,6 @@ async function updateInternalLocationPaymentProfile(params: {
     ok: true,
     response: parsed.data
   };
-}
-
-function createSimulatedChargeResponse(input: ChargeRequest): ChargeResponse {
-  const simulationSignal = (input.paymentSourceToken ?? input.applePayToken ?? input.applePayWallet?.data ?? "").toLowerCase();
-
-  if (simulationSignal.includes("decline")) {
-    return chargeResponseSchema.parse({
-      paymentId: randomUUID(),
-      provider: "CLOVER",
-      orderId: input.orderId,
-      status: "DECLINED",
-      approved: false,
-      amountCents: input.amountCents,
-      currency: input.currency,
-      occurredAt: new Date().toISOString(),
-      declineCode: "CARD_DECLINED",
-      message: "Clover declined the charge"
-    });
-  }
-
-  if (simulationSignal.includes("timeout")) {
-    return chargeResponseSchema.parse({
-      paymentId: randomUUID(),
-      provider: "CLOVER",
-      orderId: input.orderId,
-      status: "TIMEOUT",
-      approved: false,
-      amountCents: input.amountCents,
-      currency: input.currency,
-      occurredAt: new Date().toISOString(),
-      message: "Clover timed out while processing charge"
-    });
-  }
-
-  return chargeResponseSchema.parse({
-    paymentId: randomUUID(),
-    provider: "CLOVER",
-    orderId: input.orderId,
-    status: "SUCCEEDED",
-    approved: true,
-    amountCents: input.amountCents,
-    currency: input.currency,
-    occurredAt: new Date().toISOString(),
-    message: "Clover accepted the charge"
-  });
-}
-
-function createSimulatedRefundResponse(input: RefundRequest): RefundResponse {
-  const shouldReject = input.reason.toLowerCase().includes("reject");
-  return refundResponseSchema.parse({
-    refundId: randomUUID(),
-    provider: "STRIPE",
-    orderId: input.orderId,
-    paymentId: input.paymentId,
-    status: shouldReject ? "REJECTED" : "REFUNDED",
-    amountCents: input.amountCents,
-    currency: input.currency,
-    occurredAt: new Date().toISOString(),
-    message: shouldReject ? "Stripe rejected the refund" : "Stripe accepted the refund"
-  });
 }
 
 function verifyStripeWebhookEvent(params: {
@@ -2637,26 +1927,6 @@ function buildStripePaymentProfile(params: {
   });
 }
 
-async function executeLiveCharge(params: {
-  config: CloverProviderConfig;
-  request: ChargeRequest;
-  requestId: string;
-  logger: FastifyBaseLogger;
-  repository: PaymentsRepository;
-  oauthConfig: CloverOAuthConfig;
-  locationId?: string;
-}): Promise<{ response: ChargeResponse; providerPaymentId?: string }> {
-  const adapter = await getAdapter({
-    logger: params.logger,
-    repository: params.repository,
-    providerConfig: params.config,
-    oauthConfig: params.oauthConfig,
-    locationId: params.locationId,
-    requestId: params.requestId
-  });
-  return adapter.processCharge(params.request);
-}
-
 export async function registerRoutes(app: FastifyInstance) {
   const repository = await createPaymentsRepository(app.log);
   const cloverProvider = resolveCloverProviderConfig(app.log);
@@ -2665,7 +1935,6 @@ export async function registerRoutes(app: FastifyInstance) {
   const ordersBaseUrl = process.env.ORDERS_SERVICE_BASE_URL ?? "http://127.0.0.1:3001";
   const ordersInternalToken = trimToUndefined(process.env.ORDERS_INTERNAL_API_TOKEN);
   const gatewayInternalToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
-  const cloverWebhookSharedSecret = trimToUndefined(process.env.CLOVER_WEBHOOK_SHARED_SECRET);
   const stripeSecretKey = trimToUndefined(process.env.STRIPE_SECRET_KEY);
   const stripePublishableKey = trimToUndefined(process.env.STRIPE_PUBLISHABLE_KEY);
   const stripeConnectWebhookSecret = trimToUndefined(process.env.STRIPE_CONNECT_WEBHOOK_SECRET);
@@ -2679,12 +1948,6 @@ export async function registerRoutes(app: FastifyInstance) {
     max: toPositiveInteger(process.env.PAYMENTS_RATE_LIMIT_WEBHOOK_MAX, defaultWebhookRateLimitMax),
     timeWindow: rateLimitWindowMs
   };
-  const cloverWebhookVerificationCodeTtlMs = toPositiveInteger(
-    process.env.CLOVER_WEBHOOK_VERIFICATION_CODE_TTL_MS,
-    defaultCloverWebhookVerificationCodeTtlMs
-  );
-  let latestCloverWebhookVerificationCode: RecentCloverWebhookVerificationCode | undefined;
-
   const requireOrdersInternalWriteAccess = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!authorizeInternalRequest(request, reply, ordersInternalToken)) {
       return reply;
@@ -2719,83 +1982,13 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   };
 
-  const buildCloverCardEntryConfig = async (locationId?: string) => {
-    const runtimeCredentials =
-      cloverProvider.mode === "live"
-        ? await resolveRuntimeCloverCredentials({
-            logger: app.log,
-            repository,
-            providerConfig: cloverProvider,
-            oauthConfig: cloverOAuthConfig,
-            locationId,
-            allowRefresh: false
-          })
-        : undefined;
-    const resolvedCredentials = isCloverCredentialsUnavailableError(runtimeCredentials) ? undefined : runtimeCredentials;
-    const apiAccessKey = resolvedCredentials?.apiAccessKey;
-    const tokenizeEndpoint = cloverProvider.applePayTokenizeEndpoint;
-    const merchantId = resolvedCredentials?.merchantId;
-
-    return cloverCardEntryConfigResponseSchema.parse({
-      enabled: Boolean(apiAccessKey && tokenizeEndpoint),
-      providerMode: cloverProvider.mode,
-      environment: cloverOAuthConfig.environment,
-      tokenizeEndpoint,
-      apiAccessKey,
-      merchantId
-    });
-  };
-  const readLatestCloverWebhookVerificationCode = () => {
-    if (!latestCloverWebhookVerificationCode) {
-      return undefined;
-    }
-
-    if (Date.parse(latestCloverWebhookVerificationCode.expiresAt) <= Date.now()) {
-      latestCloverWebhookVerificationCode = undefined;
-      return undefined;
-    }
-
-    return latestCloverWebhookVerificationCode;
-  };
-
   app.get("/health", async () => ({ status: "ok", service: "payments" }));
-  app.get("/ready", async (_request, reply) => {
-    const runtimeCredentials =
-      cloverProvider.mode === "live"
-        ? await resolveRuntimeCloverCredentials({
-            logger: app.log,
-            repository,
-            providerConfig: cloverProvider,
-            oauthConfig: cloverOAuthConfig,
-            allowRefresh: false
-          })
-        : undefined;
-    const hasRuntimeCredentials =
-      runtimeCredentials !== undefined && !isCloverCredentialsUnavailableError(runtimeCredentials);
-    const status = {
-      status: hasRuntimeCredentials || cloverProvider.mode === "simulated" ? "ready" : "degraded",
-      service: "payments",
-      persistence: repository.backend,
-      providerMode: cloverProvider.mode,
-      providerConfigured: hasRuntimeCredentials || cloverProvider.mode === "simulated"
-    } as const;
+  app.get("/ready", async () => ({
+    status: "ready",
+    service: "payments",
+    persistence: repository.backend
+  }));
 
-    if (cloverProvider.mode === "live" && !hasRuntimeCredentials) {
-      return reply.status(503).send(status);
-    }
-
-    return status;
-  });
-
-  app.get("/v1/payments/clover/oauth/status", async (request) => {
-    const { locationId } = locationIdQuerySchema.parse(request.query);
-    return buildCloverOauthStatus(locationId);
-  });
-
-  app.get("/v1/payments/clover/card-entry-config", async (request) => {
-    const { locationId } = locationIdQuerySchema.parse(request.query);
-    return buildCloverCardEntryConfig(locationId);
-  });
   app.post("/v1/payments/stripe/mobile-session", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
     if (!authorizeGatewayRequest(request, reply, gatewayInternalToken)) {
       return;
@@ -3386,22 +2579,6 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.get("/v1/payments/clover/webhooks/verification-code", async (request, reply) => {
-    const latestVerificationCode = readLatestCloverWebhookVerificationCode();
-
-    if (!latestVerificationCode) {
-      return reply.status(404).send(
-        serviceErrorSchema.parse({
-          code: "CLOVER_WEBHOOK_VERIFICATION_CODE_NOT_FOUND",
-          message: "No active Clover webhook verification code is available",
-          requestId: request.id
-        })
-      );
-    }
-
-    return cloverWebhookVerificationCodeResponseSchema.parse(latestVerificationCode);
-  });
-
   app.get("/v1/payments/clover/oauth/connect", async (request, reply) => {
     if (!cloverOAuthConfig.configured || !cloverOAuthConfig.appId || !cloverOAuthConfig.redirectUri || !cloverOAuthConfig.stateSigningSecret) {
       return reply.status(503).send(
@@ -3674,121 +2851,6 @@ export async function registerRoutes(app: FastifyInstance) {
     }
   );
 
-  app.post("/v1/payments/charges", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
-    if (!authorizeInternalRequest(request, reply, ordersInternalToken)) {
-      return;
-    }
-
-    const input = chargeRequestSchema.parse(request.body);
-    const existing = await repository.findChargeByIdempotency(input.orderId, input.idempotencyKey);
-
-    if (existing) {
-      if (
-        existing.orderId !== input.orderId ||
-        existing.amountCents !== input.amountCents ||
-        existing.currency !== input.currency
-      ) {
-        return reply.status(409).send(
-          serviceErrorSchema.parse({
-            code: "IDEMPOTENCY_KEY_REUSE",
-            message: "Charge idempotency key was already used for a different payment request",
-            requestId: request.id,
-            details: {
-              orderId: input.orderId,
-              amountCents: input.amountCents,
-              currency: input.currency
-            }
-          })
-        );
-      }
-
-      logPaymentsMutation(request, "charge idempotency replayed", {
-        orderId: existing.orderId,
-        paymentId: existing.paymentId,
-        status: existing.status,
-        provider: existing.provider
-      });
-      return existing;
-    }
-
-    if (cloverProvider.mode === "simulated") {
-      const chargeResponse = createSimulatedChargeResponse(input);
-      const savedCharge = await repository.saveCharge({
-        request: input,
-        response: chargeResponse,
-        providerPaymentId: chargeResponse.paymentId
-      });
-      logPaymentsMutation(request, "charge accepted", {
-        orderId: savedCharge.orderId,
-        paymentId: savedCharge.paymentId,
-        status: savedCharge.status,
-        provider: savedCharge.provider,
-        providerMode: cloverProvider.mode
-      });
-      return savedCharge;
-    }
-
-    try {
-      const result = await executeLiveCharge({
-        config: cloverProvider,
-        request: input,
-        requestId: request.id,
-        logger: request.log,
-        repository,
-        oauthConfig: cloverOAuthConfig,
-        locationId: input.locationId
-      });
-
-      const savedCharge = await repository.saveCharge({
-        request: input,
-        response: result.response,
-        providerPaymentId: result.providerPaymentId
-      });
-      logPaymentsMutation(request, "charge accepted", {
-        orderId: savedCharge.orderId,
-        paymentId: savedCharge.paymentId,
-        status: savedCharge.status,
-        provider: savedCharge.provider,
-        providerMode: cloverProvider.mode
-      });
-      return savedCharge;
-    } catch (error) {
-      const serviceError = readThrownServiceError(error);
-      const message = error instanceof Error ? error.message : "Live Clover charge failed";
-      const misconfigurationMessage =
-        cloverOAuthConfig.misconfigurationReason ??
-        cloverProvider.misconfigurationReason ??
-        "Clover provider is misconfigured";
-      if (serviceError?.code === "CLOVER_CREDENTIALS_UNAVAILABLE") {
-        return reply.status(serviceError.statusCode).send(
-          serviceErrorSchema.parse({
-            code: serviceError.code,
-            message: serviceError.message,
-            requestId: request.id
-          })
-        );
-      }
-      if (message === misconfigurationMessage || message === "Clover provider is misconfigured") {
-        return reply.status(503).send(
-          serviceErrorSchema.parse({
-            code: "PROVIDER_MISCONFIGURED",
-            message: misconfigurationMessage,
-            requestId: request.id
-          })
-        );
-      }
-
-      request.log.error({ error, requestId: request.id, orderId: input.orderId }, "live Clover charge failed");
-      return reply.status(502).send(
-        serviceErrorSchema.parse({
-          code: "CLOVER_CHARGE_ERROR",
-          message,
-          requestId: request.id
-        })
-      );
-    }
-  });
-
   app.post("/v1/payments/refunds", { preHandler: app.rateLimit(paymentsWriteRateLimit) }, async (request, reply) => {
     if (!authorizeInternalRequest(request, reply, ordersInternalToken)) {
       return;
@@ -3829,35 +2891,20 @@ export async function registerRoutes(app: FastifyInstance) {
       return existingRefund;
     }
 
-    const chargeLookup = await repository.findChargeByProviderPaymentId(input.paymentId);
-    if (chargeLookup && chargeLookup.charge.orderId !== input.orderId) {
-      return reply.status(409).send(
-        serviceErrorSchema.parse({
-          code: "PAYMENT_ORDER_MISMATCH",
-          message: "Payment does not belong to this order",
-          requestId: request.id,
-          details: {
-            orderId: input.orderId,
-            paymentId: input.paymentId,
-            chargeOrderId: chargeLookup.charge.orderId
-          }
-        })
-      );
-    }
-
-    if (chargeLookup?.charge.status && chargeLookup.charge.status !== "SUCCEEDED") {
-      return reply.status(409).send(
-        serviceErrorSchema.parse({
-          code: "PAYMENT_NOT_REFUNDABLE",
-          message: `Payment in status ${chargeLookup.charge.status} is not refundable`,
-          requestId: request.id,
-          details: { orderId: input.orderId, paymentId: input.paymentId, status: chargeLookup.charge.status }
-        })
-      );
-    }
-
     if (cloverProvider.mode === "simulated") {
-      const refundResponse = createSimulatedRefundResponse(input);
+      const refundResponse = refundResponseSchema.parse({
+        refundId: randomUUID(),
+        provider: "STRIPE",
+        orderId: input.orderId,
+        paymentId: input.paymentId,
+        status: String(input.reason ?? "").toLowerCase().includes("reject") ? "REJECTED" : "REFUNDED",
+        amountCents: input.amountCents,
+        currency: input.currency,
+        occurredAt: new Date().toISOString(),
+        message: String(input.reason ?? "").toLowerCase().includes("reject")
+          ? "Simulated Stripe refund rejected"
+          : "Simulated Stripe refund succeeded"
+      });
       const savedRefund = await repository.saveRefund({ request: input, response: refundResponse });
       logPaymentsMutation(request, "refund accepted", {
         orderId: savedRefund.orderId,
@@ -4071,222 +3118,6 @@ export async function registerRoutes(app: FastifyInstance) {
       livemode: event.livemode,
       account: stripeAccount
     });
-  });
-
-  app.post("/v1/payments/webhooks/clover", { preHandler: app.rateLimit(paymentsWebhookRateLimit) }, async (request, reply) => {
-    const verificationCode = resolveCloverWebhookVerificationCode(request.body);
-    if (verificationCode) {
-      const receivedAt = new Date().toISOString();
-      latestCloverWebhookVerificationCode = cloverWebhookVerificationCodeResponseSchema.parse({
-        available: true,
-        verificationCode,
-        receivedAt,
-        expiresAt: new Date(Date.now() + cloverWebhookVerificationCodeTtlMs).toISOString()
-      });
-      request.log.info(
-        { requestId: request.id, verificationCode },
-        "accepted Clover webhook verification request; use verificationCode to complete Clover webhook setup"
-      );
-      return {
-        accepted: true,
-        verificationCode
-      };
-    }
-
-    if (!authorizeWebhookRequest(request, reply, cloverWebhookSharedSecret)) {
-      return;
-    }
-
-    const resolved = resolveCloverWebhookPayload(request.body);
-    if (!resolved.paymentReference && !resolved.orderId) {
-      return reply.status(400).send(
-        serviceErrorSchema.parse({
-          code: "INVALID_WEBHOOK_PAYLOAD",
-          message: "Webhook payload must include payment or order reference",
-          requestId: request.id
-        })
-      );
-    }
-
-    const chargeLookupFromPayment = resolved.paymentReference
-      ? await repository.findChargeByProviderPaymentId(resolved.paymentReference)
-      : undefined;
-    const chargeLookupFromOrder =
-      !chargeLookupFromPayment && resolved.orderId
-        ? await repository.findLatestChargeForOrder(resolved.orderId)
-        : undefined;
-    const chargeLookup = chargeLookupFromPayment ?? chargeLookupFromOrder;
-
-    if (!chargeLookup) {
-      return reply.status(404).send(
-        serviceErrorSchema.parse({
-          code: "PAYMENT_NOT_FOUND",
-          message: "Unable to resolve payment from Clover webhook payload",
-          requestId: request.id,
-          details: {
-            paymentReference: resolved.paymentReference,
-            orderId: resolved.orderId
-          }
-        })
-      );
-    }
-
-    const orderId = resolved.orderId ?? chargeLookup.charge.orderId;
-    const paymentId = chargeLookup.charge.paymentId;
-    const webhookEventKey = buildWebhookEventKey({
-      resolved,
-      kind: resolved.kind,
-      orderId,
-      paymentId,
-      status: resolved.statusHint ?? chargeLookup.charge.status
-    });
-    const cachedWebhookResult = await repository.findWebhookResult(webhookEventKey);
-    if (cachedWebhookResult) {
-      return cachedWebhookResult;
-    }
-
-    if (resolved.kind === "CHARGE") {
-      const status = resolveChargeStatus({
-        providerStatus: resolved.statusHint,
-        approved: resolved.approved,
-        httpStatus: 200
-      });
-      const reconciledCharge =
-        (await repository.updateChargeStatus({
-          paymentId,
-          status,
-          message: resolved.message,
-          declineCode: resolved.declineCode,
-          occurredAt: resolved.occurredAt
-        })) ?? chargeLookup.charge;
-
-      const payload = ordersPaymentReconciliationSchema.parse({
-        eventId: resolved.eventId,
-        provider: "CLOVER",
-        kind: "CHARGE",
-        orderId,
-        paymentId,
-        status: reconciledCharge.status,
-        occurredAt: reconciledCharge.occurredAt,
-        message: reconciledCharge.message,
-        declineCode: reconciledCharge.declineCode,
-        amountCents: resolved.amountCents ?? reconciledCharge.amountCents,
-        currency: resolved.currency ?? reconciledCharge.currency
-      });
-      const dispatchResult = await dispatchOrderReconciliation({
-        ordersBaseUrl,
-        internalToken: ordersInternalToken,
-        requestId: request.id,
-        payload
-      });
-
-      if (!dispatchResult.ok) {
-        request.log.error(
-          { requestId: request.id, orderId, paymentId, webhookEventId: resolved.eventId, dispatchResult },
-          "failed to dispatch charge reconciliation to orders service"
-        );
-        return reply.status(502).send(
-          serviceErrorSchema.parse({
-            code: "ORDERS_RECONCILIATION_FAILED",
-            message: "Orders reconciliation call failed",
-            requestId: request.id,
-            details: {
-              upstreamStatus: dispatchResult.status,
-              upstreamBody: dispatchResult.body
-            }
-          })
-        );
-      }
-
-      const response: PaymentWebhookDispatchResult = {
-        accepted: true,
-        kind: "CHARGE",
-        orderId,
-        paymentId,
-        status: reconciledCharge.status,
-        orderApplied: dispatchResult.response.applied
-      };
-      await repository.saveWebhookResult(webhookEventKey, response);
-      logPaymentsMutation(request, "charge webhook reconciled", {
-        orderId,
-        paymentId,
-        webhookEventId: resolved.eventId,
-        status: response.status,
-        orderApplied: response.orderApplied
-      });
-      return response;
-    }
-
-    const refundStatus = resolveRefundStatus({
-      providerStatus: resolved.statusHint,
-      httpStatus: 200
-    });
-    const latestRefund = await repository.findLatestRefundForOrderAndPayment(orderId, paymentId);
-    const reconciledRefund =
-      latestRefund && refundStatus
-        ? await repository.updateRefundStatus({
-            refundId: latestRefund.refundId,
-            status: refundStatus,
-            message: resolved.message,
-            occurredAt: resolved.occurredAt
-          })
-        : undefined;
-
-    const payload = ordersPaymentReconciliationSchema.parse({
-      eventId: resolved.eventId,
-      provider: "CLOVER",
-      kind: "REFUND",
-      orderId,
-      paymentId,
-      refundId: reconciledRefund?.refundId ?? latestRefund?.refundId,
-      status: refundStatus,
-      occurredAt: resolved.occurredAt,
-      message: resolved.message ?? reconciledRefund?.message ?? latestRefund?.message,
-      amountCents:
-        resolved.amountCents ?? reconciledRefund?.amountCents ?? latestRefund?.amountCents ?? chargeLookup.charge.amountCents,
-      currency: resolved.currency ?? reconciledRefund?.currency ?? latestRefund?.currency ?? chargeLookup.charge.currency
-    });
-    const dispatchResult = await dispatchOrderReconciliation({
-      ordersBaseUrl,
-      internalToken: ordersInternalToken,
-      requestId: request.id,
-      payload
-    });
-    if (!dispatchResult.ok) {
-      request.log.error(
-        { requestId: request.id, orderId, paymentId, webhookEventId: resolved.eventId, dispatchResult },
-        "failed to dispatch refund reconciliation to orders service"
-      );
-      return reply.status(502).send(
-        serviceErrorSchema.parse({
-          code: "ORDERS_RECONCILIATION_FAILED",
-          message: "Orders reconciliation call failed",
-          requestId: request.id,
-          details: {
-            upstreamStatus: dispatchResult.status,
-            upstreamBody: dispatchResult.body
-          }
-        })
-        );
-      }
-
-    const response: PaymentWebhookDispatchResult = {
-      accepted: true,
-      kind: "REFUND",
-      orderId,
-      paymentId,
-      status: refundStatus,
-      orderApplied: dispatchResult.response.applied
-    };
-    await repository.saveWebhookResult(webhookEventKey, response);
-    logPaymentsMutation(request, "refund webhook reconciled", {
-      orderId,
-      paymentId,
-      webhookEventId: resolved.eventId,
-      status: response.status,
-      orderApplied: response.orderApplied
-    });
-    return response;
   });
 
   app.post("/v1/payments/internal/ping", async (request) => {

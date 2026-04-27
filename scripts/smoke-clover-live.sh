@@ -34,4 +34,5 @@ print_response "health" "${HEALTH_URL}"
 print_response "ready" "${READY_URL}"
 
 echo "[smoke-clover-live] readiness is only a preflight"
-echo "[smoke-clover-live] use scripts/test-clover-live-charge.sh for a manual sandbox charge attempt"
+echo "[smoke-clover-live] Clover is now an optional POS bridge only"
+echo "[smoke-clover-live] use /v1/payments/clover/oauth/connect to verify the OAuth bridge when needed"

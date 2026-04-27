@@ -138,9 +138,10 @@ describe("sdk-mobile", () => {
               card: true,
               cash: false,
               refunds: true,
-              clover: {
+              stripe: {
                 enabled: true,
-                merchantRef: "flagship-01"
+                onboarded: true,
+                dashboardEnabled: true
               }
             },
             fulfillment: {
@@ -169,7 +170,7 @@ describe("sdk-mobile", () => {
     expect(appConfig.fulfillment.mode).toBe("time_based");
   });
 
-  it("supports quote, create, and pay order flow", async () => {
+  it("supports quote, create, and Stripe payment session flow", async () => {
     fetchMock
       .mockResolvedValueOnce(
         new Response(
@@ -204,16 +205,17 @@ describe("sdk-mobile", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            id: "123e4567-e89b-12d3-a456-426614174012",
-            locationId: "flagship-01",
-            status: "PAID",
-            items: [{ itemId: "latte", quantity: 1, unitPriceCents: 675 }],
-            total: { currency: "USD", amountCents: 716 },
-            pickupCode: "A1B2C3",
-            timeline: [
-              { status: "PENDING_PAYMENT", occurredAt: "2026-03-10T00:00:00.000Z" },
-              { status: "PAID", occurredAt: "2026-03-10T00:01:00.000Z" }
-            ]
+            orderId: "123e4567-e89b-12d3-a456-426614174012",
+            paymentIntentId: "pi_3QxExample123",
+            paymentIntentClientSecret: "pi_3QxExample123_secret_abc",
+            publishableKey: "pk_test_payments",
+            stripeAccountId: "acct_123456789",
+            merchantDisplayName: "Northside Coffee",
+            merchantCountryCode: "US",
+            amountCents: 716,
+            currency: "USD",
+            applePayEnabled: true,
+            cardEnabled: true
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
@@ -227,14 +229,11 @@ describe("sdk-mobile", () => {
       pointsToRedeem: 0
     });
     const order = await client.createOrder({ quoteId: quote.quoteId, quoteHash: quote.quoteHash });
-    const paidOrder = await client.payOrder(order.id, {
-      applePayToken: "apple-pay-token",
-      idempotencyKey: "checkout-idempotency-key"
-    });
+    const paymentSession = await client.createStripeMobilePaymentSession({ orderId: order.id });
 
     expect(quote.quoteHash).toBe("quote-hash");
     expect(order.status).toBe("PENDING_PAYMENT");
-    expect(paidOrder.status).toBe("PAID");
+    expect(paymentSession.paymentIntentId).toBe("pi_3QxExample123");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -297,98 +296,6 @@ describe("sdk-mobile", () => {
         method: "DELETE"
       })
     );
-  });
-
-  it("supports structured Apple Pay wallet payload for payOrder", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          id: "123e4567-e89b-12d3-a456-426614174112",
-          locationId: "flagship-01",
-          status: "PAID",
-          items: [{ itemId: "latte", quantity: 1, unitPriceCents: 675 }],
-          total: { currency: "USD", amountCents: 716 },
-          pickupCode: "A1B2C3",
-          timeline: [
-            { status: "PENDING_PAYMENT", occurredAt: "2026-03-10T00:00:00.000Z" },
-            { status: "PAID", occurredAt: "2026-03-10T00:01:00.000Z" }
-          ]
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      )
-    );
-
-    const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
-    const orderId = "123e4567-e89b-12d3-a456-426614174112";
-    const paidOrder = await client.payOrder(orderId, {
-      applePayWallet: {
-        version: "EC_v1",
-        data: "wallet-success-token",
-        signature: "signature-value",
-        header: {
-          ephemeralPublicKey: "ephemeral-key",
-          publicKeyHash: "public-key-hash",
-          transactionId: "transaction-id"
-        }
-      },
-      idempotencyKey: "checkout-wallet-idempotency-key"
-    });
-
-    expect(paidOrder.status).toBe("PAID");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const request = fetchMock.mock.calls[0];
-    expect(request).toBeDefined();
-    if (request) {
-      const body = JSON.parse(String(request[1]?.body ?? "{}")) as Record<string, unknown>;
-      expect(body).toMatchObject({
-        idempotencyKey: "checkout-wallet-idempotency-key",
-        applePayWallet: {
-          version: "EC_v1"
-        }
-      });
-      expect(body.applePayToken).toBeUndefined();
-    }
-  });
-
-  it("supports direct Clover source tokens for payOrder", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          id: "123e4567-e89b-12d3-a456-426614174113",
-          locationId: "flagship-01",
-          status: "PAID",
-          items: [{ itemId: "latte", quantity: 1, unitPriceCents: 675 }],
-          total: { currency: "USD", amountCents: 716 },
-          pickupCode: "A1B2C3",
-          timeline: [
-            { status: "PENDING_PAYMENT", occurredAt: "2026-03-10T00:00:00.000Z" },
-            { status: "PAID", occurredAt: "2026-03-10T00:01:00.000Z" }
-          ]
-        }),
-        { status: 200, headers: { "content-type": "application/json" } }
-      )
-    );
-
-    const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
-    const orderId = "123e4567-e89b-12d3-a456-426614174113";
-    const paidOrder = await client.payOrder(orderId, {
-      paymentSourceToken: "clv_1TSTxxxxxxxxxxxxxxxxxFQif",
-      idempotencyKey: "checkout-card-idempotency-key"
-    });
-
-    expect(paidOrder.status).toBe("PAID");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const request = fetchMock.mock.calls[0];
-    expect(request).toBeDefined();
-    if (request) {
-      const body = JSON.parse(String(request[1]?.body ?? "{}")) as Record<string, unknown>;
-      expect(body).toMatchObject({
-        idempotencyKey: "checkout-card-idempotency-key",
-        paymentSourceToken: "clv_1TSTxxxxxxxxxxxxxxxxxFQif"
-      });
-      expect(body.applePayToken).toBeUndefined();
-      expect(body.applePayWallet).toBeUndefined();
-    }
   });
 
   it("retries concurrent unauthorized requests behind a single refresh", async () => {
