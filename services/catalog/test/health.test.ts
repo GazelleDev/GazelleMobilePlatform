@@ -656,10 +656,6 @@ describe("catalog service", () => {
           enabled: true,
           onboarded: true,
           dashboardEnabled: true
-        },
-        clover: {
-          enabled: true,
-          merchantRef: DEFAULT_LOCATION_ID
         }
       }
     });
