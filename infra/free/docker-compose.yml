@@ -201,6 +201,25 @@ services:
     depends_on:
       - catalog
 
+  worker-payment-reconciler:
+    image: ${IMAGE_REGISTRY_PREFIX:-ghcr.io/anxiousdaoud/lattelink-platform}/workers/payment-reconciler:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DEPLOY_ENV=${DEPLOY_ENV:-unknown}
+      - DATABASE_URL=${DATABASE_URL}
+      - EXPECTED_SUPABASE_PROJECT_REF=${EXPECTED_SUPABASE_PROJECT_REF:-}
+      - ORDERS_SERVICE_BASE_URL=http://orders:3001
+      - ORDERS_INTERNAL_API_TOKEN=${ORDERS_INTERNAL_API_TOKEN:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - PAYMENT_RECONCILER_ENABLED=${PAYMENT_RECONCILER_ENABLED:-true}
+      - PAYMENT_RECONCILER_INTERVAL_MS=${PAYMENT_RECONCILER_INTERVAL_MS:-300000}
+      - PAYMENT_RECONCILER_STALE_THRESHOLD_MS=${PAYMENT_RECONCILER_STALE_THRESHOLD_MS:-600000}
+      - PAYMENT_RECONCILER_BATCH_SIZE=${PAYMENT_RECONCILER_BATCH_SIZE:-50}
+    depends_on:
+      - orders
+      - payments
+
   postgres:
     image: postgres:16-alpine
     container_name: lattelink-postgres

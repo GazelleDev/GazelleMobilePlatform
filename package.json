@@ -21,6 +21,7 @@
     "dev:mobile:lan": "./scripts/dev-mobile-lan.sh",
     "dev:worker:menu-sync": "pnpm --filter @lattelink/menu-sync-worker dev",
     "dev:worker:notifications-dispatch": "pnpm --filter @lattelink/notifications-dispatch-worker dev",
+    "dev:worker:payment-reconciler": "pnpm --filter @lattelink/payment-reconciler-worker dev",
     "provision:client-owner": "pnpm --filter @lattelink/identity provision:owner",
     "contracts:openapi": "turbo run openapi --filter=@lattelink/gateway --filter=@lattelink/contracts-*",
     "contracts:drift": "./scripts/verify-contract-drift.sh",

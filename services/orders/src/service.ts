@@ -174,7 +174,7 @@ export type OrderServiceDeps = {
   logger: FastifyBaseLogger;
 };
 
-export type CancelOrderSource = "customer" | "staff";
+export type CancelOrderSource = "customer" | "staff" | "system";
 export type OrderStatusUpdateInput = {
   status: "IN_PREP" | "READY" | "COMPLETED";
   note?: string;
@@ -1165,7 +1165,7 @@ export async function cancelOrder(params: {
     };
   }
 
-  const cancelActorLabel = cancelSource === "staff" ? "staff" : "customer";
+  const cancelActorLabel = cancelSource === "staff" ? "staff" : cancelSource === "system" ? "system" : "customer";
   let refundNote = "";
 
   if (existingOrder.status !== "PENDING_PAYMENT") {
@@ -1292,7 +1292,7 @@ export async function cancelOrder(params: {
     repository: deps.repository
   });
   if (isServiceError(notificationUserId)) {
-    if (cancelSource === "staff" && notificationUserId.code === "ORDER_USER_CONTEXT_MISSING") {
+    if ((cancelSource === "staff" || cancelSource === "system") && notificationUserId.code === "ORDER_USER_CONTEXT_MISSING") {
       deps.logger.warn(
         {
           orderId,

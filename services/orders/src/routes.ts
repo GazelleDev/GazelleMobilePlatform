@@ -602,6 +602,41 @@ export async function registerRoutes(app: FastifyInstance) {
   );
 
   app.post(
+    "/v1/orders/internal/:orderId/cancel",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeInternalRequest(request, reply, internalApiToken)) {
+        return;
+      }
+
+      const { orderId } = orderIdParamsSchema.parse(request.params);
+      const input = cancelOrderRequestSchema.parse(request.body);
+      const result = await cancelOrder({
+        orderId,
+        input,
+        cancelSource: "system",
+        requestId: request.id,
+        deps: getServiceDeps(request)
+      });
+
+      if ("error" in result) {
+        return sendServiceError(reply, request, result.error);
+      }
+
+      logOrderMutation(request, "order canceled by internal system", {
+        orderId: result.order.id,
+        locationId: result.order.locationId,
+        status: result.order.status,
+        cancelSource: "system",
+        reason: input.reason
+      });
+      return result.order;
+    }
+  );
+
+  app.post(
     "/v1/orders/:orderId/status",
     {
       preHandler: app.rateLimit(ordersWriteRateLimit)

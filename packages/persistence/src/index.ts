@@ -56,6 +56,18 @@ export interface PaymentsStripeWebhookEventTable {
   updated_at: Generated<string>;
 }
 
+export interface PaymentsStripePaymentIntentTable {
+  payment_intent_id: string;
+  order_id: string;
+  location_id: string;
+  stripe_account_id: string;
+  amount_cents: number;
+  currency: "USD";
+  status: string;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface PaymentsCloverConnectionTable {
   merchant_id: string;
   location_id: string | null;
@@ -346,6 +358,7 @@ export interface PersistenceDatabase {
   payments_refunds: PaymentsRefundTable;
   payments_webhook_deduplication: PaymentsWebhookDeduplicationTable;
   payments_stripe_webhook_events: PaymentsStripeWebhookEventTable;
+  payments_stripe_payment_intents: PaymentsStripePaymentIntentTable;
   payments_clover_connections: PaymentsCloverConnectionTable;
   loyalty_balances: LoyaltyBalanceTable;
   loyalty_ledger_entries: LoyaltyLedgerEntryTable;

@@ -56,6 +56,8 @@ jobs:
             service_package: "@lattelink/menu-sync-worker"
           - service_name: workers/notifications-dispatch
             service_package: "@lattelink/notifications-dispatch-worker"
+          - service_name: workers/payment-reconciler
+            service_package: "@lattelink/payment-reconciler-worker"
     steps:
       - uses: actions/checkout@v4
 

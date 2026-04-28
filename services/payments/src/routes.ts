@@ -183,6 +183,18 @@ type PersistedStripeWebhookEventRow = {
   updated_at: string;
 };
 
+type PersistedStripePaymentIntentRow = {
+  payment_intent_id: string;
+  order_id: string;
+  location_id: string;
+  stripe_account_id: string;
+  amount_cents: number;
+  currency: "USD";
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type PersistedCloverConnectionRow = {
   merchant_id: string;
   access_token: string;
@@ -231,6 +243,15 @@ export type PaymentsRepository = {
     livemode: boolean;
     payload: unknown;
   }): Promise<PersistedStripeWebhookEventRow>;
+  saveStripePaymentIntent(input: {
+    paymentIntentId: string;
+    orderId: string;
+    locationId: string;
+    stripeAccountId: string;
+    amountCents: number;
+    currency: "USD";
+    status: string;
+  }): Promise<PersistedStripePaymentIntentRow>;
   close(): Promise<void>;
 };
 
@@ -282,6 +303,7 @@ function createInMemoryRepository(): PaymentsRepository {
   const latestRefundIdByOrderPayment = new Map<string, string>();
   const webhookResultsByEventKey = new Map<string, PaymentWebhookDispatchResult>();
   const stripeWebhookEventsById = new Map<string, PersistedStripeWebhookEventRow>();
+  const stripePaymentIntentsById = new Map<string, PersistedStripePaymentIntentRow>();
   const cloverConnectionsByMerchantId = new Map<string, CloverConnection>();
   let latestCloverMerchantId: string | undefined;
 
@@ -366,6 +388,23 @@ function createInMemoryRepository(): PaymentsRepository {
         updated_at: now
       };
       stripeWebhookEventsById.set(input.eventId, next);
+      return next;
+    },
+    async saveStripePaymentIntent(input) {
+      const now = new Date().toISOString();
+      const existing = stripePaymentIntentsById.get(input.paymentIntentId);
+      const next: PersistedStripePaymentIntentRow = {
+        payment_intent_id: input.paymentIntentId,
+        order_id: input.orderId,
+        location_id: input.locationId,
+        stripe_account_id: input.stripeAccountId,
+        amount_cents: input.amountCents,
+        currency: input.currency,
+        status: input.status,
+        created_at: existing?.created_at ?? now,
+        updated_at: now
+      };
+      stripePaymentIntentsById.set(input.paymentIntentId, next);
       return next;
     },
     async close() {
@@ -587,6 +626,37 @@ async function createPostgresRepository(connectionString: string): Promise<Payme
         .selectAll()
         .where("event_id", "=", input.eventId)
         .executeTakeFirstOrThrow()) as PersistedStripeWebhookEventRow;
+    },
+    async saveStripePaymentIntent(input) {
+      await db
+        .insertInto("payments_stripe_payment_intents")
+        .values({
+          payment_intent_id: input.paymentIntentId,
+          order_id: input.orderId,
+          location_id: input.locationId,
+          stripe_account_id: input.stripeAccountId,
+          amount_cents: input.amountCents,
+          currency: input.currency,
+          status: input.status
+        })
+        .onConflict((oc) =>
+          oc.column("payment_intent_id").doUpdateSet({
+            order_id: input.orderId,
+            location_id: input.locationId,
+            stripe_account_id: input.stripeAccountId,
+            amount_cents: input.amountCents,
+            currency: input.currency,
+            status: input.status,
+            updated_at: new Date().toISOString()
+          })
+        )
+        .execute();
+
+      return (await db
+        .selectFrom("payments_stripe_payment_intents")
+        .selectAll()
+        .where("payment_intent_id", "=", input.paymentIntentId)
+        .executeTakeFirstOrThrow()) as PersistedStripePaymentIntentRow;
     },
     async close() {
       await db.destroy();
@@ -2077,6 +2147,16 @@ export async function registerRoutes(app: FastifyInstance) {
           idempotencyKey: `stripe-mobile-session:${orderPaymentContext.orderId}`
         }
       );
+
+      await repository.saveStripePaymentIntent({
+        paymentIntentId: paymentIntent.id,
+        orderId: orderPaymentContext.orderId,
+        locationId: orderPaymentContext.locationId,
+        stripeAccountId: paymentProfile.stripeAccountId,
+        amountCents: paymentIntent.amount,
+        currency: orderPaymentContext.total.currency,
+        status: paymentIntent.status
+      });
 
       if (!paymentIntent.client_secret) {
         request.log.error(
