@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install database tooling
         run: |
@@ -76,7 +76,7 @@ jobs:
 
       - name: Upload non-sensitive drill evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: database-restore-drill-${{ inputs.source_environment }}-${{ github.run_id }}
           path: |

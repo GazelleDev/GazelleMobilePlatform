@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.preflight.outputs.deploy_sha }}
           fetch-depth: 0
