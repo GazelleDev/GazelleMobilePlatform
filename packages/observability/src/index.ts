@@ -130,3 +130,46 @@ export function registerSentryErrorHook(app: FastifyInstance, service: string) {
     });
   });
 }
+
+export function captureOperationalError(input: {
+  service: string;
+  event: string;
+  error: unknown;
+  level?: "fatal" | "error" | "warning" | "info" | "debug";
+  requestId?: string;
+  tags?: Record<string, string | number | boolean | undefined>;
+  context?: Record<string, unknown>;
+  fingerprint?: string[];
+}) {
+  if (!sentryInitialized) {
+    return undefined;
+  }
+
+  const error = input.error instanceof Error ? input.error : new Error(String(input.error));
+
+  return Sentry.withScope((scope) => {
+    scope.setLevel(input.level ?? "error");
+    scope.setTag("service", input.service);
+    scope.setTag("event", input.event);
+
+    if (input.requestId) {
+      scope.setTag("requestId", input.requestId);
+    }
+
+    for (const [key, value] of Object.entries(input.tags ?? {})) {
+      if (value !== undefined) {
+        scope.setTag(key, value);
+      }
+    }
+
+    if (input.context) {
+      scope.setContext(input.event, input.context);
+    }
+
+    if (input.fingerprint) {
+      scope.setFingerprint(input.fingerprint);
+    }
+
+    return Sentry.captureException(error);
+  });
+}

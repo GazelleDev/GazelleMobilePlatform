@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createEventBusPublisher } from "@lattelink/event-bus";
+import { captureOperationalError } from "@lattelink/observability";
 import {
   createOrderRequestSchema,
   orderPaymentContextSchema,
@@ -388,6 +389,25 @@ export async function registerRoutes(app: FastifyInstance) {
       });
 
       if ("error" in result) {
+        captureOperationalError({
+          service: "orders",
+          event: "payment.reconciliation.rejected",
+          error: new Error(result.error.message),
+          requestId: request.id,
+          tags: {
+            provider: input.provider,
+            kind: input.kind,
+            paymentStatus: input.status,
+            orderId: input.orderId,
+            paymentId: input.paymentId,
+            code: result.error.code
+          },
+          context: {
+            input,
+            error: result.error
+          },
+          fingerprint: ["orders", "payment-reconciliation-rejected", result.error.code]
+        });
         return sendServiceError(reply, request, result.error);
       }
 

@@ -10,6 +10,7 @@ import {
   getPersistenceReadinessMetadata,
   runMigrations
 } from "@lattelink/persistence";
+import { captureOperationalError } from "@lattelink/observability";
 import {
   clientPaymentProfileSchema,
   internalLocationPaymentProfileUpdateSchema,
@@ -1533,6 +1534,7 @@ async function dispatchOrderReconciliation(params: {
   ok: false;
   status?: number;
   body?: unknown;
+  error?: string;
 }> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -1549,8 +1551,11 @@ async function dispatchOrderReconciliation(params: {
       headers,
       body: JSON.stringify(params.payload)
     });
-  } catch {
-    return { ok: false };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "orders reconciliation request failed"
+    };
   }
 
   const body = parseJsonSafely(await upstream.text());
@@ -2159,6 +2164,25 @@ export async function registerRoutes(app: FastifyInstance) {
       });
 
       if (!paymentIntent.client_secret) {
+        captureOperationalError({
+          service: "payments",
+          event: "stripe.payment_intent.invalid",
+          error: new Error("Stripe PaymentIntent was missing client_secret"),
+          requestId: request.id,
+          tags: {
+            provider: "stripe",
+            orderId: orderPaymentContext.orderId,
+            locationId: orderPaymentContext.locationId,
+            paymentIntentId: paymentIntent.id
+          },
+          context: {
+            orderId: orderPaymentContext.orderId,
+            locationId: orderPaymentContext.locationId,
+            paymentIntentId: paymentIntent.id,
+            stripeAccountId: paymentProfile.stripeAccountId
+          },
+          fingerprint: ["payments", "stripe-payment-intent-invalid"]
+        });
         request.log.error(
           {
             requestId: request.id,
@@ -2191,6 +2215,23 @@ export async function registerRoutes(app: FastifyInstance) {
         cardEnabled: paymentProfile.cardEnabled
       });
     } catch (error) {
+      captureOperationalError({
+        service: "payments",
+        event: "stripe.mobile_session.create_failed",
+        error,
+        requestId: request.id,
+        tags: {
+          provider: "stripe",
+          orderId: orderPaymentContext.orderId,
+          locationId: orderPaymentContext.locationId
+        },
+        context: {
+          orderId: orderPaymentContext.orderId,
+          locationId: orderPaymentContext.locationId,
+          stripeAccountId: paymentProfile.stripeAccountId
+        },
+        fingerprint: ["payments", "stripe-mobile-session-create-failed"]
+      });
       request.log.error(
         {
           error,
@@ -2299,6 +2340,23 @@ export async function registerRoutes(app: FastifyInstance) {
         }
       );
     } catch (error) {
+      captureOperationalError({
+        service: "payments",
+        event: "stripe.payment_intent.lookup_failed",
+        error,
+        requestId: request.id,
+        tags: {
+          provider: "stripe",
+          orderId: input.orderId,
+          paymentIntentId: input.paymentIntentId
+        },
+        context: {
+          orderId: input.orderId,
+          paymentIntentId: input.paymentIntentId,
+          stripeAccountId: paymentProfile.stripeAccountId
+        },
+        fingerprint: ["payments", "stripe-payment-intent-lookup-failed"]
+      });
       request.log.error(
         {
           error,
@@ -2320,6 +2378,24 @@ export async function registerRoutes(app: FastifyInstance) {
 
     const metadataOrderId = resolveStripeMetadataOrderId(paymentIntent.metadata);
     if (metadataOrderId !== input.orderId) {
+      captureOperationalError({
+        service: "payments",
+        event: "stripe.payment_intent.order_mismatch",
+        error: new Error("Stripe payment intent order metadata mismatch"),
+        requestId: request.id,
+        tags: {
+          provider: "stripe",
+          orderId: input.orderId,
+          paymentIntentId: paymentIntent.id
+        },
+        context: {
+          expectedOrderId: input.orderId,
+          metadataOrderId,
+          paymentIntentId: paymentIntent.id,
+          stripeAccountId: paymentProfile.stripeAccountId
+        },
+        fingerprint: ["payments", "stripe-payment-intent-order-mismatch"]
+      });
       return reply.status(409).send(
         serviceErrorSchema.parse({
           code: "STRIPE_PAYMENT_INTENT_ORDER_MISMATCH",
@@ -2336,6 +2412,26 @@ export async function registerRoutes(app: FastifyInstance) {
     const normalizedCurrency = normalizeStripeCurrency(paymentIntent.currency);
     const verifiedAmountCents = paymentIntent.amount_received > 0 ? paymentIntent.amount_received : paymentIntent.amount;
     if (normalizedCurrency !== orderPaymentContext.total.currency || verifiedAmountCents !== orderPaymentContext.total.amountCents) {
+      captureOperationalError({
+        service: "payments",
+        event: "stripe.payment_intent.amount_mismatch",
+        error: new Error("Stripe payment intent amount or currency mismatch"),
+        requestId: request.id,
+        tags: {
+          provider: "stripe",
+          orderId: input.orderId,
+          paymentIntentId: paymentIntent.id
+        },
+        context: {
+          orderId: input.orderId,
+          paymentIntentId: paymentIntent.id,
+          expectedAmountCents: orderPaymentContext.total.amountCents,
+          actualAmountCents: verifiedAmountCents,
+          expectedCurrency: orderPaymentContext.total.currency,
+          actualCurrency: normalizedCurrency
+        },
+        fingerprint: ["payments", "stripe-payment-intent-amount-mismatch"]
+      });
       return reply.status(409).send(
         serviceErrorSchema.parse({
           code: "STRIPE_PAYMENT_INTENT_AMOUNT_MISMATCH",
@@ -2380,6 +2476,24 @@ export async function registerRoutes(app: FastifyInstance) {
     });
 
     if (!dispatchResult.ok) {
+      captureOperationalError({
+        service: "payments",
+        event: "orders.reconciliation.dispatch_failed",
+        error: new Error(dispatchResult.error ?? "Orders reconciliation call failed"),
+        requestId: request.id,
+        tags: {
+          provider: "stripe",
+          source: "mobile-finalize",
+          orderId: input.orderId,
+          paymentIntentId: input.paymentIntentId
+        },
+        context: {
+          orderId: input.orderId,
+          paymentIntentId: input.paymentIntentId,
+          dispatchResult
+        },
+        fingerprint: ["payments", "orders-reconciliation-dispatch-failed"]
+      });
       request.log.error(
         {
           requestId: request.id,
@@ -3121,6 +3235,25 @@ export async function registerRoutes(app: FastifyInstance) {
         payload: reconciliationPayload
       });
       if (!dispatchResult.ok) {
+        captureOperationalError({
+          service: "payments",
+          event: "orders.reconciliation.dispatch_failed",
+          error: new Error(dispatchResult.error ?? "Orders reconciliation call failed"),
+          requestId: request.id,
+          tags: {
+            provider: "stripe",
+            source: "stripe-webhook",
+            eventId: event.id,
+            eventType: event.type
+          },
+          context: {
+            eventId: event.id,
+            eventType: event.type,
+            stripeAccount,
+            dispatchResult
+          },
+          fingerprint: ["payments", "orders-reconciliation-dispatch-failed"]
+        });
         request.log.error(
           {
             requestId: request.id,

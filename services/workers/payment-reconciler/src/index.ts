@@ -1,4 +1,8 @@
 import {
+  captureOperationalError,
+  initializeSentry
+} from "@lattelink/observability";
+import {
   buildPaymentReconcilerConfig,
   createPaymentReconcilerRuntime,
   startPaymentReconcilerWorker,
@@ -7,6 +11,8 @@ import {
 
 let runtime: PaymentReconcilerRuntime | undefined;
 let workerHandle: { stop: () => void } | undefined;
+
+initializeSentry({ service: "payment-reconciler" });
 
 async function shutdown(signal: NodeJS.Signals) {
   console.info(`[payment-reconciler] received ${signal}; stopping worker loop`);
@@ -30,6 +36,12 @@ try {
     void shutdown("SIGTERM");
   });
 } catch (error) {
+  captureOperationalError({
+    service: "payment-reconciler",
+    event: "worker.fatal",
+    error,
+    fingerprint: ["payment-reconciler", "fatal"]
+  });
   console.error("[payment-reconciler] fatal", error);
   process.exit(1);
 }

@@ -11,6 +11,7 @@ import {
   ordersPaymentReconciliationResultSchema,
   ordersPaymentReconciliationSchema
 } from "@lattelink/contracts-orders";
+import { captureOperationalError } from "@lattelink/observability";
 import { z } from "zod";
 
 type Logger = Pick<Console, "info" | "warn" | "error">;
@@ -454,6 +455,28 @@ export async function processStalePaymentsBatch(
       }, "[payment-reconciler] skipped unsupported Stripe payment intent status");
     } catch (error) {
       result.failed += 1;
+      captureOperationalError({
+        service: "payment-reconciler",
+        event: "stale_payment.candidate_failed",
+        error,
+        tags: {
+          orderId: candidate.orderId,
+          locationId: candidate.locationId,
+          paymentIntentId: candidate.paymentIntentId
+        },
+        context: {
+          candidate: {
+            orderId: candidate.orderId,
+            locationId: candidate.locationId,
+            paymentIntentId: candidate.paymentIntentId,
+            stripeAccountId: candidate.stripeAccountId,
+            amountCents: candidate.amountCents,
+            currency: candidate.currency,
+            createdAt: candidate.createdAt
+          }
+        },
+        fingerprint: ["payment-reconciler", "stale-payment-candidate-failed"]
+      });
       runtime.logger.error({
         error,
         orderId: candidate.orderId,
@@ -520,6 +543,17 @@ export function startPaymentReconcilerWorker(
       try {
         await processStalePaymentsBatch(config, runtime);
       } catch (error) {
+        captureOperationalError({
+          service: "payment-reconciler",
+          event: "stale_payment.cycle_failed",
+          error,
+          context: {
+            intervalMs: config.intervalMs,
+            staleThresholdMs: config.staleThresholdMs,
+            batchSize: config.batchSize
+          },
+          fingerprint: ["payment-reconciler", "cycle-failed"]
+        });
         runtime.logger.error("[payment-reconciler] cycle failed", error);
       }
     }

@@ -1083,6 +1083,9 @@ importers:
       '@lattelink/contracts-orders':
         specifier: workspace:*
         version: link:../../../packages/contracts/orders
+      '@lattelink/observability':
+        specifier: workspace:*
+        version: link:../../../packages/observability
       '@lattelink/persistence':
         specifier: workspace:*
         version: link:../../../packages/persistence
