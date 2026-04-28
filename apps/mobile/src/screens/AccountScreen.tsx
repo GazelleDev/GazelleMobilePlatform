@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as Sentry from "@sentry/react-native";
 import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useQuery } from "@tanstack/react-query";
@@ -8,7 +9,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getLoyaltyQueryErrorMessage, useLoyaltyBalanceQuery, useLoyaltyLedgerQuery } from "../account/data";
 import { AccountFloatingHeader, ACCOUNT_HEADER_HEIGHT } from "../account/AccountFloatingHeader";
-import { apiClient } from "../api/client";
+import { MOBILE_API_ENVIRONMENT, apiClient } from "../api/client";
 import { customerProfileQueryKey } from "../auth/profile";
 import { getAccountRecoveryCopy } from "../auth/recovery";
 import { useAuthSession } from "../auth/session";
@@ -100,6 +101,7 @@ export function AccountScreen() {
   const loyaltyBalanceQuery = useLoyaltyBalanceQuery(isAuthenticated && loyaltyEnabled);
   const loyaltyLedgerQuery = useLoyaltyLedgerQuery(isAuthenticated && loyaltyEnabled);
   const [isManualRefresh, setIsManualRefresh] = useState(false);
+  const [sentryDiagnosticState, setSentryDiagnosticState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
 
   const loyaltyBalance = loyaltyBalanceQuery.data;
   const loyaltyError = loyaltyBalanceQuery.error ?? loyaltyLedgerQuery.error;
@@ -137,6 +139,27 @@ export function AccountScreen() {
     }
 
     router.push(pathname);
+  }
+
+  function sendSentryDiagnosticEvent() {
+    if (sentryDiagnosticState === "sending") return;
+
+    setSentryDiagnosticState("sending");
+    Sentry.withScope((scope) => {
+      scope.setTag("diagnostic", "mobile-sentry-validation");
+      scope.setTag("app_variant", MOBILE_API_ENVIRONMENT.variant ?? "unknown");
+      scope.setContext("mobile_environment", {
+        apiBaseUrl: MOBILE_API_ENVIRONMENT.apiBaseUrl,
+        bundleIdentifier: MOBILE_API_ENVIRONMENT.bundleIdentifier,
+        locationId: MOBILE_API_ENVIRONMENT.locationId
+      });
+      Sentry.captureException(new Error("LatteLink mobile Sentry diagnostic event"));
+    });
+
+    void Sentry.flush().then(
+      () => setSentryDiagnosticState("sent"),
+      () => setSentryDiagnosticState("failed")
+    );
   }
 
   if (!isAuthenticated) {
@@ -206,6 +229,26 @@ export function AccountScreen() {
             <AccountPageRow label="Profile" onPress={() => openAccountRoute("/account/alerts")} />
             <AccountPageRow label="Settings" isLast onPress={() => openAccountRoute("/account/settings")} />
           </View>
+          {MOBILE_API_ENVIRONMENT.variant === "beta" ? (
+            <Pressable
+              onPress={sendSentryDiagnosticEvent}
+              disabled={sentryDiagnosticState === "sending"}
+              style={({ pressed }) => [
+                styles.diagnosticButton,
+                pressed && sentryDiagnosticState !== "sending" ? styles.diagnosticButtonPressed : null
+              ]}
+            >
+              <Text style={styles.diagnosticLabel}>
+                {sentryDiagnosticState === "sending"
+                  ? "Sending Sentry diagnostic…"
+                  : sentryDiagnosticState === "sent"
+                    ? "Sentry diagnostic sent"
+                    : sentryDiagnosticState === "failed"
+                      ? "Sentry diagnostic failed"
+                      : "Send Sentry diagnostic"}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       </ScreenScroll>
 
@@ -398,6 +441,25 @@ const styles = StyleSheet.create({
     borderTopColor: uiPalette.border,
     borderBottomWidth: 1,
     borderBottomColor: uiPalette.border
+  },
+  diagnosticButton: {
+    alignSelf: "flex-start",
+    marginTop: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    paddingHorizontal: 14,
+    paddingVertical: 10
+  },
+  diagnosticButtonPressed: {
+    opacity: 0.72
+  },
+  diagnosticLabel: {
+    color: uiPalette.textSecondary,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.7,
+    textTransform: "uppercase"
   },
   pageRow: {
     minHeight: 68
