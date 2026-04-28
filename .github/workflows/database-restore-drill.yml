@@ -55,9 +55,7 @@ jobs:
           sudo apt-get install -y postgresql-client
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: 2.95.4
+        run: npm install --global supabase@2.95.4
 
       - name: Verify required secrets
         run: |
