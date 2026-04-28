@@ -19,6 +19,19 @@ function getStorage() {
   return window.localStorage;
 }
 
+function resolveConfiguredApiBaseUrl() {
+  return normalizeApiBaseUrl(resolveDefaultApiBaseUrl());
+}
+
+function storageApiBaseUrlMatchesBuild(apiBaseUrl: string) {
+  const configuredApiBaseUrl = resolveConfiguredApiBaseUrl();
+  if (!configuredApiBaseUrl) {
+    return true;
+  }
+
+  return normalizeApiBaseUrl(apiBaseUrl) === configuredApiBaseUrl;
+}
+
 export function loadStoredSession(): OperatorSession | null {
   const storage = getStorage();
   if (!storage) {
@@ -32,6 +45,12 @@ export function loadStoredSession(): OperatorSession | null {
 
   try {
     const parsed = storedSessionSchema.parse(JSON.parse(rawSession));
+    if (!storageApiBaseUrlMatchesBuild(parsed.apiBaseUrl)) {
+      storage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
+      storage.removeItem(API_BASE_URL_STORAGE_KEY);
+      return null;
+    }
+
     return {
       ...parsed,
       apiBaseUrl: normalizeApiBaseUrl(parsed.apiBaseUrl)
@@ -69,11 +88,18 @@ export function clearStoredSession() {
 
 export function loadStoredApiBaseUrl() {
   const storage = getStorage();
+  const configuredApiBaseUrl = resolveConfiguredApiBaseUrl();
   if (!storage) {
-    return resolveDefaultApiBaseUrl();
+    return configuredApiBaseUrl;
   }
 
-  return normalizeApiBaseUrl(storage.getItem(API_BASE_URL_STORAGE_KEY) ?? resolveDefaultApiBaseUrl());
+  const storedApiBaseUrl = normalizeApiBaseUrl(storage.getItem(API_BASE_URL_STORAGE_KEY) ?? "");
+  if (!storedApiBaseUrl || !storageApiBaseUrlMatchesBuild(storedApiBaseUrl)) {
+    storage.removeItem(API_BASE_URL_STORAGE_KEY);
+    return configuredApiBaseUrl;
+  }
+
+  return storedApiBaseUrl;
 }
 
 export function persistApiBaseUrl(apiBaseUrl: string) {
