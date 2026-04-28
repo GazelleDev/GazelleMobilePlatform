@@ -46,6 +46,7 @@ These should be configured as GitHub Environment vars unless they are sensitive:
 - `ALLOW_DEV_CUSTOMER_LOGIN`
 - `PAYMENTS_PROVIDER_MODE`
 - `CLOVER_OAUTH_ENVIRONMENT`
+- `APPLE_SIGN_IN_ENABLED`
 - `GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS`
 - `WEBAPP_MENU_SOURCE_URL`
 - `MENU_SYNC_LOCATION_ID`
@@ -65,6 +66,7 @@ Recommended values:
   - `CLIENT_DASHBOARD_DOMAIN=app-dev.nomly.us`
   - `COMPOSE_PROJECT_NAME=lattelink-dev`
   - `DEPLOY_ENABLED=false` until the dev droplet is provisioned and reachable
+  - `APPLE_SIGN_IN_ENABLED=false`
   - `PAYMENTS_PROVIDER_MODE=simulated`
   - `ALLOW_DEV_CUSTOMER_LOGIN=true`
 
@@ -73,6 +75,7 @@ Recommended values:
   - `CLIENT_DASHBOARD_DOMAIN=app.nomly.us`
   - `COMPOSE_PROJECT_NAME=lattelink-prod`
   - `DEPLOY_ENABLED=false` until the production droplet is provisioned and reachable
+  - `APPLE_SIGN_IN_ENABLED=false` until you intentionally configure Apple auth for production
   - `PAYMENTS_PROVIDER_MODE=live`
   - `ALLOW_DEV_CUSTOMER_LOGIN=false`
 

@@ -40,6 +40,7 @@ jobs:
           APPLE_PRIVATE_KEY: ${{ secrets.APPLE_PRIVATE_KEY }}
           APPLE_CLIENT_ID: ${{ secrets.APPLE_CLIENT_ID || vars.APPLE_CLIENT_ID }}
           APPLE_ALLOWED_CLIENT_IDS: ${{ secrets.APPLE_ALLOWED_CLIENT_IDS || vars.APPLE_ALLOWED_CLIENT_IDS }}
+          APPLE_SIGN_IN_ENABLED: ${{ vars.APPLE_SIGN_IN_ENABLED }}
           LETSENCRYPT_EMAIL: ${{ secrets.LETSENCRYPT_EMAIL }}
           API_DOMAIN: ${{ vars.API_DOMAIN }}
           IMAGE_REGISTRY_PREFIX: ${{ vars.IMAGE_REGISTRY_PREFIX }}
@@ -81,15 +82,7 @@ jobs:
             missing=1
           fi
 
-          apple_auth_fields_set=0
-          for candidate in APPLE_TEAM_ID APPLE_KEY_ID APPLE_PRIVATE_KEY APPLE_CLIENT_ID APPLE_ALLOWED_CLIENT_IDS; do
-            if [ -n "${!candidate:-}" ]; then
-              apple_auth_fields_set=1
-              break
-            fi
-          done
-
-          if [ "${apple_auth_fields_set}" -eq 1 ]; then
+          if [ "${APPLE_SIGN_IN_ENABLED:-false}" = "true" ]; then
             for required in APPLE_TEAM_ID APPLE_KEY_ID APPLE_PRIVATE_KEY; do
               if [ -z "${!required:-}" ]; then
                 echo "missing for Apple Sign In: ${required}"
