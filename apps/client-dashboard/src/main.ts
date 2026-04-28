@@ -1,4 +1,5 @@
 import "./styles.css";
+import "./sentry.js";
 import { state } from "./state.js";
 import { render } from "./render.js";
 import { registerEvents } from "./events.js";

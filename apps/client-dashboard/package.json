@@ -15,11 +15,13 @@
     "@lattelink/contracts-auth": "workspace:*",
     "@lattelink/contracts-catalog": "workspace:*",
     "@lattelink/contracts-orders": "workspace:*",
+    "@sentry/browser": "^10.27.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@lattelink/config-eslint": "workspace:*",
     "@lattelink/config-typescript": "workspace:*",
+    "@sentry/vite-plugin": "^4.6.1",
     "eslint": "^9.21.0",
     "typescript": "^5.8.2",
     "vite": "^7.3.1",
