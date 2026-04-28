@@ -1960,6 +1960,9 @@ export async function registerRoutes(app: FastifyInstance) {
       const search = new URLSearchParams({
         redirectUri: input.redirectUri
       });
+      if (input.locationId) {
+        search.set("locationId", input.locationId);
+      }
 
       return proxyUpstream({
         request,

@@ -219,6 +219,7 @@ export interface OperatorSessionTable {
   access_token: string;
   refresh_token: string;
   operator_user_id: string;
+  active_location_id: string | null;
   access_expires_at: string | null;
   expires_at: string;
   revoked_at: string | null;

@@ -8,7 +8,8 @@ export const appleExchangeRequestSchema = z.object({
 });
 
 export const googleOAuthStartRequestSchema = z.object({
-  redirectUri: z.string().url()
+  redirectUri: z.string().url(),
+  locationId: z.string().trim().min(1).optional()
 });
 
 export const googleOAuthStartResponseSchema = z.object({
@@ -19,7 +20,8 @@ export const googleOAuthStartResponseSchema = z.object({
 export const operatorGoogleExchangeRequestSchema = z.object({
   code: z.string().min(1),
   state: z.string().min(1),
-  redirectUri: z.string().url()
+  redirectUri: z.string().url(),
+  locationId: z.string().trim().min(1).optional()
 });
 
 export const operatorAuthProvidersSchema = z.object({
@@ -280,7 +282,8 @@ export const internalOwnerSummarySchema = z.object({
 
 export const operatorPasswordSignInSchema = z.object({
   email: z.string().trim().email(),
-  password: operatorPasswordSchema
+  password: operatorPasswordSchema,
+  locationId: z.string().trim().min(1).optional()
 });
 
 export const internalAdminPasswordSignInSchema = z.object({

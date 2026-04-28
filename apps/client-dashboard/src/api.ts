@@ -328,14 +328,20 @@ async function uploadMenuItemImageVariants(file: File, variantUploads: MenuImage
   );
 }
 
-export async function signInOperatorWithPassword(params: { apiBaseUrl: string; email: string; password: string }) {
+export async function signInOperatorWithPassword(params: {
+  apiBaseUrl: string;
+  email: string;
+  password: string;
+  locationId?: string;
+}) {
   const session = await requestJson({
     apiBaseUrl: params.apiBaseUrl,
     path: "/operator/auth/sign-in",
     method: "POST",
     body: operatorPasswordSignInSchema.parse({
       email: params.email.trim(),
-      password: params.password
+      password: params.password,
+      locationId: params.locationId
     }),
     schema: operatorSessionSchema
   });
@@ -357,10 +363,13 @@ export async function requestOperatorDevAccess(params: { apiBaseUrl: string; ema
   return toStoredSession(params.apiBaseUrl, session);
 }
 
-export function startOperatorGoogleSignIn(params: { apiBaseUrl: string; redirectUri: string }) {
+export function startOperatorGoogleSignIn(params: { apiBaseUrl: string; redirectUri: string; locationId?: string }) {
   const search = new URLSearchParams({
     redirectUri: params.redirectUri
   });
+  if (params.locationId) {
+    search.set("locationId", params.locationId);
+  }
 
   return requestJson({
     apiBaseUrl: params.apiBaseUrl,
@@ -382,6 +391,7 @@ export async function exchangeOperatorGoogleCode(params: {
   code: string;
   state: string;
   redirectUri: string;
+  locationId?: string;
 }) {
   const session = await requestJson({
     apiBaseUrl: params.apiBaseUrl,
@@ -390,7 +400,8 @@ export async function exchangeOperatorGoogleCode(params: {
     body: operatorGoogleExchangeRequestSchema.parse({
       code: params.code,
       state: params.state,
-      redirectUri: params.redirectUri
+      redirectUri: params.redirectUri,
+      locationId: params.locationId
     }),
     schema: operatorSessionSchema
   });

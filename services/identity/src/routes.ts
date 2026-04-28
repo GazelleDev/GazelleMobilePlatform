@@ -234,10 +234,11 @@ function isAllowedGoogleRedirectUri(config: GoogleOAuthConfig, redirectUri: stri
   return config.allowedRedirectUris.length === 0 || config.allowedRedirectUris.includes(redirectUri);
 }
 
-function buildGoogleOAuthState(input: { redirectUri: string; stateSecret: string }) {
+function buildGoogleOAuthState(input: { redirectUri: string; stateSecret: string; locationId?: string }) {
   const payload = Buffer.from(
     JSON.stringify({
       redirectUri: input.redirectUri,
+      ...(input.locationId ? { locationId: input.locationId } : {}),
       issuedAt: Date.now()
     }),
     "utf8"
@@ -251,7 +252,7 @@ function parseGoogleOAuthState(input: {
   state: string;
   stateSecret: string;
   maxAgeMs: number;
-}): { redirectUri: string } | undefined {
+}): { redirectUri: string; locationId?: string } | undefined {
   const [payload, signature] = input.state.split(".");
   if (!payload || !signature) {
     return undefined;
@@ -266,6 +267,7 @@ function parseGoogleOAuthState(input: {
     const parsed = z
       .object({
         redirectUri: z.string().url(),
+        locationId: z.string().trim().min(1).optional(),
         issuedAt: z.number().int().nonnegative()
       })
       .parse(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")));
@@ -275,7 +277,8 @@ function parseGoogleOAuthState(input: {
     }
 
     return {
-      redirectUri: parsed.redirectUri
+      redirectUri: parsed.redirectUri,
+      locationId: parsed.locationId
     };
   } catch {
     return undefined;
@@ -385,7 +388,7 @@ function buildStoredSession(seed: string, userId: string) {
   };
 }
 
-function buildStoredOperatorSession(seed: string, operatorUserId: string) {
+function buildStoredOperatorSession(seed: string, operatorUserId: string, activeLocationId?: string) {
   const tokenSuffix = `${seed}-${randomUUID()}`;
   const accessExpiresAt = new Date(Date.now() + defaultAccessTokenTtlMs).toISOString();
   const refreshExpiresAt = new Date(Date.now() + defaultRefreshSessionTtlMs).toISOString();
@@ -394,6 +397,7 @@ function buildStoredOperatorSession(seed: string, operatorUserId: string) {
     accessToken: `operator-access-${tokenSuffix}`,
     refreshToken: `operator-refresh-${tokenSuffix}`,
     operatorUserId,
+    activeLocationId,
     expiresAt: accessExpiresAt,
     refreshExpiresAt
   };
@@ -454,20 +458,23 @@ async function issueOperatorSession(params: {
   repository: IdentityRepository;
   seed: string;
   operatorUserId: string;
+  activeLocationId?: string;
   authMethod: "password" | "google" | "refresh";
 }) {
-  const session = buildStoredOperatorSession(params.seed, params.operatorUserId);
+  const session = buildStoredOperatorSession(params.seed, params.operatorUserId, params.activeLocationId);
   await params.repository.saveOperatorSession(session, params.authMethod);
   const operator = await params.repository.getOperatorUserById(params.operatorUserId);
   if (!operator || !operator.active) {
     throw new Error("Operator user is not active");
   }
 
+  const activeOperator = resolveOperatorActiveLocation(operator, params.activeLocationId);
+
   return operatorSessionSchema.parse({
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     expiresAt: session.expiresAt,
-    operator
+    operator: activeOperator
   });
 }
 
@@ -511,6 +518,25 @@ function resolveRequestedOperatorLocationId(
   }
 
   return requestedLocationId;
+}
+
+function resolveOperatorActiveLocation(
+  operator: z.output<typeof operatorMeResponseSchema>,
+  requestedLocationId?: string
+) {
+  if (!requestedLocationId) {
+    return operator;
+  }
+
+  if (!operator.locationIds.includes(requestedLocationId)) {
+    throw new Error("OPERATOR_LOCATION_FORBIDDEN");
+  }
+
+  return {
+    ...operator,
+    locationId: requestedLocationId,
+    locationIds: Array.from(new Set([requestedLocationId, ...operator.locationIds]))
+  };
 }
 
 function authorizeGatewayRequest(
@@ -593,7 +619,11 @@ async function resolveOperatorFromBearer(params: {
     return undefined;
   }
 
-  return operator;
+  try {
+    return resolveOperatorActiveLocation(operator, session.activeLocationId);
+  } catch {
+    return operator;
+  }
 }
 
 async function resolveInternalAdminFromBearer(params: {
@@ -1297,10 +1327,20 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
           .send(buildApiError(request.id, "INVALID_OPERATOR_CREDENTIALS", "Email or password is incorrect"));
       }
 
+      let activeOperator: z.output<typeof operatorMeResponseSchema>;
+      try {
+        activeOperator = resolveOperatorActiveLocation(operator, input.locationId);
+      } catch {
+        return reply
+          .status(403)
+          .send(buildApiError(request.id, "OPERATOR_LOCATION_FORBIDDEN", "Operator does not have access to that location"));
+      }
+
       const session = await issueOperatorSession({
         repository,
         seed: `password:${operator.operatorUserId}:${Date.now()}`,
         operatorUserId: operator.operatorUserId,
+        activeLocationId: activeOperator.locationId,
         authMethod: "password"
       });
       logIdentityMutation(request, "operator session issued", {
@@ -1350,6 +1390,7 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
 
       const state = buildGoogleOAuthState({
         redirectUri: input.redirectUri,
+        locationId: input.locationId,
         stateSecret: config.stateSecret
       });
 
@@ -1393,6 +1434,12 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
         return reply
           .status(401)
           .send(buildApiError(request.id, "INVALID_GOOGLE_STATE", "Google Sign-In state is invalid or expired"));
+      }
+
+      if (input.locationId && parsedState.locationId && input.locationId !== parsedState.locationId) {
+        return reply
+          .status(401)
+          .send(buildApiError(request.id, "INVALID_GOOGLE_STATE", "Google Sign-In state does not match requested location"));
       }
 
       let tokenResponse: Response;
@@ -1471,10 +1518,21 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
           .send(buildApiError(request.id, "OPERATOR_ACCESS_NOT_GRANTED", "No client dashboard access exists for this Google account"));
       }
 
+      const requestedLocationId = input.locationId ?? parsedState.locationId;
+      let activeOperator: z.output<typeof operatorMeResponseSchema>;
+      try {
+        activeOperator = resolveOperatorActiveLocation(operator, requestedLocationId);
+      } catch {
+        return reply
+          .status(403)
+          .send(buildApiError(request.id, "OPERATOR_LOCATION_FORBIDDEN", "Operator does not have access to that location"));
+      }
+
       const session = await issueOperatorSession({
         repository,
         seed: `google:${parsedUserInfo.data.sub}:${Date.now()}`,
         operatorUserId: operator.operatorUserId,
+        activeLocationId: activeOperator.locationId,
         authMethod: "google"
       });
       logIdentityMutation(request, "operator session issued", {
@@ -1551,12 +1609,13 @@ export async function registerRoutes(app: FastifyInstance, options: RegisterRout
           .status(401)
           .send(buildApiError(request.id, "OPERATOR_ACCESS_NOT_GRANTED", "Operator access is not active"));
       }
+      const activeOperator = resolveOperatorActiveLocation(operator, rotatedSession.activeLocationId);
 
       const session = operatorSessionSchema.parse({
         accessToken: rotatedSession.accessToken,
         refreshToken: rotatedSession.refreshToken,
         expiresAt: rotatedSession.expiresAt,
-        operator
+        operator: activeOperator
       });
       logIdentityMutation(request, "operator session rotated", {
         operatorUserId: session.operator.operatorUserId,

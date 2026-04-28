@@ -57,6 +57,13 @@ describe("operator Google SSO", () => {
       allowInMemory: true,
       displayName: "Pilot Owner",
       email: "pilot.owner@example.com",
+      locationId: "rawaqcoffee01",
+      password: "PilotOwner123!"
+    });
+    await provisionOwnerAccess(repository, {
+      allowInMemory: true,
+      displayName: "Pilot Owner",
+      email: "pilot.owner@example.com",
       locationId: "pilot-01",
       password: "PilotOwner123!"
     });
@@ -66,7 +73,7 @@ describe("operator Google SSO", () => {
 
     const startResponse = await app.inject({
       method: "GET",
-      url: "/v1/operator/auth/google/start?redirectUri=http%3A%2F%2Flocalhost%3A5173%2F%3Fgoogle_auth_callback%3D1"
+      url: "/v1/operator/auth/google/start?redirectUri=http%3A%2F%2Flocalhost%3A5173%2F%3Fgoogle_auth_callback%3D1&locationId=pilot-01"
     });
 
     expect(startResponse.statusCode).toBe(200);
@@ -120,8 +127,69 @@ describe("operator Google SSO", () => {
       operator: {
         email: "pilot.owner@example.com",
         role: "owner",
-        locationId: "pilot-01"
+        locationId: "pilot-01",
+        locationIds: expect.arrayContaining(["rawaqcoffee01", "pilot-01"])
       }
+    });
+
+    await app.close();
+  });
+
+  it("rejects Google sign-in when the requested location is not authorized", async () => {
+    const repository = createInMemoryIdentityRepository();
+    await provisionOwnerAccess(repository, {
+      allowInMemory: true,
+      displayName: "Pilot Owner",
+      email: "pilot.owner@example.com",
+      locationId: "pilot-01",
+      password: "PilotOwner123!"
+    });
+    const app = await buildApp({ repository });
+
+    const startResponse = await app.inject({
+      method: "GET",
+      url: "/v1/operator/auth/google/start?redirectUri=http%3A%2F%2Flocalhost%3A5173%2F%3Fgoogle_auth_callback%3D1&locationId=forbidden-01"
+    });
+    const state = new URL(startResponse.json().authorizeUrl as string).searchParams.get("state");
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.url;
+      const method = init?.method ?? "GET";
+
+      if (url === "https://oauth2.googleapis.com/token" && method === "POST") {
+        return new Response(JSON.stringify({ access_token: "google-access-token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (url === "https://openidconnect.googleapis.com/v1/userinfo" && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            sub: "google-user-unauthorized-location",
+            email: "pilot.owner@example.com",
+            email_verified: true
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const exchangeResponse = await app.inject({
+      method: "POST",
+      url: "/v1/operator/auth/google/exchange",
+      payload: {
+        code: "google-auth-code",
+        state,
+        redirectUri: "http://localhost:5173/?google_auth_callback=1"
+      }
+    });
+
+    expect(exchangeResponse.statusCode).toBe(403);
+    expect(exchangeResponse.json()).toMatchObject({
+      code: "OPERATOR_LOCATION_FORBIDDEN"
     });
 
     await app.close();

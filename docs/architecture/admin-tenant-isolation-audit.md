@@ -45,4 +45,4 @@ Gateway tests cover:
 
 ## Follow-Up
 
-`#207` will tighten active workspace selection during sign-in. Until then, multi-location operators may select an accessible location with `?locationId=...`; that selection is only honored after the identity-provided access set authorizes it.
+`#207` persists an active operator session location during password and Google sign-in. Multi-location operators may still select another accessible location with `?locationId=...`; that selection is only honored after the identity-provided access set authorizes it.

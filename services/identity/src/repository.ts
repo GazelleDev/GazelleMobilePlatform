@@ -54,6 +54,7 @@ type StoredOperatorSession = {
   accessToken: string;
   refreshToken: string;
   operatorUserId: string;
+  activeLocationId?: string;
   expiresAt: string;
   refreshExpiresAt: string;
 };
@@ -109,6 +110,7 @@ type PersistedOperatorSessionRow = {
   access_token: string;
   refresh_token: string;
   operator_user_id: string;
+  active_location_id: string | null;
   access_expires_at: string | Date | null;
   expires_at: string | Date;
   revoked_at: string | Date | null;
@@ -239,7 +241,7 @@ export type IdentityRepository = {
   saveOperatorSession(session: StoredOperatorSession, authMethod: "password" | "google" | "refresh"): Promise<void>;
   rotateOperatorRefreshSession(
     refreshToken: string,
-    createNextSession: (operatorUserId: string) => StoredOperatorSession,
+    createNextSession: (operatorUserId: string, activeLocationId?: string) => StoredOperatorSession,
     authMethod: "refresh"
   ): Promise<StoredOperatorSession | undefined>;
   getOperatorSessionByAccessToken(accessToken: string): Promise<StoredOperatorSession | undefined>;
@@ -487,6 +489,7 @@ function toStoredOperatorSession(row: PersistedOperatorSessionRow): StoredOperat
     accessToken: row.access_token,
     refreshToken: row.refresh_token,
     operatorUserId: row.operator_user_id,
+    activeLocationId: row.active_location_id ?? undefined,
     expiresAt: parseIsoDate(row.access_expires_at ?? row.expires_at),
     refreshExpiresAt: parseIsoDate(row.expires_at)
   };
@@ -1019,7 +1022,7 @@ export function createInMemoryIdentityRepository(): IdentityRepository {
       });
       operatorAccessTokenByRefreshToken.delete(refreshToken);
 
-      const nextSession = createNextSession(entry.session.operatorUserId);
+      const nextSession = createNextSession(entry.session.operatorUserId, entry.session.activeLocationId);
       operatorSessionsByAccessToken.set(nextSession.accessToken, { session: nextSession });
       operatorAccessTokenByRefreshToken.set(nextSession.refreshToken, nextSession.accessToken);
       return nextSession;
@@ -2186,6 +2189,7 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
             access_token: session.accessToken,
             refresh_token: session.refreshToken,
             operator_user_id: session.operatorUserId,
+            active_location_id: session.activeLocationId ?? null,
             access_expires_at: session.expiresAt,
             expires_at: session.refreshExpiresAt,
             revoked_at: null,
@@ -2199,6 +2203,7 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
           .set({
             refresh_token: session.refreshToken,
             operator_user_id: session.operatorUserId,
+            active_location_id: session.activeLocationId ?? null,
             access_expires_at: session.expiresAt,
             expires_at: session.refreshExpiresAt,
             revoked_at: null,
@@ -2237,13 +2242,14 @@ async function createPostgresRepository(connectionString: string): Promise<Ident
           .where("access_token", "=", persisted.access_token)
           .execute();
 
-        const nextSession = createNextSession(persisted.operator_user_id);
+        const nextSession = createNextSession(persisted.operator_user_id, persisted.active_location_id ?? undefined);
         await trx
           .insertInto("operator_sessions")
           .values({
             access_token: nextSession.accessToken,
             refresh_token: nextSession.refreshToken,
             operator_user_id: nextSession.operatorUserId,
+            active_location_id: nextSession.activeLocationId ?? null,
             access_expires_at: nextSession.expiresAt,
             expires_at: nextSession.refreshExpiresAt,
             revoked_at: null,
