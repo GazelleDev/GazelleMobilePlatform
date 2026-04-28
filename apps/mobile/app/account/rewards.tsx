@@ -2,7 +2,12 @@ import { useRouter } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthSession } from "../../src/auth/session";
-import { useLoyaltyBalanceQuery, useLoyaltyLedgerQuery, type LoyaltyLedgerEntry } from "../../src/account/data";
+import {
+  getLoyaltyQueryErrorMessage,
+  useLoyaltyBalanceQuery,
+  useLoyaltyLedgerQuery,
+  type LoyaltyLedgerEntry
+} from "../../src/account/data";
 import { AccountFloatingHeader, ACCOUNT_HEADER_HEIGHT } from "../../src/account/AccountFloatingHeader";
 import { isMobileLoyaltyVisible, resolveAppConfigData, useAppConfigQuery } from "../../src/menu/catalog";
 import { Button, Card, Chip, GlassCard, ScreenScroll, SectionLabel, uiPalette, uiTypography } from "../../src/ui/system";
@@ -73,6 +78,7 @@ export default function RewardsPage() {
   const headerOffset = insets.top + ACCOUNT_HEADER_HEIGHT;
   const loyaltyBalance = loyaltyBalanceQuery.data;
   const loyaltyLedger = loyaltyLedgerQuery.data ?? [];
+  const loyaltyError = loyaltyBalanceQuery.error ?? loyaltyLedgerQuery.error;
 
   function goBack() {
     if (router.canGoBack()) {
@@ -110,13 +116,31 @@ export default function RewardsPage() {
       <ScreenScroll bottomInset={48} contentContainerStyle={[styles.screenContentNoTopPadding, { paddingTop: headerOffset }]}>
         <GlassCard style={styles.heroCard}>
           <SectionLabel label="Balance" />
-          <Text style={styles.heroTitle}>{loyaltyEnabled ? (loyaltyBalance ? `${loyaltyBalance.availablePoints} pts` : "Loading") : "Off"}</Text>
-          <Text style={styles.heroBody}>{loyaltyEnabled ? "Available points ready for future visits." : "Loyalty is disabled for this client."}</Text>
+          <Text style={styles.heroTitle}>
+            {loyaltyEnabled ? (loyaltyBalance ? `${loyaltyBalance.availablePoints} pts` : loyaltyError ? "Unavailable" : "Loading") : "Off"}
+          </Text>
+          <Text style={styles.heroBody}>
+            {loyaltyEnabled
+              ? loyaltyError
+                ? getLoyaltyQueryErrorMessage(loyaltyError)
+                : "Available points ready for future visits."
+              : "Loyalty is disabled for this client."}
+          </Text>
           {loyaltyEnabled ? (
             <View style={styles.balanceMetaWrap}>
               <Text style={styles.balanceMeta}>{`Pending ${loyaltyBalance ? loyaltyBalance.pendingPoints : "--"} pts`}</Text>
               <Text style={styles.balanceMeta}>{`Lifetime ${loyaltyBalance ? loyaltyBalance.lifetimeEarned : "--"} pts`}</Text>
             </View>
+          ) : null}
+          {loyaltyEnabled && loyaltyError ? (
+            <Button
+              label="Retry rewards"
+              variant="secondary"
+              onPress={() => {
+                void Promise.allSettled([loyaltyBalanceQuery.refetch(), loyaltyLedgerQuery.refetch()]);
+              }}
+              style={styles.heroAction}
+            />
           ) : null}
         </GlassCard>
 

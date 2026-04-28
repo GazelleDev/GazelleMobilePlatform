@@ -108,6 +108,9 @@ const catalogApiBaseUrlEnvironmentError = resolveApiEnvironmentError(
   normalizeApiBaseUrl(process.env.EXPO_PUBLIC_CATALOG_API_BASE_URL),
   "EXPO_PUBLIC_CATALOG_API_BASE_URL"
 );
+const configuredLocationId = process.env.EXPO_PUBLIC_LOCATION_ID?.trim() ?? "";
+const locationConfigurationError =
+  configuredLocationId.length > 0 ? null : "EXPO_PUBLIC_LOCATION_ID is not configured.";
 
 function toReachabilityError(error: unknown) {
   if (isBackendReachabilityError(error)) {
@@ -140,9 +143,12 @@ export const MOBILE_API_ENVIRONMENT = {
   bundleIdentifier: readBundleIdentifier(),
   apiBaseUrl: API_BASE_URL,
   catalogApiBaseUrl: CATALOG_API_BASE_URL,
-  locationId: process.env.EXPO_PUBLIC_LOCATION_ID?.trim() ?? "",
+  locationId: configuredLocationId,
   apiConfigurationError:
-    apiBaseUrlEnvironmentError ?? catalogServiceBaseUrlEnvironmentError ?? catalogApiBaseUrlEnvironmentError
+    apiBaseUrlEnvironmentError ??
+    catalogServiceBaseUrlEnvironmentError ??
+    catalogApiBaseUrlEnvironmentError ??
+    locationConfigurationError
 };
 
 export const MOBILE_LOCATION_ID = MOBILE_API_ENVIRONMENT.locationId;
@@ -306,7 +312,8 @@ function startOrdersPolling(params: {
 }
 
 const baseApiClient = new GazelleApiClient({
-  baseUrl: API_BASE_URL
+  baseUrl: API_BASE_URL,
+  locationId: MOBILE_LOCATION_ID
 });
 let currentAccessToken: string | undefined;
 const originalSetAccessToken = baseApiClient.setAccessToken.bind(baseApiClient);
@@ -389,5 +396,6 @@ export const apiClient = Object.assign(baseApiClient, {
 }) as MobileApiClient;
 
 export const catalogApiClient = new GazelleApiClient({
-  baseUrl: CATALOG_API_BASE_URL
+  baseUrl: CATALOG_API_BASE_URL,
+  locationId: MOBILE_LOCATION_ID
 });

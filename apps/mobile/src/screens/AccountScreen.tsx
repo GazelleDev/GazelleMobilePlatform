@@ -6,7 +6,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLoyaltyBalanceQuery, useLoyaltyLedgerQuery } from "../account/data";
+import { getLoyaltyQueryErrorMessage, useLoyaltyBalanceQuery, useLoyaltyLedgerQuery } from "../account/data";
 import { AccountFloatingHeader, ACCOUNT_HEADER_HEIGHT } from "../account/AccountFloatingHeader";
 import { apiClient } from "../api/client";
 import { customerProfileQueryKey } from "../auth/profile";
@@ -102,6 +102,7 @@ export function AccountScreen() {
   const [isManualRefresh, setIsManualRefresh] = useState(false);
 
   const loyaltyBalance = loyaltyBalanceQuery.data;
+  const loyaltyError = loyaltyBalanceQuery.error ?? loyaltyLedgerQuery.error;
   const identity = identityQuery.data;
   const accountGreeting =
     identity?.name?.trim() ||
@@ -177,10 +178,25 @@ export function AccountScreen() {
 
           <View style={styles.pointsWrap}>
             <Text style={styles.pointsLabel}>Available points</Text>
-            <Text style={styles.pointsValue}>{loyaltyEnabled ? (loyaltyBalance ? `${loyaltyBalance.availablePoints}` : "…") : "Off"}</Text>
+            <Text style={styles.pointsValue}>
+              {loyaltyEnabled ? (loyaltyBalance ? `${loyaltyBalance.availablePoints}` : loyaltyError ? "--" : "…") : "Off"}
+            </Text>
             <View style={styles.pointsMetaRow}>
               <Text style={styles.pointsMeta}>{loyaltyEnabled ? `Lifetime ${loyaltyBalance ? loyaltyBalance.lifetimeEarned : "--"} pts` : "Loyalty unavailable"}</Text>
             </View>
+            {loyaltyEnabled && loyaltyError ? (
+              <View style={styles.pointsErrorWrap}>
+                <Text style={styles.pointsError}>{getLoyaltyQueryErrorMessage(loyaltyError)}</Text>
+                <Pressable
+                  onPress={() => {
+                    void Promise.allSettled([loyaltyBalanceQuery.refetch(), loyaltyLedgerQuery.refetch()]);
+                  }}
+                  style={({ pressed }) => [styles.pointsRetry, pressed ? styles.pointsRetryPressed : null]}
+                >
+                  <Text style={styles.pointsRetryLabel}>Retry rewards</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         </GlassCard>
 
@@ -347,6 +363,31 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: uiPalette.textSecondary
+  },
+  pointsErrorWrap: {
+    marginTop: 14,
+    gap: 10
+  },
+  pointsError: {
+    color: uiPalette.warning,
+    fontSize: 13,
+    lineHeight: 19
+  },
+  pointsRetry: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    paddingHorizontal: 14,
+    paddingVertical: 9
+  },
+  pointsRetryPressed: {
+    opacity: 0.72
+  },
+  pointsRetryLabel: {
+    color: uiPalette.text,
+    fontSize: 13,
+    fontWeight: "700"
   },
   listSection: {
     marginTop: 28

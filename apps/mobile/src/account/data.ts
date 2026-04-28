@@ -186,6 +186,22 @@ export function useLoyaltyLedgerQuery(enabled = true) {
   });
 }
 
+export function getLoyaltyQueryErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.includes("EXPO_PUBLIC_LOCATION_ID")) {
+    return "This app build is missing its store location. Install the latest beta build or ask support to fix the beta environment.";
+  }
+
+  if (error instanceof Error && error.message.startsWith("Request failed (401)")) {
+    return "Your session expired. Sign in again to reload rewards.";
+  }
+
+  if (error instanceof Error && error.message.startsWith("Request failed")) {
+    return "Rewards could not be loaded from the backend.";
+  }
+
+  return "Rewards could not be loaded.";
+}
+
 export function usePushTokenRegistrationMutation() {
   return useMutation({
     mutationFn: async (input: z.input<typeof pushTokenUpsertSchema>) => {

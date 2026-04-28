@@ -5,6 +5,7 @@ type RuntimeConfig = {
   bundleIdentifier?: string;
   apiBaseUrl?: string;
   catalogApiBaseUrl?: string;
+  locationId?: string;
   nodeEnv?: string;
 };
 
@@ -25,6 +26,9 @@ async function loadApiClientEnvironment(config: RuntimeConfig) {
   if (config.catalogApiBaseUrl) {
     vi.stubEnv("EXPO_PUBLIC_CATALOG_SERVICE_BASE_URL", config.catalogApiBaseUrl);
   }
+  if (config.locationId) {
+    vi.stubEnv("EXPO_PUBLIC_LOCATION_ID", config.locationId);
+  }
 
   return import("../src/api/client");
 }
@@ -39,10 +43,12 @@ describe("mobile API environment guard", () => {
     const { API_BASE_URL, MOBILE_API_ENVIRONMENT } = await loadApiClientEnvironment({
       appVariant: "beta",
       bundleIdentifier: "com.lattelink.rawaq.beta",
-      apiBaseUrl: "https://api-dev.nomly.us/v1"
+      apiBaseUrl: "https://api-dev.nomly.us/v1",
+      locationId: "rawaqcoffee01"
     });
 
     expect(API_BASE_URL).toBe("https://api-dev.nomly.us/v1");
+    expect(MOBILE_API_ENVIRONMENT.locationId).toBe("rawaqcoffee01");
     expect(MOBILE_API_ENVIRONMENT.apiConfigurationError).toBeNull();
   });
 
@@ -50,7 +56,8 @@ describe("mobile API environment guard", () => {
     const { API_BASE_URL, MOBILE_API_ENVIRONMENT } = await loadApiClientEnvironment({
       appVariant: "beta",
       bundleIdentifier: "com.lattelink.rawaq.beta",
-      apiBaseUrl: "https://api.nomly.us/v1"
+      apiBaseUrl: "https://api.nomly.us/v1",
+      locationId: "rawaqcoffee01"
     });
 
     expect(API_BASE_URL).toBe("");
@@ -61,7 +68,8 @@ describe("mobile API environment guard", () => {
     const { API_BASE_URL, MOBILE_API_ENVIRONMENT } = await loadApiClientEnvironment({
       appVariant: "production",
       bundleIdentifier: "com.lattelink.rawaq",
-      apiBaseUrl: "https://api-dev.nomly.us/v1"
+      apiBaseUrl: "https://api-dev.nomly.us/v1",
+      locationId: "rawaqcoffee01"
     });
 
     expect(API_BASE_URL).toBe("");
@@ -71,7 +79,8 @@ describe("mobile API environment guard", () => {
   it("reports a missing API base URL as a startup configuration error", async () => {
     const { API_BASE_URL, MOBILE_API_ENVIRONMENT } = await loadApiClientEnvironment({
       appVariant: "beta",
-      bundleIdentifier: "com.lattelink.rawaq.beta"
+      bundleIdentifier: "com.lattelink.rawaq.beta",
+      locationId: "rawaqcoffee01"
     });
 
     expect(API_BASE_URL).toBe("");
@@ -83,10 +92,22 @@ describe("mobile API environment guard", () => {
       nodeEnv: "development",
       appVariant: "beta",
       bundleIdentifier: "com.lattelink.rawaq.beta",
-      apiBaseUrl: "http://127.0.0.1:8080/v1"
+      apiBaseUrl: "http://127.0.0.1:8080/v1",
+      locationId: "rawaqcoffee01"
     });
 
     expect(API_BASE_URL).toBe("http://127.0.0.1:8080/v1");
     expect(MOBILE_API_ENVIRONMENT.apiConfigurationError).toBeNull();
+  });
+
+  it("reports a missing location id as a startup configuration error", async () => {
+    const { MOBILE_API_ENVIRONMENT } = await loadApiClientEnvironment({
+      appVariant: "beta",
+      bundleIdentifier: "com.lattelink.rawaq.beta",
+      apiBaseUrl: "https://api-dev.nomly.us/v1"
+    });
+
+    expect(MOBILE_API_ENVIRONMENT.locationId).toBe("");
+    expect(MOBILE_API_ENVIRONMENT.apiConfigurationError).toContain("EXPO_PUBLIC_LOCATION_ID is not configured.");
   });
 });

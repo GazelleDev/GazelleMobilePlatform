@@ -100,10 +100,11 @@ eas build --platform ios --profile beta
 eas build --platform ios --profile production
 ```
 
-For OTA updates, use the matching channel and environment:
+For OTA updates, use the matching channel and EAS environment. The beta channel uses EAS's default `preview`
+environment because custom EAS environments require a paid Expo plan; production uses EAS `production`.
 
 ```bash
-eas update --channel beta --environment beta --message "<release note>"
+eas update --channel beta --environment preview --message "<release note>"
 eas update --channel production --environment production --message "<release note>"
 ```
 
