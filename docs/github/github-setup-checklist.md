@@ -68,6 +68,11 @@ Each environment should define its own vars and secrets. See [two-environment-de
 - [ ] `PAYMENTS_PROVIDER_MODE`
 - [ ] `CLOVER_OAUTH_ENVIRONMENT`
 - [ ] `GOOGLE_OAUTH_ALLOWED_REDIRECT_URIS`
+- [ ] `CATALOG_MEDIA_R2_ACCOUNT_ID`
+- [ ] `CATALOG_MEDIA_R2_BUCKET`
+- [ ] `CATALOG_MEDIA_PUBLIC_BASE_URL`
+- [ ] `CATALOG_MEDIA_UPLOAD_MAX_BYTES`
+- [ ] `CATALOG_MEDIA_UPLOAD_EXPIRY_SECONDS`
 
 ## Core Secrets
 
@@ -101,6 +106,8 @@ Each environment should define its own vars and secrets. See [two-environment-de
 - [ ] `STRIPE_CONNECT_WEBHOOK_SECRET`
 - [ ] `CATALOG_MEDIA_R2_ACCESS_KEY_ID`
 - [ ] `CATALOG_MEDIA_R2_SECRET_ACCESS_KEY`
+
+Validate R2 bucket CORS and public asset URLs with [menu-image-upload-r2.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/menu-image-upload-r2.md) before enabling merchant uploads.
 
 ## Frontend Deploy State
 

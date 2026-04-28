@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { extname } from "node:path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { AdminMenuItemImageUploadResponse } from "@lattelink/contracts-catalog";
@@ -54,12 +53,7 @@ function sanitizePathSegment(value: string, fallback: string) {
   return normalized.length > 0 ? normalized : fallback;
 }
 
-function normalizeExtension(fileName: string, contentType: string) {
-  const fromName = extname(fileName).replace(/^\./, "").trim().toLowerCase();
-  if (fromName) {
-    return fromName;
-  }
-
+function normalizeExtension(contentType: string) {
   switch (contentType) {
     case "image/jpeg":
       return "jpg";
@@ -72,7 +66,7 @@ function normalizeExtension(fileName: string, contentType: string) {
     case "image/heif":
       return "heif";
     default:
-      return "bin";
+      return "img";
   }
 }
 
@@ -84,7 +78,7 @@ function buildObjectKey(params: {
   contentType: string;
 }) {
   const stem = sanitizeFileStem(params.fileName);
-  const extension = normalizeExtension(params.fileName, params.contentType);
+  const extension = normalizeExtension(params.contentType);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const brandId = sanitizePathSegment(params.brandId, "brand");
   const locationId = sanitizePathSegment(params.locationId, "location");

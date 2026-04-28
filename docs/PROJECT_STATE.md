@@ -610,9 +610,11 @@ GitHub Actions in `.github/workflows`:
 ### Media Storage
 
 Code state:
-- No Cloudflare R2 implementation was found.
-- No S3-compatible media upload pipeline was found.
-- Menu and card payloads reference image URLs, but no storage service or upload surface exists in this monorepo.
+- Cloudflare R2 presigned upload support exists in `services/catalog/src/media-storage.ts`.
+- Catalog exposes `POST /v1/catalog/admin/menu/:itemId/image-upload`.
+- Gateway exposes `POST /v1/admin/menu/:itemId/image-upload`.
+- The client dashboard uploads originals and generated mobile variants directly to R2, then saves the returned `assetUrl` to the menu item.
+- R2 deployment validation is documented in `docs/runbooks/menu-image-upload-r2.md`.
 
 ### Database
 
@@ -738,8 +740,6 @@ Active-tenant conclusion:
 Items explicitly visible from code:
 - Mobile customer auth still does not expose passkey registration or sign-in.
 - Operator Apple SSO UI is present but disabled with `Coming soon`.
-- Mobile order streaming still carries a TODO to replace the current fallback-heavy authenticated SSE path.
-- No Cloudflare R2 or other media upload/storage implementation exists.
 - Landing-page components `About`, `Features`, `Pricing`, `Analytics`, `LeadCapture`, and `StructuredData` exist but are not mounted on the live home page.
 - `packages/persistence/src/index.ts` still contains deprecated table-bootstrap code alongside migrations.
 - Admin owner-page copy references future reset flows that are not implemented.

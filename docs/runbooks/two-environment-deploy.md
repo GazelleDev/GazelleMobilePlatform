@@ -118,6 +118,8 @@ Optional secrets depending on enabled features:
 - `CATALOG_MEDIA_R2_ACCESS_KEY_ID`
 - `CATALOG_MEDIA_R2_SECRET_ACCESS_KEY`
 
+Menu-image uploads require a real Cloudflare R2 bucket in each environment. See [menu-image-upload-r2.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/menu-image-upload-r2.md) for bucket CORS, public URL, and end-to-end validation.
+
 ## App environment mapping
 
 Mobile:

@@ -21,6 +21,19 @@ describe("catalog service", () => {
   const previousGatewayToken = process.env.GATEWAY_INTERNAL_API_TOKEN;
   const previousFulfillmentMode = process.env.ORDER_FULFILLMENT_MODE;
   const previousCatalogDefaultLocationId = process.env.CATALOG_DEFAULT_LOCATION_ID;
+  const mediaEnvNames = [
+    "CATALOG_MEDIA_R2_ACCOUNT_ID",
+    "CATALOG_MEDIA_R2_ACCESS_KEY_ID",
+    "CATALOG_MEDIA_R2_SECRET_ACCESS_KEY",
+    "CATALOG_MEDIA_R2_BUCKET",
+    "CATALOG_MEDIA_PUBLIC_BASE_URL",
+    "CATALOG_MEDIA_UPLOAD_MAX_BYTES",
+    "CATALOG_MEDIA_UPLOAD_EXPIRY_SECONDS"
+  ] as const;
+  const previousMediaEnv = Object.fromEntries(mediaEnvNames.map((name) => [name, process.env[name]])) as Record<
+    (typeof mediaEnvNames)[number],
+    string | undefined
+  >;
 
   afterEach(() => {
     if (previousGatewayToken === undefined) {
@@ -39,6 +52,15 @@ describe("catalog service", () => {
       delete process.env.CATALOG_DEFAULT_LOCATION_ID;
     } else {
       process.env.CATALOG_DEFAULT_LOCATION_ID = previousCatalogDefaultLocationId;
+    }
+
+    for (const name of mediaEnvNames) {
+      const previousValue = previousMediaEnv[name];
+      if (previousValue === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = previousValue;
+      }
     }
 
     vi.useRealTimers();
@@ -305,6 +327,88 @@ describe("catalog service", () => {
         menuEditing: false
       },
       loyaltyEnabled: false
+    });
+
+    await app.close();
+  });
+
+  it("returns a clear 503 when menu image uploads are not configured", async () => {
+    process.env.GATEWAY_INTERNAL_API_TOKEN = "catalog-gateway-token";
+    for (const name of mediaEnvNames) {
+      delete process.env[name];
+    }
+
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/catalog/admin/menu/latte/image-upload",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token",
+        "x-operator-location-id": DEFAULT_LOCATION_ID
+      },
+      payload: {
+        fileName: "latte.jpg",
+        contentType: "image/jpeg",
+        sizeBytes: 512
+      }
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      code: "MENU_IMAGE_UPLOAD_UNAVAILABLE",
+      message: "Menu image uploads are not configured."
+    });
+
+    await app.close();
+  });
+
+  it("validates menu image upload content type and size", async () => {
+    process.env.GATEWAY_INTERNAL_API_TOKEN = "catalog-gateway-token";
+    process.env.CATALOG_MEDIA_R2_ACCOUNT_ID = "test-account";
+    process.env.CATALOG_MEDIA_R2_ACCESS_KEY_ID = "test-access-key";
+    process.env.CATALOG_MEDIA_R2_SECRET_ACCESS_KEY = "test-secret-key";
+    process.env.CATALOG_MEDIA_R2_BUCKET = "menu-media";
+    process.env.CATALOG_MEDIA_PUBLIC_BASE_URL = "https://media.example.test";
+    process.env.CATALOG_MEDIA_UPLOAD_MAX_BYTES = "1024";
+    process.env.CATALOG_MEDIA_UPLOAD_EXPIRY_SECONDS = "120";
+
+    const app = await buildApp();
+    const unsupportedTypeResponse = await app.inject({
+      method: "POST",
+      url: "/v1/catalog/admin/menu/latte/image-upload",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token",
+        "x-operator-location-id": DEFAULT_LOCATION_ID
+      },
+      payload: {
+        fileName: "latte.svg",
+        contentType: "image/svg+xml",
+        sizeBytes: 512
+      }
+    });
+
+    expect(unsupportedTypeResponse.statusCode).toBe(400);
+    expect(unsupportedTypeResponse.json()).toMatchObject({
+      code: "INVALID_MENU_IMAGE_UPLOAD"
+    });
+
+    const oversizedResponse = await app.inject({
+      method: "POST",
+      url: "/v1/catalog/admin/menu/latte/image-upload",
+      headers: {
+        "x-gateway-token": "catalog-gateway-token",
+        "x-operator-location-id": DEFAULT_LOCATION_ID
+      },
+      payload: {
+        fileName: "latte.jpg",
+        contentType: "image/jpeg",
+        sizeBytes: 2048
+      }
+    });
+
+    expect(oversizedResponse.statusCode).toBe(413);
+    expect(oversizedResponse.json()).toMatchObject({
+      code: "INVALID_MENU_IMAGE_UPLOAD"
     });
 
     await app.close();
