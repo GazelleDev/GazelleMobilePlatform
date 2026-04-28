@@ -2,22 +2,22 @@ import { sql, type Kysely } from "kysely";
 
 type MigrationDb = Kysely<Record<string, never>>;
 
-const defaultLocationId = "rawaqcoffee01";
-
 export async function up(db: MigrationDb): Promise<void> {
+  // Keep this migration pooler-safe: Supabase's transaction pooler can reject
+  // bound parameters inside DDL with protocol error 08P01.
   await sql`
     ALTER TABLE loyalty_balances
-    ADD COLUMN IF NOT EXISTS location_id TEXT NOT NULL DEFAULT ${defaultLocationId}
+    ADD COLUMN IF NOT EXISTS location_id TEXT NOT NULL DEFAULT 'rawaqcoffee01'
   `.execute(db);
 
   await sql`
     ALTER TABLE loyalty_ledger_entries
-    ADD COLUMN IF NOT EXISTS location_id TEXT NOT NULL DEFAULT ${defaultLocationId}
+    ADD COLUMN IF NOT EXISTS location_id TEXT NOT NULL DEFAULT 'rawaqcoffee01'
   `.execute(db);
 
   await sql`
     ALTER TABLE loyalty_idempotency_keys
-    ADD COLUMN IF NOT EXISTS location_id TEXT NOT NULL DEFAULT ${defaultLocationId}
+    ADD COLUMN IF NOT EXISTS location_id TEXT NOT NULL DEFAULT 'rawaqcoffee01'
   `.execute(db);
 
   await sql`ALTER TABLE loyalty_balances DROP CONSTRAINT IF EXISTS loyalty_balances_pkey`.execute(db);
