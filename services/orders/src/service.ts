@@ -181,7 +181,6 @@ type QuoteRequest = z.output<typeof quoteRequestSchema>;
 type CreateOrderRequest = z.output<typeof createOrderRequestSchema>;
 type OrdersPaymentReconciliationInput = z.output<typeof ordersPaymentReconciliationSchema>;
 type OrdersPaymentReconciliationResult = z.output<typeof ordersPaymentReconciliationResultSchema>;
-type PaymentsChargeResponse = z.output<typeof paymentsChargeResponseSchema>;
 type PaymentsRefundResponse = z.output<typeof paymentsRefundResponseSchema>;
 type RefundRequestResult =
   | { response: PaymentsRefundResponse }

@@ -904,34 +904,6 @@ function firstStringAtPaths(value: unknown, paths: string[][]): string | undefin
   return undefined;
 }
 
-function firstBooleanAtPaths(value: unknown, paths: string[][]): boolean | undefined {
-  for (const path of paths) {
-    const candidate = readPath(value, path);
-    if (typeof candidate === "boolean") {
-      return candidate;
-    }
-  }
-
-  return undefined;
-}
-
-function firstNumberAtPaths(value: unknown, paths: string[][]): number | undefined {
-  for (const path of paths) {
-    const candidate = readPath(value, path);
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-      return candidate;
-    }
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      const parsed = Number(candidate);
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  }
-
-  return undefined;
-}
-
 export function summarizeCloverResponseForLogs(value: unknown): Record<string, string> {
   const summary = {
     status: firstStringAtPaths(value, [
