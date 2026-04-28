@@ -296,6 +296,9 @@ jobs:
           PUBLIC_API_BASE_URL_VALUE="https://${API_DOMAIN}/v1"
           APPLE_PRIVATE_KEY_VALUE="${APPLE_PRIVATE_KEY//$'\r'/}"
           APPLE_PRIVATE_KEY_VALUE="${APPLE_PRIVATE_KEY_VALUE//$'\n'/\\n}"
+          export DATABASE_URL="${DATABASE_URL_VALUE}"
+          export POSTGRES_PASSWORD="${POSTGRES_PASSWORD_VALUE}"
+          export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME_VALUE}"
 
           cat > .env <<ENVVARS
           API_DOMAIN=${API_DOMAIN}
