@@ -5,6 +5,10 @@ import { reconcileOrderFulfillmentState } from "../src/fulfillment.js";
 import { advanceOrderLifecycleToStatus, OrderTransitionError, transitionOrderStatus } from "../src/lifecycle.js";
 
 const paidAt = "2026-03-10T00:00:00.000Z";
+const timeBasedFulfillment = {
+  ...DEFAULT_APP_CONFIG_FULFILLMENT,
+  mode: "time_based" as const
+};
 
 function buildOrder(status: "PAID" | "IN_PREP" | "READY" | "COMPLETED" | "CANCELED") {
   const timeline = [
@@ -130,7 +134,8 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("PAID");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:04:59.000Z")
+      now: new Date("2026-03-10T00:04:59.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(result.changed).toBe(false);
@@ -142,7 +147,8 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("PAID");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:05:00.000Z")
+      now: new Date("2026-03-10T00:05:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(result.changed).toBe(true);
@@ -158,7 +164,8 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("IN_PREP");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:10:00.000Z")
+      now: new Date("2026-03-10T00:10:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(result.changed).toBe(true);
@@ -174,7 +181,8 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("READY");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:15:00.000Z")
+      now: new Date("2026-03-10T00:15:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(result.changed).toBe(true);
@@ -190,7 +198,8 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("CANCELED");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:30:00.000Z")
+      now: new Date("2026-03-10T00:30:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(result.changed).toBe(false);
@@ -202,7 +211,8 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("COMPLETED");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:30:00.000Z")
+      now: new Date("2026-03-10T00:30:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(result.changed).toBe(false);
@@ -214,10 +224,12 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("PAID");
 
     const firstResult = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:10:00.000Z")
+      now: new Date("2026-03-10T00:10:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
     const secondResult = reconcileOrderFulfillmentState(firstResult.order, {
-      now: new Date("2026-03-10T00:10:00.000Z")
+      now: new Date("2026-03-10T00:10:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(firstResult.order.status).toBe("READY");
@@ -240,7 +252,8 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("IN_PREP");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:04:00.000Z")
+      now: new Date("2026-03-10T00:04:00.000Z"),
+      fulfillment: timeBasedFulfillment
     });
 
     expect(result.changed).toBe(false);
@@ -256,11 +269,7 @@ describe("configured fulfillment reconciliation", () => {
     const order = buildOrder("PAID");
 
     const result = reconcileOrderFulfillmentState(order, {
-      now: new Date("2026-03-10T00:30:00.000Z"),
-      fulfillment: {
-        ...DEFAULT_APP_CONFIG_FULFILLMENT,
-        mode: "staff"
-      }
+      now: new Date("2026-03-10T00:30:00.000Z")
     });
 
     expect(result.changed).toBe(false);

@@ -679,6 +679,10 @@ select {
   line-height: 1.5;
 }
 
+.field-hint.is-warning {
+  color: var(--warning);
+}
+
 .wizard-steps,
 .pill-list,
 .tag-list {

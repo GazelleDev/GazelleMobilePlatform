@@ -56,7 +56,7 @@ describe("catalog service", () => {
     await app.close();
   });
 
-  it("returns v1 app config payload", async () => {
+  it("returns v1 app config payload with staff fulfillment by default", async () => {
     const app = await buildApp();
     const response = await app.inject({ method: "GET", url: "/v1/app-config" });
 
@@ -67,19 +67,20 @@ describe("catalog service", () => {
     expect(parsed.storeCapabilities.menu.source).toBe("platform_managed");
     expect(parsed.storeCapabilities.operations.dashboardEnabled).toBe(true);
     expect(parsed.storeCapabilities.loyalty.visible).toBe(true);
-    expect(parsed.fulfillment.mode).toBe("time_based");
+    expect(parsed.fulfillment.mode).toBe("staff");
+    expect(parsed.storeCapabilities.operations.fulfillmentMode).toBe("staff");
     await app.close();
   });
 
-  it("returns a staff fulfillment mode when configured", async () => {
-    process.env.ORDER_FULFILLMENT_MODE = "staff";
+  it("returns a time-based fulfillment mode only when explicitly configured", async () => {
+    process.env.ORDER_FULFILLMENT_MODE = "time_based";
     const app = await buildApp();
     const response = await app.inject({ method: "GET", url: "/v1/app-config" });
 
     expect(response.statusCode).toBe(200);
     const parsed = appConfigSchema.parse(response.json());
-    expect(parsed.fulfillment.mode).toBe("staff");
-    expect(parsed.storeCapabilities.operations.fulfillmentMode).toBe("staff");
+    expect(parsed.fulfillment.mode).toBe("time_based");
+    expect(parsed.storeCapabilities.operations.fulfillmentMode).toBe("time_based");
     expect(parsed.fulfillment.timeBasedScheduleMinutes.completed).toBe(15);
 
     await app.close();

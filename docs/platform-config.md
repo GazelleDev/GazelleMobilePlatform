@@ -128,7 +128,9 @@ Relevant env vars:
 - `staff`
 - `time_based`
 
-`ORDER_FULFILLMENT_MODE` is now only used to seed the default store capability profile for fresh environments. Once a store capability config is persisted, `app-config.storeCapabilities.operations.fulfillmentMode` becomes the authoritative runtime source for both the mobile app and the client dashboard. The schedule published in `app-config.fulfillment.timeBasedScheduleMinutes` still remains the shared default schedule for V1.
+`staff` is the default and required baseline for real merchant pilots. `time_based` is still supported for demos, but it must be selected or configured explicitly because it auto-progresses paid orders without staff confirmation.
+
+`ORDER_FULFILLMENT_MODE` is only used to seed the default store capability profile for fresh environments. Once a store capability config is persisted, `app-config.storeCapabilities.operations.fulfillmentMode` becomes the authoritative runtime source for both the mobile app and the client dashboard. The schedule published in `app-config.fulfillment.timeBasedScheduleMinutes` still remains the shared schedule for explicit time-based demo mode.
 
 ## Operational Notes
 

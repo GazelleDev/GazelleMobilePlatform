@@ -113,10 +113,14 @@ export default async function NewClientPage({ searchParams }: NewClientPageProps
               </label>
               <label className="field">
                 <span>Fulfillment mode</span>
-                <select name="fulfillmentMode" defaultValue="time_based">
-                  <option value="time_based">Time based</option>
+                <select name="fulfillmentMode" defaultValue="staff" required>
                   <option value="staff">Staff managed</option>
+                  <option value="time_based">Time based (demo only)</option>
                 </select>
+                <p className="field-hint">Real merchant pilots should use staff managed fulfillment.</p>
+                <p className="field-hint is-warning">
+                  Time based auto-progresses orders without staff confirmation. Only use it for demos.
+                </p>
               </label>
               <label className="field">
                 <span>Tax rate (%)</span>

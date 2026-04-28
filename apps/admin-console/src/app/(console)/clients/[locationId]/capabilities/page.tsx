@@ -126,10 +126,14 @@ export default async function ClientCapabilitiesPage({ params, searchParams }: C
                   </label>
                   <label className="field">
                     <span>Fulfillment mode</span>
-                    <select name="fulfillmentMode" defaultValue={location.capabilities.operations.fulfillmentMode}>
-                      <option value="time_based">Time based</option>
+                    <select name="fulfillmentMode" defaultValue={location.capabilities.operations.fulfillmentMode} required>
                       <option value="staff">Staff managed</option>
+                      <option value="time_based">Time based (demo only)</option>
                     </select>
+                    <p className="field-hint">Real merchant pilots should use staff managed fulfillment.</p>
+                    <p className="field-hint is-warning">
+                      Time based auto-progresses orders without staff confirmation. Only use it for demos.
+                    </p>
                   </label>
                   <label className="toggle-field">
                     <input type="checkbox" name="dashboardEnabled" defaultChecked={location.capabilities.operations.dashboardEnabled} />

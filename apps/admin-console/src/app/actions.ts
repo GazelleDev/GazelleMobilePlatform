@@ -58,9 +58,11 @@ function toRedirectError(error: unknown) {
 }
 
 function readCapabilities(formData: FormData): AppConfigStoreCapabilities {
+  const requestedFulfillmentMode = readString(formData, "fulfillmentMode");
+
   return buildCapabilities({
     menuSource: readString(formData, "menuSource") === "external_sync" ? "external_sync" : "platform_managed",
-    fulfillmentMode: readString(formData, "fulfillmentMode") === "staff" ? "staff" : "time_based",
+    fulfillmentMode: requestedFulfillmentMode === "time_based" ? "time_based" : "staff",
     liveOrderTrackingEnabled: readBoolean(formData, "liveOrderTrackingEnabled"),
     dashboardEnabled: readBoolean(formData, "dashboardEnabled"),
     loyaltyVisible: readBoolean(formData, "loyaltyVisible")

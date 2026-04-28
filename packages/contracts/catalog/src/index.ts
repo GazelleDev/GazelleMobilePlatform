@@ -377,7 +377,7 @@ export const adminStoreConfigSchema = z.object({
         source: "platform_managed"
       },
       operations: {
-        fulfillmentMode: "time_based",
+        fulfillmentMode: "staff",
         liveOrderTrackingEnabled: true,
         dashboardEnabled: true
       },
@@ -474,7 +474,7 @@ export const appConfigFulfillmentSchema = z.object({
 });
 
 export const DEFAULT_APP_CONFIG_FULFILLMENT = appConfigFulfillmentSchema.parse({
-  mode: "time_based",
+  mode: "staff",
   timeBasedScheduleMinutes: {
     inPrep: 5,
     ready: 10,

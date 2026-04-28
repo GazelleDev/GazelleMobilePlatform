@@ -176,7 +176,7 @@ describe("contracts-catalog", () => {
     expect(resolveAppConfigFulfillmentMode(config)).toBe("staff");
   });
 
-  it("defaults fulfillment config for older app-config payloads", () => {
+  it("defaults fulfillment config for older app-config payloads to staff mode", () => {
     const config = appConfigSchema.parse({
       brand: {
         brandId: "gazelle-default",
@@ -226,7 +226,7 @@ describe("contracts-catalog", () => {
       }
     });
 
-    expect(config.fulfillment.mode).toBe("time_based");
+    expect(config.fulfillment.mode).toBe("staff");
     expect(config.fulfillment.timeBasedScheduleMinutes.ready).toBe(10);
   });
 
@@ -260,6 +260,7 @@ describe("contracts-catalog", () => {
     expect(adminItem.categoryTitle).toBe("Espresso Bar");
     expect(adminStoreConfig.storeName).toBe("Gazelle Coffee");
     expect(adminStoreConfig.locationName).toBe("Ann Arbor, MI");
+    expect(adminStoreConfig.capabilities.operations.fulfillmentMode).toBe("staff");
     expect(adminStoreConfig.capabilities.operations.dashboardEnabled).toBe(true);
   });
 
