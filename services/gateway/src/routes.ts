@@ -449,6 +449,9 @@ function resolveRequestedOperatorLocationId(
   }
 
   const operator = request.authenticatedOperator;
+  // Admin route tenant selection is constrained to the authenticated operator's access set.
+  // The selected location may come from the active operator session or a query selection, but
+  // the gateway never forwards a location the identity service did not authorize for this user.
   const locationId = parsedQuery.data.locationId ?? operator?.locationId;
   if (locationId && operator && !operator.locationIds.includes(locationId)) {
     return {
@@ -467,6 +470,10 @@ function resolveRequestedOperatorLocationId(
 
 function operatorLocationHeader(locationId?: string): Record<string, string> {
   return locationId ? { "x-operator-location-id": locationId } : {};
+}
+
+function operatorLocationQuery(locationId: string): string {
+  return `?locationId=${encodeURIComponent(locationId)}`;
 }
 
 function resolveServiceBaseUrl(params: {
@@ -2719,9 +2726,13 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("orders:read")]
     },
     async (request, reply) => {
-      const locationContext = resolveRequestedOperatorLocationId(request);
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
       if (locationContext.error) {
         return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
       }
 
       return proxyUpstream({
@@ -2751,6 +2762,10 @@ export async function registerRoutes(app: FastifyInstance) {
       const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
       if (locationContext.error) {
         return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
       }
 
       return proxyUpstream({
@@ -2859,7 +2874,7 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("orders:read")]
     },
     async (request, reply) => {
-      const locationContext = resolveRequestedOperatorLocationId(request);
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
       if (locationContext.error) {
         return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
       }
@@ -3033,6 +3048,10 @@ export async function registerRoutes(app: FastifyInstance) {
       const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
       if (locationContext.error) {
         return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
       }
 
       return proxyUpstream({
@@ -3470,9 +3489,14 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("team:read")]
     },
     async (request, reply) => {
-      const locationError = resolveRequestedOperatorLocationId(request, { required: true }).error;
-      if (locationError) {
-        return reply.status(locationError.code === "FORBIDDEN" ? 403 : 400).send(locationError);
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
+      if (locationContext.error) {
+        return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
       }
 
       return proxyUpstream({
@@ -3481,8 +3505,7 @@ export async function registerRoutes(app: FastifyInstance) {
         baseUrl: identityBaseUrl,
         serviceLabel: "Identity",
         method: "GET",
-        path: "/v1/operator/users",
-        forwardQuery: true,
+        path: `/v1/operator/users${operatorLocationQuery(locationId)}`,
         responseSchema: operatorUserListResponseSchema
       });
     }
@@ -3494,9 +3517,13 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("team:write")]
     },
     async (request, reply) => {
-      const locationError = resolveRequestedOperatorLocationId(request, { required: true }).error;
-      if (locationError) {
-        return reply.status(locationError.code === "FORBIDDEN" ? 403 : 400).send(locationError);
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
+      if (locationContext.error) {
+        return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
       }
 
       const input = operatorUserCreateSchema.parse(request.body);
@@ -3507,9 +3534,8 @@ export async function registerRoutes(app: FastifyInstance) {
         baseUrl: identityBaseUrl,
         serviceLabel: "Identity",
         method: "POST",
-        path: "/v1/operator/users",
+        path: `/v1/operator/users${operatorLocationQuery(locationId)}`,
         body: input,
-        forwardQuery: true,
         responseSchema: operatorMeResponseSchema
       });
     }
@@ -3521,9 +3547,13 @@ export async function registerRoutes(app: FastifyInstance) {
       preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("team:write")]
     },
     async (request, reply) => {
-      const locationError = resolveRequestedOperatorLocationId(request, { required: true }).error;
-      if (locationError) {
-        return reply.status(locationError.code === "FORBIDDEN" ? 403 : 400).send(locationError);
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
+      if (locationContext.error) {
+        return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
       }
 
       const { operatorUserId } = operatorUserParamsSchema.parse(request.params);
@@ -3535,9 +3565,8 @@ export async function registerRoutes(app: FastifyInstance) {
         baseUrl: identityBaseUrl,
         serviceLabel: "Identity",
         method: "PATCH",
-        path: `/v1/operator/users/${operatorUserId}`,
+        path: `/v1/operator/users/${operatorUserId}${operatorLocationQuery(locationId)}`,
         body: input,
-        forwardQuery: true,
         responseSchema: operatorMeResponseSchema
       });
     }

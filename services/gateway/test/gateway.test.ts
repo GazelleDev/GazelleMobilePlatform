@@ -559,7 +559,7 @@ let previousFreeClientDashboardDomain: string | undefined;
         });
       }
 
-      if (url.endsWith("/v1/operator/users") && method === "GET") {
+      if (url.includes("/v1/operator/users") && method === "GET") {
         return new Response(
           JSON.stringify({
             users: [
@@ -601,7 +601,7 @@ let previousFreeClientDashboardDomain: string | undefined;
         );
       }
 
-      if (url.endsWith("/v1/operator/users") && method === "POST") {
+      if (url.includes("/v1/operator/users") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as {
           displayName?: string;
           email?: string;
@@ -658,7 +658,7 @@ let previousFreeClientDashboardDomain: string | undefined;
         );
       }
 
-      const operatorUserMatch = url.match(/\/v1\/operator\/users\/([0-9a-f-]{36})$/);
+      const operatorUserMatch = url.match(/\/v1\/operator\/users\/([0-9a-f-]{36})(?:\\?|$)/);
       if (operatorUserMatch && method === "PATCH") {
         const operatorUserId = operatorUserMatch[1];
         const body = JSON.parse(String(init?.body ?? "{}")) as {
@@ -932,11 +932,23 @@ let previousFreeClientDashboardDomain: string | undefined;
       const getOrderMatch = url.match(/\/v1\/orders\/([0-9a-f-]{36})$/);
       if (getOrderMatch && method === "GET") {
         const orderId = getOrderMatch[1];
+        const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+        const operatorLocationId = headers.get("x-operator-location-id");
         const queuedPayloadsForOrder = queuedOrderPayloads.get(orderId);
         if (queuedPayloadsForOrder?.length) {
           const nextPayload = queuedPayloadsForOrder.shift() ?? buildOrderPayload(orderId, "IN_PREP");
           if (queuedPayloadsForOrder.length === 0) {
             queuedOrderPayloads.delete(orderId);
+          }
+          if (operatorLocationId && nextPayload.locationId !== operatorLocationId) {
+            return new Response(
+              JSON.stringify({
+                code: "ORDER_NOT_FOUND",
+                message: "Order was not found",
+                requestId: "orders-stub-cross-tenant"
+              }),
+              { status: 404, headers: { "content-type": "application/json" } }
+            );
           }
           return new Response(JSON.stringify(nextPayload), {
             status: 200,
@@ -2658,13 +2670,13 @@ let previousFreeClientDashboardDomain: string | undefined;
     });
 
     const requestedUrls = fetchMock.mock.calls.map(([input]) => (typeof input === "string" ? input : input.url));
-    expect(requestedUrls).toContain("http://identity.internal/v1/operator/users");
-    expect(requestedUrls).toContain(`http://identity.internal/v1/operator/users/${operatorUserId}`);
+    expect(requestedUrls).toContain("http://identity.internal/v1/operator/users?locationId=flagship-01");
+    expect(requestedUrls).toContain(`http://identity.internal/v1/operator/users/${operatorUserId}?locationId=flagship-01`);
     expect(requestedUrls).toContain("http://catalog.internal/v1/catalog/admin/store/config");
 
     const createCall = fetchMock.mock.calls.find(([input, init]) => {
       const url = typeof input === "string" ? input : input.url;
-      return url === "http://identity.internal/v1/operator/users" && (init?.method ?? "GET") === "POST";
+      return url === "http://identity.internal/v1/operator/users?locationId=flagship-01" && (init?.method ?? "GET") === "POST";
     });
     expect(createCall).toBeDefined();
     if (createCall) {
@@ -2781,6 +2793,61 @@ let previousFreeClientDashboardDomain: string | undefined;
         return url.includes("/v1/operator/users");
       })
     ).toBe(false);
+
+    await app.close();
+  });
+
+  it("rejects cross-tenant admin order scope overrides before calling orders", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/admin/orders?locationId=northside-01",
+      headers: ownerOperatorHeaders
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({
+      code: "FORBIDDEN"
+    });
+    expect(
+      fetchMock.mock.calls.some(([input]) => {
+        const url = typeof input === "string" ? input : input.url;
+        return url === "http://orders.internal/v1/orders";
+      })
+    ).toBe(false);
+
+    await app.close();
+  });
+
+  it("does not expose another tenant order through an admin order id read", async () => {
+    const app = await buildApp();
+    const orderId = "123e4567-e89b-12d3-a456-426614174116";
+    queuedOrderPayloads.set(orderId, [
+      {
+        ...buildOrderPayload(orderId, "PAID"),
+        locationId: "northside-01"
+      }
+    ]);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/admin/orders/${orderId}`,
+      headers: ownerOperatorHeaders
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      code: "ORDER_NOT_FOUND"
+    });
+
+    const orderCall = fetchMock.mock.calls.find(([input]) =>
+      (typeof input === "string" ? input : input.url).endsWith(`/v1/orders/${orderId}`)
+    );
+    expect(orderCall).toBeDefined();
+    if (orderCall) {
+      const upstreamHeaders = new Headers((orderCall[1]?.headers ?? {}) as HeadersInit);
+      expect(upstreamHeaders.get("x-operator-location-id")).toBe("flagship-01");
+    }
 
     await app.close();
   });
