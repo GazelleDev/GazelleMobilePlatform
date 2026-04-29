@@ -1,5 +1,11 @@
 import Link from "next/link";
-import { listInternalLocations, lookupSupportOrders, type SupportOrderLookupResult } from "@/lib/internal-api";
+import {
+  InternalApiError,
+  listInternalLocations,
+  lookupSupportOrders,
+  type SupportOrderLookupResponse,
+  type SupportOrderLookupResult
+} from "@/lib/internal-api";
 
 function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -27,6 +33,27 @@ function getCustomerLabel(result: SupportOrderLookupResult) {
   return result.customer?.email ?? result.customer?.phone ?? result.customer?.name ?? result.userId ?? "Unknown customer";
 }
 
+async function safeLookupSupportOrders(input: {
+  query: string;
+  locationId?: string;
+  limit?: number;
+}): Promise<{ lookup: SupportOrderLookupResponse; error?: string }> {
+  try {
+    return {
+      lookup: await lookupSupportOrders(input)
+    };
+  } catch (error) {
+    if (error instanceof InternalApiError) {
+      return {
+        lookup: { results: [] },
+        error: error.message
+      };
+    }
+
+    throw error;
+  }
+}
+
 export default async function SupportPage({
   searchParams
 }: {
@@ -35,16 +62,17 @@ export default async function SupportPage({
   const params = (await searchParams) ?? {};
   const query = getParam(params.query)?.trim() ?? "";
   const locationId = getParam(params.locationId)?.trim() ?? "";
-  const [{ locations }, lookup] = await Promise.all([
+  const [{ locations }, lookupResult] = await Promise.all([
     listInternalLocations(),
     query.length > 0
-      ? lookupSupportOrders({
+      ? safeLookupSupportOrders({
           query,
           locationId: locationId || undefined,
           limit: 25
         })
-      : Promise.resolve({ results: [] })
+      : Promise.resolve<{ lookup: SupportOrderLookupResponse; error?: string }>({ lookup: { results: [] } })
   ]);
+  const lookup = lookupResult.lookup;
 
   return (
     <section className="page-stack">
@@ -94,7 +122,13 @@ export default async function SupportPage({
           </div>
         </div>
 
-        {!query ? (
+        {lookupResult.error ? (
+          <div className="empty-state">
+            <h4>Support lookup failed.</h4>
+            <p>{lookupResult.error}</p>
+            <p>Check Sentry and retry after the backend issue is resolved.</p>
+          </div>
+        ) : !query ? (
           <div className="empty-state">
             <h4>Enter a lookup query.</h4>
             <p>Use this before querying the database manually during pilot support.</p>

@@ -785,7 +785,9 @@ async function createPostgresRepository(
       let rowsQuery = db
         .selectFrom("orders")
         .leftJoin("identity_users", "identity_users.user_id", "orders.user_id")
-        .leftJoin("payments_stripe_payment_intents", "payments_stripe_payment_intents.order_id", "orders.order_id")
+        .leftJoin("payments_stripe_payment_intents", (join) =>
+          join.on(sql<string>`payments_stripe_payment_intents.order_id`, "=", sql<string>`orders.order_id::text`)
+        )
         .select([
           "orders.order_id as order_id",
           "orders.user_id as user_id",
@@ -804,7 +806,7 @@ async function createPostgresRepository(
         ])
         .where((eb) =>
           eb.or([
-            eb("orders.order_id", "=", query),
+            eb(sql<string>`orders.order_id::text`, "=", query),
             eb("orders.payment_id", "=", query),
             eb("payments_stripe_payment_intents.payment_intent_id", "=", query),
             eb(sql`LOWER(identity_users.email)`, "=", normalizedQuery),
