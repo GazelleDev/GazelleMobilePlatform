@@ -80,7 +80,7 @@ export default async function SupportPage({
         <div>
           <span className="eyebrow">Support</span>
           <h3>Order lookup</h3>
-          <p>Search by order ID, customer email, customer phone, payment ID, or Stripe PaymentIntent.</p>
+          <p>Search by phone number, customer name/email, pickup code, order ID, payment ID, or Stripe PaymentIntent.</p>
         </div>
         <div className="page-tools">
           <Link href="/dashboard" className="secondary-button">
@@ -93,7 +93,7 @@ export default async function SupportPage({
         <form className="form-grid" action="/support">
           <label>
             <span>Lookup query</span>
-            <input name="query" placeholder="Order ID, email, phone, or payment ID" defaultValue={query} required />
+            <input name="query" placeholder="Phone, name, email, pickup code, order ID, or payment ID" defaultValue={query} required />
           </label>
           <label>
             <span>Location filter</span>
@@ -136,7 +136,7 @@ export default async function SupportPage({
         ) : lookup.results.length === 0 ? (
           <div className="empty-state">
             <h4>No matching orders found.</h4>
-            <p>Try removing the location filter or searching by the exact order ID.</p>
+            <p>Try removing the location filter or searching by phone, email, pickup code, order ID, or payment ID.</p>
           </div>
         ) : (
           <div className="support-results">

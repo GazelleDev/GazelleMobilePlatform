@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { orderPaymentContextSchema, orderQuoteSchema, orderSchema } from "@lattelink/contracts-orders";
 import { buildApp } from "../src/app.js";
+import { createOrdersRepository } from "../src/repository.js";
 
 const sampleQuotePayload = {
   locationId: "flagship-01",
@@ -1582,6 +1583,71 @@ describe("orders service", () => {
     });
 
     await app.close();
+  });
+
+  it("supports broad support lookup queries for customer phone and operational identifiers", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    const repository = await createOrdersRepository({
+      warn: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn()
+    } as never);
+    const order = orderSchema.parse({
+      id: "123e4567-e89b-12d3-a456-426614174777",
+      locationId: "flagship-01",
+      status: "PAID",
+      items: [
+        {
+          itemId: "latte",
+          itemName: "Honey Oat Latte",
+          quantity: 1,
+          unitPriceCents: 675,
+          lineTotalCents: 675
+        }
+      ],
+      total: {
+        currency: "USD",
+        amountCents: 716
+      },
+      pickupCode: "AB12CD",
+      timeline: [
+        {
+          status: "PAID",
+          occurredAt: "2026-03-10T00:00:00.000Z",
+          source: "webhook"
+        }
+      ],
+      customer: {
+        name: "Yazan Support",
+        email: "support-customer@example.com",
+        phone: "+1 (313) 555-0123"
+      }
+    });
+
+    await repository.createOrder({
+      order,
+      quoteId: randomUUID(),
+      userId: "123e4567-e89b-12d3-a456-426614174888"
+    });
+    await repository.setPaymentId(order.id, "pay_support_123");
+
+    await expect(repository.lookupSupportOrders({ query: "5550123" })).resolves.toMatchObject([
+      {
+        order: {
+          id: order.id
+        },
+        customer: {
+          phone: "+1 (313) 555-0123"
+        }
+      }
+    ]);
+    await expect(repository.lookupSupportOrders({ query: "yazan" })).resolves.toHaveLength(1);
+    await expect(repository.lookupSupportOrders({ query: "AB12" })).resolves.toHaveLength(1);
+    await expect(repository.lookupSupportOrders({ query: "426614174888" })).resolves.toHaveLength(1);
+    await expect(repository.lookupSupportOrders({ query: "pay_support" })).resolves.toHaveLength(1);
+    await expect(repository.lookupSupportOrders({ query: "5550123", locationId: "other-location" })).resolves.toHaveLength(0);
+
+    await repository.close();
   });
 
   it("rejects staff-driven status updates when time-based fulfillment mode is active", async () => {

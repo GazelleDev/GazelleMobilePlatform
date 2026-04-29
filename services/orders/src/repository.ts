@@ -79,6 +79,22 @@ function trimToUndefined(value: string | null | undefined) {
   return next && next.length > 0 ? next : undefined;
 }
 
+function normalizeSearchText(value: string | null | undefined) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function normalizePhoneDigits(value: string | null | undefined) {
+  return value?.replace(/\D/g, "") ?? "";
+}
+
+function textMatchesSupportQuery(value: string | null | undefined, query: string) {
+  return normalizeSearchText(value).includes(query);
+}
+
+function phoneMatchesSupportQuery(value: string | null | undefined, queryDigits: string) {
+  return queryDigits.length >= 4 && normalizePhoneDigits(value).includes(queryDigits);
+}
+
 function parseIsoDate(value: unknown) {
   if (value instanceof Date) {
     return value.toISOString();
@@ -424,16 +440,23 @@ function createInMemoryRepository(): OrdersRepository {
     },
     async lookupSupportOrders(input) {
       const query = input.query.trim().toLowerCase();
+      const queryDigits = normalizePhoneDigits(query);
       const matches = [...ordersById.values()]
         .filter((record) => {
           if (input.locationId && record.order.locationId !== input.locationId) {
             return false;
           }
 
+          const customer = record.order.customer;
           return (
-            record.order.id.toLowerCase() === query ||
-            record.order.customer?.email?.toLowerCase() === query ||
-            record.order.customer?.phone?.toLowerCase() === query
+            textMatchesSupportQuery(record.order.id, query) ||
+            textMatchesSupportQuery(record.order.pickupCode, query) ||
+            textMatchesSupportQuery(record.userId, query) ||
+            textMatchesSupportQuery(record.paymentId, query) ||
+            textMatchesSupportQuery(customer?.name, query) ||
+            textMatchesSupportQuery(customer?.email, query) ||
+            textMatchesSupportQuery(customer?.phone, query) ||
+            phoneMatchesSupportQuery(customer?.phone, queryDigits)
           );
         })
         .slice(0, input.limit ?? 25);
@@ -781,6 +804,9 @@ async function createPostgresRepository(
       }
 
       const normalizedQuery = query.toLowerCase();
+      const likeQuery = `%${normalizedQuery}%`;
+      const queryDigits = normalizePhoneDigits(query);
+      const phoneLikeQuery = `%${queryDigits}%`;
       const limit = Math.min(Math.max(input.limit ?? 25, 1), 50);
       let rowsQuery = db
         .selectFrom("orders")
@@ -806,11 +832,32 @@ async function createPostgresRepository(
         ])
         .where((eb) =>
           eb.or([
-            eb(sql<string>`orders.order_id::text`, "=", query),
-            eb("orders.payment_id", "=", query),
-            eb("payments_stripe_payment_intents.payment_intent_id", "=", query),
-            eb(sql`LOWER(identity_users.email)`, "=", normalizedQuery),
-            eb(sql`LOWER(identity_users.phone_number)`, "=", normalizedQuery)
+            eb(sql<string>`orders.order_id::text`, "ilike", likeQuery),
+            eb(sql<string>`orders.user_id::text`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(orders.payment_id, '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(payments_stripe_payment_intents.payment_intent_id, '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(orders.order_json->>'pickupCode', '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(identity_users.email, '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(identity_users.name, '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(identity_users.display_name, '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(identity_users.phone_number, '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(orders.order_json->'customer'->>'email', '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(orders.order_json->'customer'->>'name', '')`, "ilike", likeQuery),
+            eb(sql<string>`COALESCE(orders.order_json->'customer'->>'phone', '')`, "ilike", likeQuery),
+            ...(queryDigits.length >= 4
+              ? [
+                  eb(
+                    sql<string>`regexp_replace(COALESCE(identity_users.phone_number, ''), '\\D', '', 'g')`,
+                    "like",
+                    phoneLikeQuery
+                  ),
+                  eb(
+                    sql<string>`regexp_replace(COALESCE(orders.order_json->'customer'->>'phone', ''), '\\D', '', 'g')`,
+                    "like",
+                    phoneLikeQuery
+                  )
+                ]
+              : [])
           ])
         )
         .orderBy("orders.created_at", "desc")
