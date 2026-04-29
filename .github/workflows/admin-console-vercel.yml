@@ -58,7 +58,7 @@ jobs:
         id: preview-check
         env:
           VERCEL_TOKEN: ${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
-          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_PREVIEW_ENV }}
         run: |
           missing=0
           for required in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID ADMIN_CONSOLE_ENV; do
@@ -85,7 +85,7 @@ jobs:
         if: steps.preview-check.outputs.enabled == 'true'
         working-directory: ${{ env.VERCEL_WORKING_DIR }}
         env:
-          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_PREVIEW_ENV }}
         run: |
           printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.local
           printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.production.local
@@ -104,7 +104,7 @@ jobs:
         run: rm -f .env.local .env.production.local
       - name: Skip Vercel preview deploy
         if: steps.preview-check.outputs.enabled != 'true'
-        run: echo "Preview deploy skipped until ADMIN_CONSOLE_VERCEL_TOKEN, ADMIN_CONSOLE_VERCEL_ORG_ID, ADMIN_CONSOLE_VERCEL_PROJECT_ID, and ADMIN_CONSOLE_VERCEL_ENV are configured."
+        run: echo "Preview deploy skipped until ADMIN_CONSOLE_VERCEL_TOKEN, ADMIN_CONSOLE_VERCEL_ORG_ID, ADMIN_CONSOLE_VERCEL_PROJECT_ID, and ADMIN_CONSOLE_VERCEL_PREVIEW_ENV are configured."
 
   deploy-production:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -116,7 +116,7 @@ jobs:
         id: production-check
         env:
           VERCEL_TOKEN: ${{ secrets.ADMIN_CONSOLE_VERCEL_TOKEN }}
-          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_PRODUCTION_ENV }}
         run: |
           missing=0
           for required in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID ADMIN_CONSOLE_ENV; do
@@ -143,7 +143,7 @@ jobs:
         if: steps.production-check.outputs.enabled == 'true'
         working-directory: ${{ env.VERCEL_WORKING_DIR }}
         env:
-          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_ENV }}
+          ADMIN_CONSOLE_ENV: ${{ secrets.ADMIN_CONSOLE_VERCEL_PRODUCTION_ENV }}
         run: |
           printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.local
           printf '%s\n' "${ADMIN_CONSOLE_ENV}" > .env.production.local
@@ -162,4 +162,4 @@ jobs:
         run: rm -f .env.local .env.production.local
       - name: Skip Vercel production deploy
         if: steps.production-check.outputs.enabled != 'true'
-        run: echo "Production deploy skipped until ADMIN_CONSOLE_VERCEL_TOKEN, ADMIN_CONSOLE_VERCEL_ORG_ID, ADMIN_CONSOLE_VERCEL_PROJECT_ID, and ADMIN_CONSOLE_VERCEL_ENV are configured."
+        run: echo "Production deploy skipped until ADMIN_CONSOLE_VERCEL_TOKEN, ADMIN_CONSOLE_VERCEL_ORG_ID, ADMIN_CONSOLE_VERCEL_PROJECT_ID, and ADMIN_CONSOLE_VERCEL_PRODUCTION_ENV are configured."

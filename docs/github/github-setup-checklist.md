@@ -114,10 +114,14 @@ Validate R2 bucket CORS and public asset URLs with [menu-image-upload-r2.md](/Us
 - [ ] `ADMIN_CONSOLE_VERCEL_TOKEN`
 - [ ] `ADMIN_CONSOLE_VERCEL_ORG_ID`
 - [ ] `ADMIN_CONSOLE_VERCEL_PROJECT_ID`
-- [ ] `ADMIN_CONSOLE_VERCEL_ENV`
+- [ ] `ADMIN_CONSOLE_VERCEL_PREVIEW_ENV`
+- [ ] `ADMIN_CONSOLE_VERCEL_PRODUCTION_ENV`
 - [ ] `LATTELINK_VERCEL_TOKEN`
 - [ ] `LATTELINK_VERCEL_ORG_ID`
 - [ ] `LATTELINK_VERCEL_PROJECT_ID`
+
+Admin console preview and production env payloads must be separate. `admin-dev.nomly.us`
+must point to `api-dev.nomly.us`; `admin.nomly.us` must point to `api.nomly.us`.
 
 The client dashboard does not currently have a dedicated GitHub Actions Vercel workflow in this repo.
 Its branch-to-environment behavior must be configured in Vercel:

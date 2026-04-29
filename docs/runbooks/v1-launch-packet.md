@@ -59,6 +59,7 @@ Backend:
 
 Frontend:
 
+- [admin-console-vercel-deployment.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/admin-console-vercel-deployment.md)
 - [client-dashboard-vercel-deployment.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/client-dashboard-vercel-deployment.md)
 - [lattelink-vercel-deployment.md](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/docs/runbooks/lattelink-vercel-deployment.md)
 
