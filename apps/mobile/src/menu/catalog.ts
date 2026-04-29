@@ -62,7 +62,7 @@ function filterVisibleCategories(menu: MenuResponse): MenuCategory[] {
 }
 
 async function fetchMenu(): Promise<MenuResponse> {
-  const response = menuResponseSchema.parse(await apiClient.get<unknown>("/menu"));
+  const response = menuResponseSchema.parse(await apiClient.menu());
   return {
     ...response,
     categories: filterVisibleCategories(response)
@@ -70,7 +70,7 @@ async function fetchMenu(): Promise<MenuResponse> {
 }
 
 async function fetchHomeNewsCards(): Promise<HomeNewsCardsResponse> {
-  const response = homeNewsCardsResponseSchema.parse(await apiClient.get<unknown>("/store/cards"));
+  const response = homeNewsCardsResponseSchema.parse(await apiClient.homeNewsCards());
   return {
     ...response,
     cards: response.cards.filter((card) => card.visible).sort((left, right) => left.sortOrder - right.sortOrder)
@@ -78,7 +78,7 @@ async function fetchHomeNewsCards(): Promise<HomeNewsCardsResponse> {
 }
 
 async function fetchStoreConfig(): Promise<StoreConfigResponse> {
-  return storeConfigResponseSchema.parse(await apiClient.get<unknown>("/store/config"));
+  return storeConfigResponseSchema.parse(await apiClient.storeConfig());
 }
 
 async function fetchAppConfig(): Promise<AppConfig> {

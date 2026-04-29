@@ -10,7 +10,12 @@ import {
   passkeyVerifyRequestSchema,
   refreshRequestSchema
 } from "@lattelink/contracts-auth";
-import { appConfigSchema, menuResponseSchema, storeConfigResponseSchema } from "@lattelink/contracts-catalog";
+import {
+  appConfigSchema,
+  homeNewsCardsResponseSchema,
+  menuResponseSchema,
+  storeConfigResponseSchema
+} from "@lattelink/contracts-catalog";
 import { authSessionSchema } from "@lattelink/contracts-core";
 import {
   createOrderRequestSchema,
@@ -177,6 +182,11 @@ export class GazelleApiClient {
   async storeConfig(): Promise<z.output<typeof storeConfigResponseSchema>> {
     const data = await this.get<unknown>(`/store/config${this.locationQuery()}`);
     return storeConfigResponseSchema.parse(data);
+  }
+
+  async homeNewsCards(): Promise<z.output<typeof homeNewsCardsResponseSchema>> {
+    const data = await this.get<unknown>(`/store/cards${this.locationQuery()}`);
+    return homeNewsCardsResponseSchema.parse(data);
   }
 
   async appConfig(): Promise<z.output<typeof appConfigSchema>> {

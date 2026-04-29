@@ -155,12 +155,35 @@ describe("sdk-mobile", () => {
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            locationId: "flagship-01",
+            cards: [
+              {
+                cardId: "morning-special",
+                label: "TODAY",
+                title: "Morning Special",
+                body: "Fresh pastries are ready.",
+                note: "Until 11 AM.",
+                sortOrder: 0,
+                visible: true
+              }
+            ]
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
       );
 
-    const client = new GazelleApiClient({ baseUrl: "https://api.gazellecoffee.com/v1" });
+    const client = new GazelleApiClient({
+      baseUrl: "https://api.gazellecoffee.com/v1",
+      locationId: "flagship-01"
+    });
     const menu = await client.menu();
     const storeConfig = await client.storeConfig();
     const appConfig = await client.appConfig();
+    const homeNewsCards = await client.homeNewsCards();
 
     expect(menu.categories[0]?.items[0]?.name).toBe("Latte");
     expect(storeConfig.taxRateBasisPoints).toBe(600);
@@ -168,6 +191,27 @@ describe("sdk-mobile", () => {
     expect(storeConfig.isOpen).toBe(true);
     expect(appConfig.brand.brandName).toBe("Gazelle Coffee");
     expect(appConfig.fulfillment.mode).toBe("time_based");
+    expect(homeNewsCards.cards[0]?.title).toBe("Morning Special");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://api.gazellecoffee.com/v1/menu?locationId=flagship-01",
+      expect.objectContaining({ method: "GET" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://api.gazellecoffee.com/v1/store/config?locationId=flagship-01",
+      expect.objectContaining({ method: "GET" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "https://api.gazellecoffee.com/v1/app-config?locationId=flagship-01",
+      expect.objectContaining({ method: "GET" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "https://api.gazellecoffee.com/v1/store/cards?locationId=flagship-01",
+      expect.objectContaining({ method: "GET" })
+    );
   });
 
   it("supports quote, create, and Stripe payment session flow", async () => {
