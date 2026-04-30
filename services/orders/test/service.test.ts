@@ -6,6 +6,7 @@ import { createOrdersRepository } from "../src/repository.js";
 import {
   advanceOrderStatus,
   cancelOrder,
+  createDiscountCode,
   createOrder,
   createQuote,
   getOrderForRead,
@@ -393,6 +394,336 @@ describe("orders service layer", () => {
       (typeof input === "string" ? input : input.toString()).endsWith("/v1/payments/refunds")
     );
     expect(refundCalls).toHaveLength(0);
+  });
+
+  it("applies a discount code before loyalty, reserves it at order creation, and redeems it on payment success", async () => {
+    const userId = "123e4567-e89b-12d3-a456-426614174551";
+    const { deps } = await createTestDeps(repositories);
+    const discountResult = await createDiscountCode({
+      input: {
+        locationId: sampleQuotePayload.locationId,
+        code: "SAVE10",
+        name: "10% off",
+        type: "percent",
+        value: 10,
+        maxDiscountCents: 200,
+        minSubtotalCents: 1_000,
+        eligibility: "everyone",
+        oncePerCustomer: true,
+        active: true
+      },
+      deps
+    });
+    expect("error" in discountResult).toBe(false);
+    if ("error" in discountResult) {
+      throw new Error(discountResult.error.code);
+    }
+
+    const quoteResult = await createQuote({
+      input: {
+        ...sampleQuotePayload,
+        discountCode: "SAVE10"
+      },
+      requestUserContext: { userId },
+      deps
+    });
+    expect("error" in quoteResult).toBe(false);
+    if ("error" in quoteResult) {
+      throw new Error(quoteResult.error.code);
+    }
+
+    expect(quoteResult.quote.subtotal.amountCents).toBe(1_775);
+    expect(quoteResult.quote.appliedDiscountCode).toMatchObject({
+      code: "SAVE10",
+      name: "10% off",
+      discountCents: 177
+    });
+    expect(quoteResult.quote.discount.amountCents).toBe(302);
+    expect(quoteResult.quote.discounts).toEqual([
+      expect.objectContaining({
+        type: "discount_code",
+        code: "SAVE10",
+        amount: { currency: "USD", amountCents: 177 }
+      }),
+      expect.objectContaining({
+        type: "loyalty",
+        amount: { currency: "USD", amountCents: 125 }
+      })
+    ]);
+    expect(quoteResult.quote.tax.amountCents).toBe(88);
+    expect(quoteResult.quote.total.amountCents).toBe(1_561);
+
+    await deps.repository.saveQuote(quoteResult.quote);
+    const orderResult = await createOrder({
+      input: {
+        quoteId: quoteResult.quote.quoteId,
+        quoteHash: quoteResult.quote.quoteHash
+      },
+      requestId: "discount-create-order",
+      requestUserContext: { userId },
+      deps
+    });
+    expect("error" in orderResult).toBe(false);
+    if ("error" in orderResult) {
+      throw new Error(orderResult.error.code);
+    }
+
+    const reserved = await deps.repository.getOrderDiscountRedemption(orderResult.order.id);
+    expect(reserved).toMatchObject({
+      discountCodeId: discountResult.discountCode.discountCodeId,
+      code: "SAVE10",
+      userId,
+      discountCents: 177,
+      status: "RESERVED"
+    });
+
+    const paymentResult = await reconcilePaymentWebhook({
+      input: {
+        eventId: "evt-discount-paid",
+        provider: "STRIPE",
+        kind: "CHARGE",
+        orderId: orderResult.order.id,
+        paymentId: "123e4567-e89b-12d3-a456-426614174552",
+        status: "SUCCEEDED",
+        amountCents: orderResult.order.total.amountCents,
+        currency: "USD",
+        occurredAt: "2026-03-10T00:00:00.000Z"
+      },
+      requestId: "discount-payment-success",
+      deps
+    });
+    expect("error" in paymentResult).toBe(false);
+    if ("error" in paymentResult) {
+      throw new Error(paymentResult.error.code);
+    }
+
+    const redeemed = await deps.repository.getOrderDiscountRedemption(orderResult.order.id);
+    expect(redeemed).toMatchObject({
+      status: "REDEEMED",
+      redeemedAt: expect.any(String)
+    });
+
+    const secondQuoteResult = await createQuote({
+      input: {
+        ...sampleQuotePayload,
+        pointsToRedeem: 0,
+        discountCode: "SAVE10"
+      },
+      requestUserContext: { userId },
+      deps
+    });
+    expect("error" in secondQuoteResult).toBe(true);
+    if (!("error" in secondQuoteResult)) {
+      throw new Error("Expected once-per-customer discount rejection");
+    }
+    expect(secondQuoteResult.error).toMatchObject({
+      statusCode: 409,
+      code: "DISCOUNT_CODE_ONCE_PER_CUSTOMER"
+    });
+  });
+
+  it("releases a reserved discount when the charge fails so another customer can use a limited code", async () => {
+    const firstUserId = "123e4567-e89b-12d3-a456-426614174561";
+    const secondUserId = "123e4567-e89b-12d3-a456-426614174562";
+    const { deps } = await createTestDeps(repositories);
+    const discountResult = await createDiscountCode({
+      input: {
+        locationId: sampleQuotePayload.locationId,
+        code: "LIMITED5",
+        name: "$5 launch credit",
+        type: "fixed_cents",
+        value: 500,
+        minSubtotalCents: 0,
+        eligibility: "everyone",
+        oncePerCustomer: false,
+        maxTotalRedemptions: 1,
+        active: true
+      },
+      deps
+    });
+    expect("error" in discountResult).toBe(false);
+    if ("error" in discountResult) {
+      throw new Error(discountResult.error.code);
+    }
+
+    const firstQuoteResult = await createQuote({
+      input: {
+        ...sampleQuotePayload,
+        pointsToRedeem: 0,
+        discountCode: "LIMITED5"
+      },
+      requestUserContext: { userId: firstUserId },
+      deps
+    });
+    expect("error" in firstQuoteResult).toBe(false);
+    if ("error" in firstQuoteResult) {
+      throw new Error(firstQuoteResult.error.code);
+    }
+    await deps.repository.saveQuote(firstQuoteResult.quote);
+
+    const firstOrderResult = await createOrder({
+      input: {
+        quoteId: firstQuoteResult.quote.quoteId,
+        quoteHash: firstQuoteResult.quote.quoteHash
+      },
+      requestId: "limited-discount-create-order",
+      requestUserContext: { userId: firstUserId },
+      deps
+    });
+    expect("error" in firstOrderResult).toBe(false);
+    if ("error" in firstOrderResult) {
+      throw new Error(firstOrderResult.error.code);
+    }
+
+    const blockedQuoteResult = await createQuote({
+      input: {
+        ...sampleQuotePayload,
+        pointsToRedeem: 0,
+        discountCode: "LIMITED5"
+      },
+      requestUserContext: { userId: secondUserId },
+      deps
+    });
+    expect("error" in blockedQuoteResult).toBe(true);
+    if (!("error" in blockedQuoteResult)) {
+      throw new Error("Expected limited discount to be unavailable while reserved");
+    }
+    expect(blockedQuoteResult.error).toMatchObject({
+      statusCode: 409,
+      code: "DISCOUNT_CODE_MAX_REDEMPTIONS"
+    });
+
+    const declinedPaymentResult = await reconcilePaymentWebhook({
+      input: {
+        eventId: "evt-discount-declined",
+        provider: "STRIPE",
+        kind: "CHARGE",
+        orderId: firstOrderResult.order.id,
+        paymentId: "123e4567-e89b-12d3-a456-426614174563",
+        status: "DECLINED",
+        amountCents: firstOrderResult.order.total.amountCents,
+        currency: "USD",
+        occurredAt: "2026-03-10T00:00:00.000Z",
+        declineCode: "card_declined"
+      },
+      requestId: "limited-discount-payment-declined",
+      deps
+    });
+    expect("error" in declinedPaymentResult).toBe(false);
+    if ("error" in declinedPaymentResult) {
+      throw new Error(declinedPaymentResult.error.code);
+    }
+
+    const released = await deps.repository.getOrderDiscountRedemption(firstOrderResult.order.id);
+    expect(released).toMatchObject({
+      status: "RELEASED",
+      releasedAt: expect.any(String)
+    });
+
+    const availableQuoteResult = await createQuote({
+      input: {
+        ...sampleQuotePayload,
+        pointsToRedeem: 0,
+        discountCode: "LIMITED5"
+      },
+      requestUserContext: { userId: secondUserId },
+      deps
+    });
+    expect("error" in availableQuoteResult).toBe(false);
+    if ("error" in availableQuoteResult) {
+      throw new Error(availableQuoteResult.error.code);
+    }
+    expect(availableQuoteResult.quote.appliedDiscountCode).toMatchObject({
+      code: "LIMITED5",
+      discountCents: 500
+    });
+  });
+
+  it("rejects order creation when a discount becomes unavailable after quote creation", async () => {
+    const firstUserId = "123e4567-e89b-12d3-a456-426614174564";
+    const secondUserId = "123e4567-e89b-12d3-a456-426614174565";
+    const { deps } = await createTestDeps(repositories);
+    const discountResult = await createDiscountCode({
+      input: {
+        locationId: sampleQuotePayload.locationId,
+        code: "RACE50",
+        name: "One use race guard",
+        type: "percent",
+        value: 50,
+        minSubtotalCents: 0,
+        eligibility: "everyone",
+        oncePerCustomer: false,
+        maxTotalRedemptions: 1,
+        active: true
+      },
+      deps
+    });
+    expect("error" in discountResult).toBe(false);
+    if ("error" in discountResult) {
+      throw new Error(discountResult.error.code);
+    }
+
+    const staleQuoteResult = await createQuote({
+      input: {
+        ...sampleQuotePayload,
+        pointsToRedeem: 0,
+        discountCode: "RACE50"
+      },
+      requestUserContext: { userId: firstUserId },
+      deps
+    });
+    expect("error" in staleQuoteResult).toBe(false);
+    if ("error" in staleQuoteResult) {
+      throw new Error(staleQuoteResult.error.code);
+    }
+    await deps.repository.saveQuote(staleQuoteResult.quote);
+
+    const winningQuoteResult = await createQuote({
+      input: {
+        ...sampleQuotePayload,
+        pointsToRedeem: 0,
+        discountCode: "RACE50"
+      },
+      requestUserContext: { userId: secondUserId },
+      deps
+    });
+    expect("error" in winningQuoteResult).toBe(false);
+    if ("error" in winningQuoteResult) {
+      throw new Error(winningQuoteResult.error.code);
+    }
+    await deps.repository.saveQuote(winningQuoteResult.quote);
+
+    const winningOrderResult = await createOrder({
+      input: {
+        quoteId: winningQuoteResult.quote.quoteId,
+        quoteHash: winningQuoteResult.quote.quoteHash
+      },
+      requestId: "discount-race-winning-order",
+      requestUserContext: { userId: secondUserId },
+      deps
+    });
+    expect("error" in winningOrderResult).toBe(false);
+    if ("error" in winningOrderResult) {
+      throw new Error(winningOrderResult.error.code);
+    }
+
+    const staleOrderResult = await createOrder({
+      input: {
+        quoteId: staleQuoteResult.quote.quoteId,
+        quoteHash: staleQuoteResult.quote.quoteHash
+      },
+      requestId: "discount-race-stale-order",
+      requestUserContext: { userId: firstUserId },
+      deps
+    });
+    expect("error" in staleOrderResult).toBe(true);
+    if (!("error" in staleOrderResult)) {
+      throw new Error("Expected stale discounted quote to be rejected");
+    }
+    expect(staleOrderResult.error).toMatchObject({
+      statusCode: 409,
+      code: "DISCOUNT_CODE_MAX_REDEMPTIONS"
+    });
   });
 
   it("cancelOrder refunds a paid order and reverses loyalty side effects", async () => {

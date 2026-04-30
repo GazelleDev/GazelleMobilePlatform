@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -160,7 +161,7 @@ export default function CheckoutScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { items, subtotalCents, clear } = useCart();
+  const { items, subtotalCents, discountCode, setDiscountCode, clear } = useCart();
   const { retryOrder, clearRetryOrder, clearFailure, setConfirmation, setFailure } = useCheckoutFlow();
   const appConfigQuery = useAppConfigQuery();
   const storeConfigQuery = useStoreConfigQuery();
@@ -213,7 +214,11 @@ export default function CheckoutScreen() {
   const [statusTone, setStatusTone] = useState<"info" | "warning">("info");
   const payActionDisabled = !checkoutReady || paymentSheetPending || checkoutMutation.isPending;
   const payActionLabel =
-    paymentSheetPending || checkoutMutation.isPending ? "Opening secure payment…" : `Pay ${formatUsd(pricingSummary.totalCents)}`;
+    paymentSheetPending || checkoutMutation.isPending
+      ? "Opening secure payment…"
+      : discountCode
+        ? "Review final total"
+        : `Pay ${formatUsd(pricingSummary.totalCents)}`;
 
   async function invalidateAccountQueries() {
     await queryClient.invalidateQueries({ queryKey: ["account"] });
@@ -279,6 +284,7 @@ export default function CheckoutScreen() {
       const preparedCheckout = await checkoutMutation.mutateAsync({
         locationId: storeConfig.locationId,
         items,
+        discountCode,
         existingOrder: retryableOrder
       });
 
@@ -501,8 +507,25 @@ export default function CheckoutScreen() {
               </View>
 
               <View style={styles.sectionDivider} />
+              <View style={styles.primaryField}>
+                <Text style={styles.fieldLabel}>Discount code</Text>
+                <TextInput
+                  value={discountCode}
+                  onChangeText={setDiscountCode}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  placeholder="LAUNCH10"
+                  placeholderTextColor={uiPalette.textMuted}
+                  style={styles.fieldInput}
+                />
+                {discountCode ? (
+                  <Text style={styles.fieldHint}>Code will be validated before Stripe opens. The payment sheet will show the final discounted total.</Text>
+                ) : null}
+              </View>
+              <View style={styles.sectionDivider} />
 
               <SummaryRow label="Subtotal" value={formatUsd(pricingSummary.subtotalCents)} />
+              {discountCode ? <SummaryRow label="Discount code" value={discountCode} /> : null}
               <SummaryRow label="Tax" value={formatUsd(pricingSummary.taxCents)} />
               <SummaryRow label="Total" value={formatUsd(pricingSummary.totalCents)} emphasized />
             </Card>
@@ -761,6 +784,12 @@ const styles = StyleSheet.create({
     color: uiPalette.text,
     fontSize: 16,
     lineHeight: 20
+  },
+  fieldHint: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 17,
+    color: uiPalette.textSecondary
   },
   fieldGrid: {
     marginTop: 14,

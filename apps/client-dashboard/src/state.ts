@@ -7,6 +7,7 @@ import type { DashboardLocation, OperatorAuthProviders, OperatorSession, Operato
 import type {
   DashboardSection,
   OperatorMenuCategory,
+  OperatorDiscountCode,
   OperatorNewsCard,
   OperatorOrder,
   OperatorOrderFilter
@@ -35,6 +36,7 @@ export type AppState = {
   menuCategories: OperatorMenuCategory[];
   menuCustomizationDrafts: Record<string, MenuItemCustomizationGroup[]>;
   newsCards: OperatorNewsCard[];
+  discountCodes: OperatorDiscountCode[];
   storeConfig: AdminStoreConfig | null;
   teamUsers: OperatorUser[];
   selectedOrderId: string | null;
@@ -45,12 +47,14 @@ export type AppState = {
   busyNewsCardId: string | null;
   busyNewsCardVisibilityId: string | null;
   busyDeleteNewsCardId: string | null;
+  busyDiscountCodeId: string | null;
   busyTeamUserId: string | null;
   savingStore: boolean;
   creatingMenuItem: boolean;
   menuCreateWizardOpen: boolean;
   menuCreateWizardStep: 1 | 2 | 3;
   creatingNewsCard: boolean;
+  creatingDiscountCode: boolean;
   creatingTeamUser: boolean;
   lastRefreshedAt: number | null;
   autoRefreshHandle: ReturnType<typeof setInterval> | null;
@@ -103,6 +107,7 @@ export const state: AppState = {
   menuCategories: [],
   menuCustomizationDrafts: {},
   newsCards: [],
+  discountCodes: [],
   storeConfig: null,
   teamUsers: [],
   selectedOrderId: null,
@@ -113,12 +118,14 @@ export const state: AppState = {
   busyNewsCardId: null,
   busyNewsCardVisibilityId: null,
   busyDeleteNewsCardId: null,
+  busyDiscountCodeId: null,
   busyTeamUserId: null,
   savingStore: false,
   creatingMenuItem: false,
   menuCreateWizardOpen: false,
   menuCreateWizardStep: 1,
   creatingNewsCard: false,
+  creatingDiscountCode: false,
   creatingTeamUser: false,
   lastRefreshedAt: null,
   autoRefreshHandle: null,
@@ -184,6 +191,7 @@ export function resetDashboardData() {
   state.menuCategories = [];
   state.menuCustomizationDrafts = {};
   state.newsCards = [];
+  state.discountCodes = [];
   state.storeConfig = null;
   state.teamUsers = [];
   state.selectedOrderId = null;

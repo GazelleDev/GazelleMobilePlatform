@@ -139,6 +139,7 @@ export async function loadDashboard(options: { silent?: boolean } = {}): Promise
       state.menuCategories = [];
       state.menuCustomizationDrafts = {};
       state.newsCards = [];
+      state.discountCodes = [];
       state.storeConfig = null;
       state.teamUsers = [];
     } else {
@@ -149,6 +150,7 @@ export async function loadDashboard(options: { silent?: boolean } = {}): Promise
       reconcileMenuCreateDraft();
       state.menuCustomizationDrafts = snapshotCustomizationDrafts(snapshot.menu.categories);
       state.newsCards = snapshot.cards;
+      state.discountCodes = snapshot.discountCodes;
       state.storeConfig = snapshot.storeConfig;
       state.teamUsers = snapshot.team;
     }

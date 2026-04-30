@@ -30,6 +30,7 @@ export type CheckoutInput = {
   locationId: string;
   items: CartItem[];
   pointsToRedeem?: number;
+  discountCode?: string;
   existingOrder?: CheckoutOrderSnapshot;
 };
 
@@ -175,10 +176,12 @@ export async function prepareStripeCheckout(
 
   let quote: Awaited<ReturnType<typeof apiClient.quoteOrder>>;
   try {
+    const discountCode = input.discountCode?.trim();
     quote = await checkoutApi.quoteOrder({
       locationId: input.locationId,
       items: quoteItems,
-      pointsToRedeem: input.pointsToRedeem ?? 0
+      pointsToRedeem: input.pointsToRedeem ?? 0,
+      ...(discountCode ? { discountCode } : {})
     });
   } catch (error) {
     const message = resolveCheckoutErrorMessage(error, "Unable to prepare checkout.");

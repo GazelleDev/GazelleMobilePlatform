@@ -66,6 +66,10 @@ import {
 } from "@lattelink/contracts-catalog";
 import {
   ordersContract,
+  createDiscountCodeRequestSchema,
+  discountCodeListResponseSchema,
+  discountCodeRedemptionsResponseSchema,
+  discountCodeSchema,
   createOrderRequestSchema,
   stripeMobilePaymentFinalizeRequestSchema,
   stripeMobilePaymentFinalizeResponseSchema,
@@ -73,7 +77,8 @@ import {
   stripeMobilePaymentSessionResponseSchema,
   orderQuoteSchema,
   orderSchema,
-  quoteRequestSchema
+  quoteRequestSchema,
+  updateDiscountCodeRequestSchema
 } from "@lattelink/contracts-orders";
 import { loyaltyBalanceSchema, loyaltyContract, loyaltyLedgerEntrySchema } from "@lattelink/contracts-loyalty";
 import {
@@ -105,6 +110,7 @@ const jwtAccessTokenClaimsSchema = z.object({
   iat: z.number().int()
 });
 const orderIdParamsSchema = z.object({ orderId: z.string().uuid() });
+const discountCodeIdParamsSchema = z.object({ discountCodeId: z.string().uuid() });
 const menuItemParamsSchema = z.object({ itemId: z.string().min(1) });
 const cardParamsSchema = z.object({ cardId: z.string().min(1) });
 const adminLocationQuerySchema = z.object({
@@ -2418,6 +2424,15 @@ export async function registerRoutes(app: FastifyInstance) {
     { preHandler: [app.rateLimit(ordersWriteRateLimit), requireCustomerAuth] },
     async (request, reply) => {
     const input = quoteRequestSchema.parse(request.body);
+    const userId = await resolveAuthenticatedUserId({
+      request,
+      reply,
+      identityBaseUrl,
+      jwtSecretConfigured: Boolean(jwtSecret)
+    });
+    if (!userId) {
+      return;
+    }
 
     return proxyUpstream({
       request,
@@ -2428,7 +2443,8 @@ export async function registerRoutes(app: FastifyInstance) {
       path: "/v1/orders/quote",
       body: input,
       additionalHeaders: {
-        "x-gateway-token": gatewayInternalApiToken
+        "x-gateway-token": gatewayInternalApiToken,
+        "x-user-id": userId
       },
       responseSchema: orderQuoteSchema,
       onSuccess: (response) => {
@@ -2438,7 +2454,7 @@ export async function registerRoutes(app: FastifyInstance) {
             event: "order.quote.created",
             timestamp: new Date().toISOString(),
             requestId: request.id,
-            userId: request.authenticatedUserId,
+            userId,
             quoteId: response.quoteId,
             locationId: response.locationId
           },
@@ -3072,6 +3088,144 @@ export async function registerRoutes(app: FastifyInstance) {
             "order status advanced"
           );
         }
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/discount-codes",
+    {
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("menu:read")]
+    },
+    async (request, reply) => {
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
+      if (locationContext.error) {
+        return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
+      }
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "GET",
+        path: `/v1/orders/admin/discount-codes?locationId=${encodeURIComponent(locationId)}`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorActorHeader(request)
+        },
+        forwardUserIdHeader: false,
+        responseSchema: discountCodeListResponseSchema
+      });
+    }
+  );
+
+  app.post(
+    "/v1/admin/discount-codes",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
+      if (locationContext.error) {
+        return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
+      }
+      const input = createDiscountCodeRequestSchema.parse({ ...(request.body as Record<string, unknown>), locationId });
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "POST",
+        path: "/v1/orders/admin/discount-codes",
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorActorHeader(request)
+        },
+        forwardUserIdHeader: false,
+        responseSchema: discountCodeSchema
+      });
+    }
+  );
+
+  app.patch(
+    "/v1/admin/discount-codes/:discountCodeId",
+    {
+      preHandler: [app.rateLimit(staffWriteRateLimit), requireOperatorCapability("menu:write")]
+    },
+    async (request, reply) => {
+      const { discountCodeId } = discountCodeIdParamsSchema.parse(request.params);
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
+      if (locationContext.error) {
+        return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
+      }
+      const input = updateDiscountCodeRequestSchema.parse({ ...(request.body as Record<string, unknown>), locationId });
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "PATCH",
+        path: `/v1/orders/admin/discount-codes/${discountCodeId}`,
+        body: input,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorActorHeader(request)
+        },
+        forwardUserIdHeader: false,
+        responseSchema: discountCodeSchema
+      });
+    }
+  );
+
+  app.get(
+    "/v1/admin/discount-codes/:discountCodeId/redemptions",
+    {
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("menu:read")]
+    },
+    async (request, reply) => {
+      const { discountCodeId } = discountCodeIdParamsSchema.parse(request.params);
+      const locationContext = resolveRequestedOperatorLocationId(request, { required: true });
+      if (locationContext.error) {
+        return reply.status(locationContext.error.code === "FORBIDDEN" ? 403 : 400).send(locationContext.error);
+      }
+      const locationId = locationContext.locationId;
+      if (!locationId) {
+        return reply.status(400).send(invalidRequest(request.id, "A locationId is required for this request"));
+      }
+      const parsedQuery = z.object({ limit: z.coerce.number().int().positive().max(250).optional() }).parse(request.query);
+
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: ordersBaseUrl,
+        serviceLabel: "Orders",
+        method: "GET",
+        path: `/v1/orders/admin/discount-codes/${discountCodeId}/redemptions?${new URLSearchParams({
+          locationId,
+          ...(parsedQuery.limit ? { limit: String(parsedQuery.limit) } : {})
+        }).toString()}`,
+        additionalHeaders: {
+          "x-gateway-token": gatewayInternalApiToken,
+          ...operatorActorHeader(request)
+        },
+        forwardUserIdHeader: false,
+        responseSchema: discountCodeRedemptionsResponseSchema
       });
     }
   );

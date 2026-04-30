@@ -267,6 +267,7 @@ describe("client dashboard model", () => {
       "orders",
       "menu",
       "cards",
+      "discounts",
       "store",
       "team"
     ]);
@@ -284,7 +285,7 @@ describe("client dashboard model", () => {
           }
         }
       )
-    ).toEqual(["overview", "menu", "cards"]);
+    ).toEqual(["overview", "menu", "cards", "discounts"]);
     expect(
       getAvailableSections(
         { ...sampleOperator, capabilities: ["menu:read"] },
@@ -298,7 +299,7 @@ describe("client dashboard model", () => {
           }
         }
       )
-    ).toEqual(["overview", "cards"]);
+    ).toEqual(["overview", "cards", "discounts"]);
   });
 
   it("resolves role labels and capability access", () => {

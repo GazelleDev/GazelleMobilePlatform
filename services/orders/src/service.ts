@@ -10,13 +10,17 @@ import {
   type StoreConfigResponse
 } from "@lattelink/contracts-catalog";
 import {
+  createDiscountCodeRequestSchema,
   createOrderRequestSchema,
+  discountCodeListResponseSchema,
+  discountCodeRedemptionsResponseSchema,
   ordersPaymentReconciliationResultSchema,
   ordersPaymentReconciliationSchema,
   orderQuoteSchema,
   orderSchema,
   orderTimelineEntrySchema,
-  quoteRequestSchema
+  quoteRequestSchema,
+  updateDiscountCodeRequestSchema
 } from "@lattelink/contracts-orders";
 import { z } from "zod";
 import { reconcileOrderFulfillmentState } from "./fulfillment.js";
@@ -26,7 +30,7 @@ import {
   OrderTransitionError,
   transitionOrderStatus
 } from "./lifecycle.js";
-import { type OrdersRepository, type QuoteCatalogItem } from "./repository.js";
+import { type DiscountCode, type OrdersRepository, type QuoteCatalogItem } from "./repository.js";
 
 const notificationOrderStatusSchema = z.enum([
   "PENDING_PAYMENT",
@@ -179,6 +183,8 @@ export type OrderStatusUpdateInput = {
   status: "IN_PREP" | "READY" | "COMPLETED";
   note?: string;
 };
+export type CreateDiscountCodeRequest = z.output<typeof createDiscountCodeRequestSchema>;
+export type UpdateDiscountCodeRequest = z.output<typeof updateDiscountCodeRequestSchema>;
 
 type QuoteRequest = z.output<typeof quoteRequestSchema>;
 type CreateOrderRequest = z.output<typeof createOrderRequestSchema>;
@@ -591,6 +597,9 @@ function buildQuoteHash(input: {
     };
   }>;
   pointsToRedeem: number;
+  discountCodeId?: string;
+  discountCode?: string;
+  discountCodeDiscountCents: number;
   subtotalCents: number;
   discountCents: number;
   taxCents: number;
@@ -606,6 +615,9 @@ function buildQuoteHash(input: {
   const hashPayload = JSON.stringify({
     locationId: input.locationId,
     pointsToRedeem: input.pointsToRedeem,
+    discountCodeId: input.discountCodeId,
+    discountCode: input.discountCode,
+    discountCodeDiscountCents: input.discountCodeDiscountCents,
     subtotalCents: input.subtotalCents,
     discountCents: input.discountCents,
     taxCents: input.taxCents,
@@ -680,7 +692,156 @@ function buildQuotedItem(item: QuoteRequest["items"][number], catalogItem: Quote
   };
 }
 
-async function buildQuote(input: QuoteRequest, repository: OrdersRepository): Promise<OrderQuote> {
+function formatCents(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+function nowMs() {
+  return Date.now();
+}
+
+function discountError(input: {
+  code: string;
+  message: string;
+  statusCode?: number;
+  details?: Record<string, unknown>;
+}) {
+  return new QuotePreparationError({
+    statusCode: input.statusCode ?? 409,
+    code: input.code,
+    message: input.message,
+    details: input.details
+  });
+}
+
+async function validateDiscountCodeForQuote(params: {
+  discountCode: DiscountCode;
+  subtotalCents: number;
+  userId?: string;
+  repository: OrdersRepository;
+}) {
+  const { discountCode, subtotalCents, userId, repository } = params;
+  const currentMs = nowMs();
+
+  if (!discountCode.active) {
+    throw discountError({
+      code: "DISCOUNT_CODE_INACTIVE",
+      message: "That discount code is no longer active."
+    });
+  }
+
+  if (discountCode.startsAt && Date.parse(discountCode.startsAt) > currentMs) {
+    throw discountError({
+      code: "DISCOUNT_CODE_NOT_STARTED",
+      message: "That discount code is not active yet."
+    });
+  }
+
+  if (discountCode.expiresAt && Date.parse(discountCode.expiresAt) <= currentMs) {
+    throw discountError({
+      code: "DISCOUNT_CODE_EXPIRED",
+      message: "That discount code has expired."
+    });
+  }
+
+  if (subtotalCents < discountCode.minSubtotalCents) {
+    throw discountError({
+      code: "DISCOUNT_CODE_MIN_SUBTOTAL",
+      message: `This discount requires a minimum order of ${formatCents(discountCode.minSubtotalCents)}.`,
+      details: {
+        minSubtotalCents: discountCode.minSubtotalCents,
+        subtotalCents
+      }
+    });
+  }
+
+  const usage = await repository.getDiscountUsage(discountCode.discountCodeId);
+  if (
+    discountCode.maxTotalRedemptions !== undefined &&
+    usage.reserved + usage.redeemed >= discountCode.maxTotalRedemptions
+  ) {
+    throw discountError({
+      code: "DISCOUNT_CODE_MAX_REDEMPTIONS",
+      message: "That discount code has reached its usage limit."
+    });
+  }
+
+  if (!userId) {
+    return;
+  }
+
+  if (discountCode.oncePerCustomer) {
+    const customerUsage = await repository.getCustomerDiscountUsage(discountCode.discountCodeId, userId);
+    if (customerUsage.reserved + customerUsage.redeemed > 0) {
+      throw discountError({
+        code: "DISCOUNT_CODE_ONCE_PER_CUSTOMER",
+        message: "You have already used this discount code."
+      });
+    }
+  }
+
+  if (discountCode.eligibility !== "everyone") {
+    const paidOrderCount = await repository.getCustomerPaidOrderCount(discountCode.locationId, userId);
+    if (discountCode.eligibility === "first_order_only" && paidOrderCount > 0) {
+      throw discountError({
+        code: "DISCOUNT_CODE_FIRST_ORDER_ONLY",
+        message: "This discount is only valid on your first order."
+      });
+    }
+
+    if (discountCode.eligibility === "existing_customers_only" && paidOrderCount === 0) {
+      throw discountError({
+        code: "DISCOUNT_CODE_EXISTING_CUSTOMERS_ONLY",
+        message: "This discount is only valid for returning customers."
+      });
+    }
+  }
+}
+
+function calculateDiscountCodeCents(discountCode: DiscountCode, subtotalCents: number) {
+  if (discountCode.type === "fixed_cents") {
+    return Math.min(discountCode.value, subtotalCents);
+  }
+
+  const uncapped = Math.floor((subtotalCents * discountCode.value) / 100);
+  return Math.min(uncapped, discountCode.maxDiscountCents ?? uncapped, subtotalCents);
+}
+
+async function resolveAppliedDiscount(params: {
+  input: QuoteRequest;
+  subtotalCents: number;
+  repository: OrdersRepository;
+  userId?: string;
+}) {
+  const { input, subtotalCents, repository, userId } = params;
+  if (!input.discountCode) {
+    return undefined;
+  }
+
+  const discountCode = await repository.getDiscountCode(input.locationId, input.discountCode);
+  if (!discountCode) {
+    throw discountError({
+      statusCode: 404,
+      code: "DISCOUNT_CODE_NOT_FOUND",
+      message: "That discount code is not valid for this store.",
+      details: { locationId: input.locationId, code: input.discountCode }
+    });
+  }
+
+  await validateDiscountCodeForQuote({
+    discountCode,
+    subtotalCents,
+    userId,
+    repository
+  });
+
+  return {
+    discountCode,
+    discountCents: calculateDiscountCodeCents(discountCode, subtotalCents)
+  };
+}
+
+async function buildQuote(input: QuoteRequest, repository: OrdersRepository, userId?: string): Promise<OrderQuote> {
   const uniqueItemIds = [...new Set(input.items.map((item) => item.itemId))];
   const catalogItems = await repository.getCatalogItemsForQuote(input.locationId, uniqueItemIds);
   const quotedItems = input.items.map((item) => {
@@ -701,18 +862,53 @@ async function buildQuote(input: QuoteRequest, repository: OrdersRepository): Pr
   });
 
   const subtotalCents = quotedItems.reduce((sum, item) => sum + item.unitPriceCents * item.quantity, 0);
-  const appliedPoints = Math.min(input.pointsToRedeem, subtotalCents);
-  const taxBaseCents = subtotalCents - appliedPoints;
+  const appliedDiscount = await resolveAppliedDiscount({
+    input,
+    subtotalCents,
+    repository,
+    userId
+  });
+  const discountCodeDiscountCents = appliedDiscount?.discountCents ?? 0;
+  const remainingSubtotalCents = Math.max(subtotalCents - discountCodeDiscountCents, 0);
+  const appliedPoints = Math.min(input.pointsToRedeem, remainingSubtotalCents);
+  const totalDiscountCents = discountCodeDiscountCents + appliedPoints;
+  const taxBaseCents = subtotalCents - totalDiscountCents;
   const taxRateBasisPoints = await repository.getTaxRateBasisPoints(input.locationId);
   const taxCents = Math.round((taxBaseCents * taxRateBasisPoints) / 10_000);
   const totalCents = taxBaseCents + taxCents;
+  const discounts = [
+    appliedDiscount
+      ? {
+          type: "discount_code" as const,
+          code: appliedDiscount.discountCode.code,
+          label: appliedDiscount.discountCode.name,
+          amount: { currency: "USD" as const, amountCents: discountCodeDiscountCents }
+        }
+      : undefined,
+    appliedPoints > 0
+      ? {
+          type: "loyalty" as const,
+          label: "Loyalty points",
+          amount: { currency: "USD" as const, amountCents: appliedPoints }
+        }
+      : undefined
+  ].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
   return orderQuoteSchema.parse({
     quoteId: randomUUID(),
     locationId: input.locationId,
     items: quotedItems,
     subtotal: { currency: "USD", amountCents: subtotalCents },
-    discount: { currency: "USD", amountCents: appliedPoints },
+    discount: { currency: "USD", amountCents: totalDiscountCents },
+    discounts,
+    appliedDiscountCode: appliedDiscount
+      ? {
+          discountCodeId: appliedDiscount.discountCode.discountCodeId,
+          code: appliedDiscount.discountCode.code,
+          name: appliedDiscount.discountCode.name,
+          discountCents: discountCodeDiscountCents
+        }
+      : undefined,
     tax: { currency: "USD", amountCents: taxCents },
     total: { currency: "USD", amountCents: totalCents },
     pointsToRedeem: appliedPoints,
@@ -720,8 +916,11 @@ async function buildQuote(input: QuoteRequest, repository: OrdersRepository): Pr
       locationId: input.locationId,
       items: quotedItems,
       pointsToRedeem: appliedPoints,
+      discountCodeId: appliedDiscount?.discountCode.discountCodeId,
+      discountCode: appliedDiscount?.discountCode.code,
+      discountCodeDiscountCents,
       subtotalCents,
-      discountCents: appliedPoints,
+      discountCents: totalDiscountCents,
       taxCents,
       totalCents
     })
@@ -749,6 +948,71 @@ function createOrderFromQuote(quote: OrderQuote): Order {
         source: "customer"
       })
     ]
+  });
+}
+
+async function validateAppliedDiscountForOrder(params: {
+  quote: OrderQuote;
+  userId: string;
+  repository: OrdersRepository;
+}): Promise<ServiceError | undefined> {
+  const appliedDiscountCode = params.quote.appliedDiscountCode;
+  if (!appliedDiscountCode) {
+    return undefined;
+  }
+
+  try {
+    const discountCode = await params.repository.getDiscountCodeById(
+      params.quote.locationId,
+      appliedDiscountCode.discountCodeId
+    );
+    if (!discountCode || discountCode.code !== appliedDiscountCode.code) {
+      throw discountError({
+        statusCode: 404,
+        code: "DISCOUNT_CODE_NOT_FOUND",
+        message: "That discount code is not valid for this store."
+      });
+    }
+
+    await validateDiscountCodeForQuote({
+      discountCode,
+      subtotalCents: params.quote.subtotal.amountCents,
+      userId: params.userId,
+      repository: params.repository
+    });
+    return undefined;
+  } catch (error) {
+    if (error instanceof QuotePreparationError) {
+      return buildServiceError({
+        statusCode: error.statusCode,
+        code: error.code,
+        message: error.message,
+        details: error.details
+      });
+    }
+
+    throw error;
+  }
+}
+
+async function reserveAppliedDiscountForOrder(params: {
+  quote: OrderQuote;
+  order: Order;
+  userId: string;
+  repository: OrdersRepository;
+}): Promise<boolean> {
+  const appliedDiscountCode = params.quote.appliedDiscountCode;
+  if (!appliedDiscountCode || appliedDiscountCode.discountCents <= 0) {
+    return true;
+  }
+
+  return params.repository.reserveDiscountForOrder({
+    discountCodeId: appliedDiscountCode.discountCodeId,
+    locationId: params.quote.locationId,
+    code: appliedDiscountCode.code,
+    orderId: params.order.id,
+    userId: params.userId,
+    discountCents: appliedDiscountCode.discountCents
   });
 }
 
@@ -921,15 +1185,20 @@ async function requestSuccessfulRefund(params: {
 
 export async function createQuote(params: {
   input: QuoteRequest;
+  requestUserContext?: RequestUserContext;
   deps: OrderServiceDeps;
 }): Promise<{ quote: OrderQuote } | { error: ServiceError }> {
   try {
+    if (params.requestUserContext?.error) {
+      return { error: params.requestUserContext.error };
+    }
+
     const storeAvailability = await ensureStoreIsOpen(params.deps, params.input.locationId);
     if ("error" in storeAvailability) {
       return storeAvailability;
     }
 
-    const quote = await buildQuote(params.input, params.deps.repository);
+    const quote = await buildQuote(params.input, params.deps.repository, params.requestUserContext?.userId);
     return { quote };
   } catch (error) {
     if (error instanceof QuotePreparationError) {
@@ -945,6 +1214,98 @@ export async function createQuote(params: {
 
     throw error;
   }
+}
+
+export async function listDiscountCodes(params: {
+  locationId: string;
+  deps: OrderServiceDeps;
+}) {
+  const discountCodes = await params.deps.repository.listDiscountCodes(params.locationId);
+  return discountCodeListResponseSchema.parse({ discountCodes });
+}
+
+export async function createDiscountCode(params: {
+  input: CreateDiscountCodeRequest;
+  deps: OrderServiceDeps;
+}): Promise<{ discountCode: DiscountCode } | { error: ServiceError }> {
+  const existing = await params.deps.repository.getDiscountCode(params.input.locationId, params.input.code);
+  if (existing) {
+    return {
+      error: buildServiceError({
+        statusCode: 409,
+        code: "DISCOUNT_CODE_EXISTS",
+        message: "A discount code with this code already exists for this location.",
+        details: { locationId: params.input.locationId, code: params.input.code }
+      })
+    };
+  }
+
+  const discountCode = await params.deps.repository.createDiscountCode({
+    locationId: params.input.locationId,
+    code: params.input.code,
+    name: params.input.name,
+    type: params.input.type,
+    value: params.input.value,
+    maxDiscountCents: params.input.maxDiscountCents,
+    minSubtotalCents: params.input.minSubtotalCents,
+    eligibility: params.input.eligibility,
+    oncePerCustomer: params.input.oncePerCustomer,
+    maxTotalRedemptions: params.input.maxTotalRedemptions,
+    active: params.input.active,
+    startsAt: params.input.startsAt,
+    expiresAt: params.input.expiresAt
+  });
+
+  return { discountCode };
+}
+
+export async function updateDiscountCode(params: {
+  discountCodeId: string;
+  input: UpdateDiscountCodeRequest;
+  deps: OrderServiceDeps;
+}): Promise<{ discountCode: DiscountCode } | { error: ServiceError }> {
+  const discountCode = await params.deps.repository.updateDiscountCode({
+    discountCodeId: params.discountCodeId,
+    locationId: params.input.locationId,
+    name: params.input.name,
+    type: params.input.type,
+    value: params.input.value,
+    maxDiscountCents: params.input.maxDiscountCents,
+    minSubtotalCents: params.input.minSubtotalCents,
+    eligibility: params.input.eligibility,
+    oncePerCustomer: params.input.oncePerCustomer,
+    maxTotalRedemptions: params.input.maxTotalRedemptions,
+    active: params.input.active,
+    startsAt: params.input.startsAt,
+    expiresAt: params.input.expiresAt
+  });
+
+  if (!discountCode) {
+    return {
+      error: buildServiceError({
+        statusCode: 404,
+        code: "DISCOUNT_CODE_NOT_FOUND",
+        message: "Discount code not found",
+        details: { discountCodeId: params.discountCodeId, locationId: params.input.locationId }
+      })
+    };
+  }
+
+  return { discountCode };
+}
+
+export async function listDiscountCodeRedemptions(params: {
+  locationId: string;
+  discountCodeId: string;
+  limit?: number;
+  deps: OrderServiceDeps;
+}) {
+  const redemptions = await params.deps.repository.listDiscountRedemptions({
+    locationId: params.locationId,
+    discountCodeId: params.discountCodeId,
+    limit: params.limit
+  });
+  return discountCodeRedemptionsResponseSchema.parse({ redemptions });
 }
 
 export async function createOrder(params: {
@@ -1002,6 +1363,7 @@ export async function createOrder(params: {
         note: "Superseded by a new checkout attempt.",
         source: "customer"
       });
+      await deps.repository.releaseDiscountForOrder(activeOrder.id);
       await deps.repository.updateOrder(activeOrder.id, staleCancellation.order);
     } else {
       return {
@@ -1015,12 +1377,41 @@ export async function createOrder(params: {
     return storeAvailability;
   }
 
+  const discountValidationError = await validateAppliedDiscountForOrder({
+    quote,
+    userId: requestUserId,
+    repository: deps.repository
+  });
+  if (discountValidationError) {
+    return { error: discountValidationError };
+  }
+
   const order = createOrderFromQuote(quote);
   await deps.repository.createOrder({
     order,
     quoteId: quote.quoteId,
     userId: requestUserId
   });
+  const discountReserved = await reserveAppliedDiscountForOrder({
+    quote,
+    order,
+    userId: requestUserId,
+    repository: deps.repository
+  });
+  if (!discountReserved) {
+    const canceledOrder = transitionOrderStatus(order, "CANCELED", {
+      note: "Discount code became unavailable before payment.",
+      source: "system"
+    });
+    await deps.repository.updateOrder(order.id, canceledOrder.order);
+    return {
+      error: buildServiceError({
+        statusCode: 409,
+        code: "DISCOUNT_CODE_UNAVAILABLE",
+        message: "That discount code is no longer available. Please review your cart and try again."
+      })
+    };
+  }
   await deps.repository.saveCreateOrderIdempotency(input.quoteId, input.quoteHash, order.id);
   await sendOrderStateNotification({
     requestId,
@@ -1286,6 +1677,7 @@ export async function cancelOrder(params: {
     note: `Canceled by ${cancelActorLabel}: ${input.reason}.${refundNote}`,
     source: cancelSource
   });
+  await deps.repository.releaseDiscountForOrder(orderId);
   await deps.repository.updateOrder(orderId, canceledTransition.order);
 
   const notificationUserId = await resolveOrderUserId({
@@ -1356,6 +1748,7 @@ export async function reconcilePaymentWebhook(params: {
     await deps.repository.setSuccessfulCharge(input.orderId, chargeSnapshot);
 
     if (input.status !== "SUCCEEDED") {
+      await deps.repository.releaseDiscountForOrder(input.orderId);
       return {
         result: ordersPaymentReconciliationResultSchema.parse({
           accepted: true,
@@ -1433,7 +1826,12 @@ export async function reconcilePaymentWebhook(params: {
       return { error: earnResult };
     }
 
+    await deps.repository.redeemDiscountForOrder(input.orderId);
+    const discountRedemption = await deps.repository.getOrderDiscountRedemption(input.orderId);
     const loyaltyParts = [
+      discountRedemption?.status === "REDEEMED"
+        ? `Applied ${discountRedemption.code} discount (${formatCents(discountRedemption.discountCents)})`
+        : undefined,
       orderQuote.pointsToRedeem > 0 ? `redeemed ${orderQuote.pointsToRedeem} loyalty points` : undefined,
       `Earned ${existingOrder.total.amountCents} loyalty points`
     ].filter((value): value is string => Boolean(value));

@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 import { normalizeCustomizationGroups, type MenuItemCustomizationGroup } from "@lattelink/contracts-catalog";
-import { orderCustomerSchema, orderQuoteSchema, orderSchema } from "@lattelink/contracts-orders";
+import {
+  discountCodeRedemptionSchema,
+  discountCodeSchema,
+  orderCustomerSchema,
+  orderQuoteSchema,
+  orderSchema
+} from "@lattelink/contracts-orders";
 import {
   allowsInMemoryPersistence,
   buildPersistenceStartupError,
@@ -17,6 +23,49 @@ import { z } from "zod";
 type OrderQuote = z.output<typeof orderQuoteSchema>;
 type Order = z.output<typeof orderSchema>;
 type OrderCustomer = z.output<typeof orderCustomerSchema>;
+export type DiscountCode = z.output<typeof discountCodeSchema>;
+export type DiscountCodeRedemption = z.output<typeof discountCodeRedemptionSchema>;
+
+export type CreateDiscountCodeInput = {
+  locationId: string;
+  code: string;
+  name: string;
+  type: "percent" | "fixed_cents";
+  value: number;
+  maxDiscountCents?: number;
+  minSubtotalCents: number;
+  eligibility: "everyone" | "first_order_only" | "existing_customers_only";
+  oncePerCustomer: boolean;
+  maxTotalRedemptions?: number;
+  active: boolean;
+  startsAt?: string;
+  expiresAt?: string;
+};
+
+export type UpdateDiscountCodeInput = Partial<
+  Omit<CreateDiscountCodeInput, "locationId" | "code" | "maxDiscountCents" | "maxTotalRedemptions" | "startsAt" | "expiresAt">
+> & {
+  discountCodeId: string;
+  locationId: string;
+  maxDiscountCents?: number | null;
+  maxTotalRedemptions?: number | null;
+  startsAt?: string | null;
+  expiresAt?: string | null;
+};
+
+export type DiscountUsage = {
+  reserved: number;
+  redeemed: number;
+};
+
+export type ReserveDiscountInput = {
+  discountCodeId: string;
+  locationId: string;
+  code: string;
+  orderId: string;
+  userId: string;
+  discountCents: number;
+};
 
 type StoredOrderRecord = {
   order: Order;
@@ -103,6 +152,80 @@ function parseIsoDate(value: unknown) {
   return new Date(String(value)).toISOString();
 }
 
+function optionalIsoDate(value: string | Date | null | undefined) {
+  return value ? parseIsoDate(value) : undefined;
+}
+
+function toDiscountCode(input: {
+  discount_code_id: string;
+  location_id: string;
+  code: string;
+  name: string;
+  type: "percent" | "fixed_cents";
+  value: number;
+  max_discount_cents: number | null;
+  min_subtotal_cents: number;
+  eligibility: "everyone" | "first_order_only" | "existing_customers_only";
+  once_per_customer: boolean;
+  max_total_redemptions: number | null;
+  active: boolean;
+  starts_at: string | Date | null;
+  expires_at: string | Date | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+  redeemed_count?: number | string | bigint | null;
+  reserved_count?: number | string | bigint | null;
+}): DiscountCode {
+  return discountCodeSchema.parse({
+    discountCodeId: input.discount_code_id,
+    locationId: input.location_id,
+    code: input.code,
+    name: input.name,
+    type: input.type,
+    value: input.value,
+    maxDiscountCents: input.max_discount_cents ?? undefined,
+    minSubtotalCents: input.min_subtotal_cents,
+    eligibility: input.eligibility,
+    oncePerCustomer: input.once_per_customer,
+    maxTotalRedemptions: input.max_total_redemptions ?? undefined,
+    active: input.active,
+    startsAt: optionalIsoDate(input.starts_at),
+    expiresAt: optionalIsoDate(input.expires_at),
+    redeemedCount: Number(input.redeemed_count ?? 0),
+    reservedCount: Number(input.reserved_count ?? 0),
+    createdAt: parseIsoDate(input.created_at),
+    updatedAt: parseIsoDate(input.updated_at)
+  });
+}
+
+function toDiscountCodeRedemption(input: {
+  redemption_id: string;
+  discount_code_id: string;
+  location_id: string;
+  code: string;
+  order_id: string;
+  user_id: string;
+  discount_cents: number;
+  status: "RESERVED" | "REDEEMED" | "RELEASED";
+  reserved_at: string | Date;
+  redeemed_at: string | Date | null;
+  released_at: string | Date | null;
+}): DiscountCodeRedemption {
+  return discountCodeRedemptionSchema.parse({
+    redemptionId: input.redemption_id,
+    discountCodeId: input.discount_code_id,
+    locationId: input.location_id,
+    code: input.code,
+    orderId: input.order_id,
+    userId: input.user_id,
+    discountCents: input.discount_cents,
+    status: input.status,
+    reservedAt: parseIsoDate(input.reserved_at),
+    redeemedAt: optionalIsoDate(input.redeemed_at),
+    releasedAt: optionalIsoDate(input.released_at)
+  });
+}
+
 export type QuoteCatalogItem = {
   itemId: string;
   itemName: string;
@@ -137,6 +260,19 @@ export type OrdersRepository = {
   updateOrder(orderId: string, order: Order): Promise<Order>;
   writeAuditLog(entry: AuditLogEntry): Promise<void>;
   lookupSupportOrders(input: { query: string; locationId?: string; limit?: number }): Promise<SupportOrderLookupResult[]>;
+  listDiscountCodes(locationId: string): Promise<DiscountCode[]>;
+  getDiscountCode(locationId: string, code: string): Promise<DiscountCode | undefined>;
+  getDiscountCodeById(locationId: string, discountCodeId: string): Promise<DiscountCode | undefined>;
+  createDiscountCode(input: CreateDiscountCodeInput): Promise<DiscountCode>;
+  updateDiscountCode(input: UpdateDiscountCodeInput): Promise<DiscountCode | undefined>;
+  getDiscountUsage(discountCodeId: string): Promise<DiscountUsage>;
+  getCustomerDiscountUsage(discountCodeId: string, userId: string): Promise<DiscountUsage>;
+  getCustomerPaidOrderCount(locationId: string, userId: string): Promise<number>;
+  reserveDiscountForOrder(input: ReserveDiscountInput): Promise<boolean>;
+  redeemDiscountForOrder(orderId: string): Promise<void>;
+  releaseDiscountForOrder(orderId: string): Promise<void>;
+  getOrderDiscountRedemption(orderId: string): Promise<DiscountCodeRedemption | undefined>;
+  listDiscountRedemptions(input: { locationId: string; discountCodeId: string; limit?: number }): Promise<DiscountCodeRedemption[]>;
   getCatalogItemsForQuote(locationId: string, itemIds: string[]): Promise<Map<string, QuoteCatalogItem>>;
   getTaxRateBasisPoints(locationId: string): Promise<number>;
   pingDb(): Promise<void>;
@@ -294,6 +430,27 @@ function createInMemoryRepository(): OrdersRepository {
   const createOrderIdempotency = new Map<string, string>();
   const paymentIdempotency = new Map<string, string>();
   const auditLog: SupportAuditLogEntry[] = [];
+  const discountCodesById = new Map<string, DiscountCode>();
+  const discountCodeRedemptionsByOrderId = new Map<string, DiscountCodeRedemption>();
+
+  function discountUsage(discountCodeId: string): DiscountUsage {
+    const redemptions = [...discountCodeRedemptionsByOrderId.values()].filter(
+      (redemption) => redemption.discountCodeId === discountCodeId
+    );
+    return {
+      reserved: redemptions.filter((redemption) => redemption.status === "RESERVED").length,
+      redeemed: redemptions.filter((redemption) => redemption.status === "REDEEMED").length
+    };
+  }
+
+  function attachDiscountUsage(discountCode: DiscountCode): DiscountCode {
+    const usage = discountUsage(discountCode.discountCodeId);
+    return {
+      ...discountCode,
+      reservedCount: usage.reserved,
+      redeemedCount: usage.redeemed
+    };
+  }
 
   return {
     backend: "memory",
@@ -471,6 +628,179 @@ function createInMemoryRepository(): OrdersRepository {
         auditLog: auditLog.filter((entry) => entry.targetType === "order" && entry.targetId === record.order.id)
       }));
     },
+    async listDiscountCodes(locationId) {
+      return [...discountCodesById.values()]
+        .filter((discountCode) => discountCode.locationId === locationId)
+        .map(attachDiscountUsage)
+        .sort((left, right) => left.code.localeCompare(right.code));
+    },
+    async getDiscountCode(locationId, code) {
+      const discountCode = [...discountCodesById.values()].find(
+        (entry) => entry.locationId === locationId && entry.code === code
+      );
+      return discountCode ? attachDiscountUsage(discountCode) : undefined;
+    },
+    async getDiscountCodeById(locationId, discountCodeId) {
+      const discountCode = discountCodesById.get(discountCodeId);
+      return discountCode && discountCode.locationId === locationId ? attachDiscountUsage(discountCode) : undefined;
+    },
+    async createDiscountCode(input) {
+      const existing = [...discountCodesById.values()].find(
+        (entry) => entry.locationId === input.locationId && entry.code === input.code
+      );
+      if (existing) {
+        throw new Error("discount code already exists for location");
+      }
+
+      const now = new Date().toISOString();
+      const discountCode = discountCodeSchema.parse({
+        discountCodeId: randomUUID(),
+        locationId: input.locationId,
+        code: input.code,
+        name: input.name,
+        type: input.type,
+        value: input.value,
+        maxDiscountCents: input.maxDiscountCents,
+        minSubtotalCents: input.minSubtotalCents,
+        eligibility: input.eligibility,
+        oncePerCustomer: input.oncePerCustomer,
+        maxTotalRedemptions: input.maxTotalRedemptions,
+        active: input.active,
+        startsAt: input.startsAt,
+        expiresAt: input.expiresAt,
+        redeemedCount: 0,
+        reservedCount: 0,
+        createdAt: now,
+        updatedAt: now
+      });
+      discountCodesById.set(discountCode.discountCodeId, discountCode);
+      return discountCode;
+    },
+    async updateDiscountCode(input) {
+      const existing = discountCodesById.get(input.discountCodeId);
+      if (!existing || existing.locationId !== input.locationId) {
+        return undefined;
+      }
+
+      const updated = discountCodeSchema.parse({
+        ...existing,
+        name: input.name ?? existing.name,
+        type: input.type ?? existing.type,
+        value: input.value ?? existing.value,
+        maxDiscountCents: input.maxDiscountCents !== undefined ? (input.maxDiscountCents ?? undefined) : existing.maxDiscountCents,
+        minSubtotalCents: input.minSubtotalCents ?? existing.minSubtotalCents,
+        eligibility: input.eligibility ?? existing.eligibility,
+        oncePerCustomer: input.oncePerCustomer ?? existing.oncePerCustomer,
+        maxTotalRedemptions:
+          input.maxTotalRedemptions !== undefined ? (input.maxTotalRedemptions ?? undefined) : existing.maxTotalRedemptions,
+        active: input.active ?? existing.active,
+        startsAt: input.startsAt !== undefined ? (input.startsAt ?? undefined) : existing.startsAt,
+        expiresAt: input.expiresAt !== undefined ? (input.expiresAt ?? undefined) : existing.expiresAt,
+        updatedAt: new Date().toISOString()
+      });
+      discountCodesById.set(updated.discountCodeId, updated);
+      return attachDiscountUsage(updated);
+    },
+    async getDiscountUsage(discountCodeId) {
+      return discountUsage(discountCodeId);
+    },
+    async getCustomerDiscountUsage(discountCodeId, userId) {
+      const redemptions = [...discountCodeRedemptionsByOrderId.values()].filter(
+        (redemption) => redemption.discountCodeId === discountCodeId && redemption.userId === userId
+      );
+      return {
+        reserved: redemptions.filter((redemption) => redemption.status === "RESERVED").length,
+        redeemed: redemptions.filter((redemption) => redemption.status === "REDEEMED").length
+      };
+    },
+    async getCustomerPaidOrderCount(locationId, userId) {
+      return [...ordersById.values()].filter(
+        (record) => record.userId === userId && record.order.locationId === locationId && record.order.status !== "PENDING_PAYMENT"
+      ).length;
+    },
+    async reserveDiscountForOrder(input) {
+      const existing = discountCodeRedemptionsByOrderId.get(input.orderId);
+      if (existing) {
+        return true;
+      }
+
+      const discountCode = discountCodesById.get(input.discountCodeId);
+      if (!discountCode || discountCode.locationId !== input.locationId) {
+        return false;
+      }
+
+      const usage = discountUsage(input.discountCodeId);
+      if (
+        discountCode.maxTotalRedemptions !== undefined &&
+        usage.reserved + usage.redeemed >= discountCode.maxTotalRedemptions
+      ) {
+        return false;
+      }
+
+      if (discountCode.oncePerCustomer) {
+        const customerUsage = [...discountCodeRedemptionsByOrderId.values()].filter(
+          (redemption) =>
+            redemption.discountCodeId === input.discountCodeId &&
+            redemption.userId === input.userId &&
+            (redemption.status === "RESERVED" || redemption.status === "REDEEMED")
+        );
+        if (customerUsage.length > 0) {
+          return false;
+        }
+      }
+
+      const now = new Date().toISOString();
+      discountCodeRedemptionsByOrderId.set(
+        input.orderId,
+        discountCodeRedemptionSchema.parse({
+          redemptionId: randomUUID(),
+          discountCodeId: input.discountCodeId,
+          locationId: input.locationId,
+          code: input.code,
+          orderId: input.orderId,
+          userId: input.userId,
+          discountCents: input.discountCents,
+          status: "RESERVED",
+          reservedAt: now
+        })
+      );
+      return true;
+    },
+    async redeemDiscountForOrder(orderId) {
+      const existing = discountCodeRedemptionsByOrderId.get(orderId);
+      if (!existing || existing.status === "REDEEMED") {
+        return;
+      }
+
+      discountCodeRedemptionsByOrderId.set(orderId, {
+        ...existing,
+        status: "REDEEMED",
+        redeemedAt: new Date().toISOString()
+      });
+    },
+    async releaseDiscountForOrder(orderId) {
+      const existing = discountCodeRedemptionsByOrderId.get(orderId);
+      if (!existing || existing.status === "RELEASED" || existing.status === "REDEEMED") {
+        return;
+      }
+
+      discountCodeRedemptionsByOrderId.set(orderId, {
+        ...existing,
+        status: "RELEASED",
+        releasedAt: new Date().toISOString()
+      });
+    },
+    async getOrderDiscountRedemption(orderId) {
+      return discountCodeRedemptionsByOrderId.get(orderId);
+    },
+    async listDiscountRedemptions(input) {
+      return [...discountCodeRedemptionsByOrderId.values()]
+        .filter(
+          (redemption) =>
+            redemption.locationId === input.locationId && redemption.discountCodeId === input.discountCodeId
+        )
+        .slice(0, input.limit ?? 100);
+    },
     async getCatalogItemsForQuote(_locationId, itemIds) {
       const items = new Map<string, QuoteCatalogItem>();
       for (const itemId of itemIds) {
@@ -537,6 +867,41 @@ async function createPostgresRepository(
 
   function parseCustomizationGroups(payload: unknown) {
     return normalizeCustomizationGroups(typeof payload === "string" ? JSON.parse(payload) : payload);
+  }
+
+  async function getDiscountUsageById(discountCodeId: string): Promise<DiscountUsage> {
+    const rows = await db
+      .selectFrom("discount_code_redemptions")
+      .select(["status", sql<number>`count(*)::int`.as("count")])
+      .where("discount_code_id", "=", discountCodeId)
+      .where("status", "in", ["RESERVED", "REDEEMED"])
+      .groupBy("status")
+      .execute();
+
+    return {
+      reserved: Number(rows.find((row) => row.status === "RESERVED")?.count ?? 0),
+      redeemed: Number(rows.find((row) => row.status === "REDEEMED")?.count ?? 0)
+    };
+  }
+
+  async function getDiscountCodeByRowId(locationId: string, discountCodeId: string): Promise<DiscountCode | undefined> {
+    const row = await db
+      .selectFrom("discount_codes")
+      .selectAll()
+      .where("location_id", "=", locationId)
+      .where("discount_code_id", "=", discountCodeId)
+      .executeTakeFirst();
+
+    if (!row) {
+      return undefined;
+    }
+
+    const usage = await getDiscountUsageById(row.discount_code_id);
+    return toDiscountCode({
+      ...row,
+      reserved_count: usage.reserved,
+      redeemed_count: usage.redeemed
+    });
   }
 
   async function getQuoteById(quoteId: string): Promise<OrderQuote | undefined> {
@@ -914,6 +1279,250 @@ async function createPostgresRepository(
           auditLog: auditByOrderId.get(order.id) ?? []
         };
       });
+    },
+    async listDiscountCodes(locationId) {
+      const rows = await db
+        .selectFrom("discount_codes")
+        .selectAll()
+        .where("location_id", "=", locationId)
+        .orderBy("code", "asc")
+        .execute();
+
+      const discountCodes: DiscountCode[] = [];
+      for (const row of rows) {
+        const usage = await getDiscountUsageById(row.discount_code_id);
+        discountCodes.push(
+          toDiscountCode({
+            ...row,
+            reserved_count: usage.reserved,
+            redeemed_count: usage.redeemed
+          })
+        );
+      }
+
+      return discountCodes;
+    },
+    async getDiscountCode(locationId, code) {
+      const row = await db
+        .selectFrom("discount_codes")
+        .selectAll()
+        .where("location_id", "=", locationId)
+        .where("code", "=", code)
+        .executeTakeFirst();
+
+      if (!row) {
+        return undefined;
+      }
+
+      const usage = await getDiscountUsageById(row.discount_code_id);
+      return toDiscountCode({
+        ...row,
+        reserved_count: usage.reserved,
+        redeemed_count: usage.redeemed
+      });
+    },
+    async getDiscountCodeById(locationId, discountCodeId) {
+      return getDiscountCodeByRowId(locationId, discountCodeId);
+    },
+    async createDiscountCode(input) {
+      await db
+        .insertInto("discount_codes")
+        .values({
+          location_id: input.locationId,
+          code: input.code,
+          name: input.name,
+          type: input.type,
+          value: input.value,
+          max_discount_cents: input.maxDiscountCents ?? null,
+          min_subtotal_cents: input.minSubtotalCents,
+          eligibility: input.eligibility,
+          once_per_customer: input.oncePerCustomer,
+          max_total_redemptions: input.maxTotalRedemptions ?? null,
+          active: input.active,
+          starts_at: input.startsAt ?? null,
+          expires_at: input.expiresAt ?? null
+        })
+        .execute();
+
+      const created = await db
+        .selectFrom("discount_codes")
+        .selectAll()
+        .where("location_id", "=", input.locationId)
+        .where("code", "=", input.code)
+        .executeTakeFirst();
+      if (!created) {
+        throw new Error("discount code was not found after creation");
+      }
+      return toDiscountCode({
+        ...created,
+        reserved_count: 0,
+        redeemed_count: 0
+      });
+    },
+    async updateDiscountCode(input) {
+      await db
+        .updateTable("discount_codes")
+        .set({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.type !== undefined ? { type: input.type } : {}),
+          ...(input.value !== undefined ? { value: input.value } : {}),
+          ...(input.maxDiscountCents !== undefined ? { max_discount_cents: input.maxDiscountCents } : {}),
+          ...(input.minSubtotalCents !== undefined ? { min_subtotal_cents: input.minSubtotalCents } : {}),
+          ...(input.eligibility !== undefined ? { eligibility: input.eligibility } : {}),
+          ...(input.oncePerCustomer !== undefined ? { once_per_customer: input.oncePerCustomer } : {}),
+          ...(input.maxTotalRedemptions !== undefined ? { max_total_redemptions: input.maxTotalRedemptions } : {}),
+          ...(input.active !== undefined ? { active: input.active } : {}),
+          ...(input.startsAt !== undefined ? { starts_at: input.startsAt } : {}),
+          ...(input.expiresAt !== undefined ? { expires_at: input.expiresAt } : {}),
+          updated_at: new Date().toISOString()
+        })
+        .where("discount_code_id", "=", input.discountCodeId)
+        .where("location_id", "=", input.locationId)
+        .execute();
+
+      return getDiscountCodeByRowId(input.locationId, input.discountCodeId);
+    },
+    async getDiscountUsage(discountCodeId) {
+      return getDiscountUsageById(discountCodeId);
+    },
+    async getCustomerDiscountUsage(discountCodeId, userId) {
+      const rows = await db
+        .selectFrom("discount_code_redemptions")
+        .select(["status", sql<number>`count(*)::int`.as("count")])
+        .where("discount_code_id", "=", discountCodeId)
+        .where("user_id", "=", userId)
+        .where("status", "in", ["RESERVED", "REDEEMED"])
+        .groupBy("status")
+        .execute();
+
+      return {
+        reserved: Number(rows.find((row) => row.status === "RESERVED")?.count ?? 0),
+        redeemed: Number(rows.find((row) => row.status === "REDEEMED")?.count ?? 0)
+      };
+    },
+    async getCustomerPaidOrderCount(locationId, userId) {
+      const row = await db
+        .selectFrom("orders")
+        .select(sql<number>`count(*)::int`.as("count"))
+        .where("user_id", "=", userId)
+        .where(sql`orders.order_json->>'locationId'`, "=", locationId)
+        .where(sql`orders.order_json->>'status'`, "in", ["PAID", "IN_PREP", "READY", "COMPLETED"])
+        .executeTakeFirst();
+
+      return Number(row?.count ?? 0);
+    },
+    async reserveDiscountForOrder(input) {
+      const existing = await db
+        .selectFrom("discount_code_redemptions")
+        .select("redemption_id")
+        .where("order_id", "=", input.orderId)
+        .executeTakeFirst();
+      if (existing) {
+        return true;
+      }
+
+      return db.transaction().execute(async (trx) => {
+        const discountCode = await trx
+          .selectFrom("discount_codes")
+          .select(["discount_code_id", "max_total_redemptions", "once_per_customer"])
+          .where("discount_code_id", "=", input.discountCodeId)
+          .where("location_id", "=", input.locationId)
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (!discountCode) {
+          return false;
+        }
+
+        const usage = await trx
+          .selectFrom("discount_code_redemptions")
+          .select(sql<number>`count(*)::int`.as("count"))
+          .where("discount_code_id", "=", input.discountCodeId)
+          .where("status", "in", ["RESERVED", "REDEEMED"])
+          .executeTakeFirst();
+
+        if (
+          discountCode.max_total_redemptions !== null &&
+          Number(usage?.count ?? 0) >= discountCode.max_total_redemptions
+        ) {
+          return false;
+        }
+
+        if (discountCode.once_per_customer) {
+          const customerUsage = await trx
+            .selectFrom("discount_code_redemptions")
+            .select("redemption_id")
+            .where("discount_code_id", "=", input.discountCodeId)
+            .where("user_id", "=", input.userId)
+            .where("status", "in", ["RESERVED", "REDEEMED"])
+            .executeTakeFirst();
+
+          if (customerUsage) {
+            return false;
+          }
+        }
+
+        const inserted = await trx
+          .insertInto("discount_code_redemptions")
+          .values({
+            discount_code_id: input.discountCodeId,
+            location_id: input.locationId,
+            code: input.code,
+            order_id: input.orderId,
+            user_id: input.userId,
+            discount_cents: input.discountCents,
+            status: "RESERVED"
+          })
+          .onConflict((oc) => oc.column("order_id").doNothing())
+          .returning("redemption_id")
+          .executeTakeFirst();
+
+        return Boolean(inserted);
+      });
+    },
+    async redeemDiscountForOrder(orderId) {
+      await db
+        .updateTable("discount_code_redemptions")
+        .set({
+          status: "REDEEMED",
+          redeemed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .where("order_id", "=", orderId)
+        .where("status", "=", "RESERVED")
+        .execute();
+    },
+    async releaseDiscountForOrder(orderId) {
+      await db
+        .updateTable("discount_code_redemptions")
+        .set({
+          status: "RELEASED",
+          released_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .where("order_id", "=", orderId)
+        .where("status", "=", "RESERVED")
+        .execute();
+    },
+    async getOrderDiscountRedemption(orderId) {
+      const row = await db
+        .selectFrom("discount_code_redemptions")
+        .selectAll()
+        .where("order_id", "=", orderId)
+        .executeTakeFirst();
+      return row ? toDiscountCodeRedemption(row) : undefined;
+    },
+    async listDiscountRedemptions(input) {
+      const rows = await db
+        .selectFrom("discount_code_redemptions")
+        .selectAll()
+        .where("location_id", "=", input.locationId)
+        .where("discount_code_id", "=", input.discountCodeId)
+        .orderBy("created_at", "desc")
+        .limit(Math.min(Math.max(input.limit ?? 100, 1), 250))
+        .execute();
+
+      return rows.map(toDiscountCodeRedemption);
     },
     async getCatalogItemsForQuote(locationId, itemIds) {
       if (itemIds.length === 0) {

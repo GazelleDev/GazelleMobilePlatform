@@ -13,6 +13,8 @@ type CartContextValue = {
   items: CartItem[];
   itemCount: number;
   subtotalCents: number;
+  discountCode: string;
+  setDiscountCode: (code: string) => void;
   addItem: (item: CartItemInput) => void;
   setQuantity: (lineId: string, quantity: number) => void;
   removeItem: (lineId: string) => void;
@@ -23,6 +25,7 @@ const CartContext = createContext<CartContextValue | undefined>(undefined);
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
+  const [discountCode, setDiscountCodeState] = useState("");
 
   const value = useMemo<CartContextValue>(() => {
     const itemCount = calculateItemCount(items);
@@ -32,14 +35,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
       items,
       itemCount,
       subtotalCents,
+      discountCode,
+      setDiscountCode: (code) => setDiscountCodeState(code.toUpperCase().replace(/[^A-Z0-9_-]/g, "")),
       addItem: (item) => {
         setItems((prev) => addCartItem(prev, item));
       },
       setQuantity: (lineId, quantity) => setItems((prev) => setCartItemQuantity(prev, lineId, quantity)),
       removeItem: (lineId) => setItems((prev) => removeCartItem(prev, lineId)),
-      clear: () => setItems([])
+      clear: () => {
+        setItems([]);
+        setDiscountCodeState("");
+      }
     };
-  }, [items]);
+  }, [discountCode, items]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

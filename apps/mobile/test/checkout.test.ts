@@ -244,6 +244,91 @@ describe("checkout helpers", () => {
     expect(preparedCheckout.paymentSession.stripeAccountId).toBe("acct_123");
   });
 
+  it("passes a discount code into quote creation", async () => {
+    const items = [
+      createCartItem({
+        menuItemId: "latte",
+        itemName: "Latte",
+        basePriceCents: 575,
+        customizationGroups: espressoGroups,
+        customization: {
+          ...DEFAULT_CUSTOMIZATION,
+          selectedOptions: [
+            { groupId: "size", optionId: "regular" },
+            { groupId: "milk", optionId: "whole" }
+          ]
+        },
+        quantity: 1
+      })
+    ];
+
+    const checkoutApi = {
+      quoteOrder: vi.fn().mockResolvedValue({
+        quoteId: "5ec083a1-0f31-4d04-a525-7808a0d7624c",
+        locationId: "flagship-01",
+        items: [],
+        subtotal: { currency: "USD", amountCents: 575 },
+        discount: { currency: "USD", amountCents: 100 },
+        discounts: [
+          {
+            type: "discount_code",
+            code: "LAUNCH10",
+            label: "Launch discount",
+            amount: { currency: "USD", amountCents: 100 }
+          }
+        ],
+        appliedDiscountCode: {
+          discountCodeId: "123e4567-e89b-12d3-a456-426614174099",
+          code: "LAUNCH10",
+          name: "Launch discount",
+          discountCents: 100
+        },
+        tax: { currency: "USD", amountCents: 29 },
+        total: { currency: "USD", amountCents: 504 },
+        pointsToRedeem: 0,
+        quoteHash: "quote-hash-discount"
+      }),
+      createOrder: vi.fn().mockResolvedValue({
+        id: "123e4567-e89b-12d3-a456-426614174001",
+        locationId: "flagship-01",
+        status: "PENDING_PAYMENT",
+        pickupCode: "DEF456",
+        items: [],
+        total: { currency: "USD", amountCents: 504 },
+        timeline: []
+      }),
+      createStripeMobilePaymentSession: vi.fn().mockResolvedValue({
+        orderId: "123e4567-e89b-12d3-a456-426614174001",
+        paymentIntentId: "pi_discount",
+        paymentIntentClientSecret: "pi_discount_secret",
+        publishableKey: "pk_test_123",
+        stripeAccountId: "acct_123",
+        merchantDisplayName: "Gazelle Coffee",
+        merchantCountryCode: "US",
+        amountCents: 504,
+        currency: "USD",
+        applePayEnabled: true,
+        cardEnabled: true
+      })
+    };
+
+    await prepareStripeCheckout(
+      {
+        locationId: "flagship-01",
+        items,
+        discountCode: "LAUNCH10"
+      },
+      checkoutApi
+    );
+
+    expect(checkoutApi.quoteOrder).toHaveBeenCalledWith({
+      locationId: "flagship-01",
+      items: toQuoteItems(items),
+      pointsToRedeem: 0,
+      discountCode: "LAUNCH10"
+    });
+  });
+
   it("reuses an existing pending order when retrying Stripe checkout", async () => {
     const items = [
       createCartItem({

@@ -145,6 +145,41 @@ export interface OrdersPaymentIdempotencyTable {
   created_at: Generated<string>;
 }
 
+export interface DiscountCodeTable {
+  discount_code_id: Generated<string>;
+  location_id: string;
+  code: string;
+  name: string;
+  type: "percent" | "fixed_cents";
+  value: number;
+  max_discount_cents: number | null;
+  min_subtotal_cents: number;
+  eligibility: "everyone" | "first_order_only" | "existing_customers_only";
+  once_per_customer: boolean;
+  max_total_redemptions: number | null;
+  active: boolean;
+  starts_at: string | null;
+  expires_at: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
+export interface DiscountCodeRedemptionTable {
+  redemption_id: Generated<string>;
+  discount_code_id: string;
+  location_id: string;
+  code: string;
+  order_id: string;
+  user_id: string;
+  discount_cents: number;
+  status: "RESERVED" | "REDEEMED" | "RELEASED";
+  reserved_at: Generated<string>;
+  redeemed_at: string | null;
+  released_at: string | null;
+  created_at: Generated<string>;
+  updated_at: Generated<string>;
+}
+
 export interface IdentityUserTable {
   user_id: string;
   apple_sub: string | null;
@@ -380,6 +415,8 @@ export interface PersistenceDatabase {
   orders: OrdersTable;
   orders_create_idempotency: OrdersCreateIdempotencyTable;
   orders_payment_idempotency: OrdersPaymentIdempotencyTable;
+  discount_codes: DiscountCodeTable;
+  discount_code_redemptions: DiscountCodeRedemptionTable;
   identity_users: IdentityUserTable;
   identity_sessions: IdentitySessionTable;
   identity_passkey_challenges: IdentityPasskeyChallengeTable;

@@ -20,7 +20,13 @@ import {
   appConfigSchema,
   homeNewsCardsResponseSchema
 } from "@lattelink/contracts-catalog";
-import { orderSchema } from "@lattelink/contracts-orders";
+import {
+  createDiscountCodeRequestSchema,
+  discountCodeListResponseSchema,
+  discountCodeSchema,
+  orderSchema,
+  updateDiscountCodeRequestSchema
+} from "@lattelink/contracts-orders";
 import {
   filterVisibleOrders,
   normalizeMenuItemCreateForm,
@@ -32,7 +38,8 @@ import {
   normalizeStoreConfigForm,
   type OperatorOrder,
   type OperatorMenuResponse,
-  type OperatorNewsCard
+  type OperatorNewsCard,
+  type OperatorDiscountCode
 } from "./model.js";
 
 const ordersSchema = z.array(orderSchema);
@@ -56,6 +63,7 @@ export type OperatorDashboardSnapshot = {
   orders: OperatorOrder[];
   menu: OperatorMenuResponse;
   cards: OperatorNewsCard[];
+  discountCodes: OperatorDiscountCode[];
   storeConfig: z.output<typeof adminStoreConfigSchema> | null;
   team: OperatorUser[];
 };
@@ -476,7 +484,7 @@ export async function fetchOperatorSnapshot(
   const capabilitySet = new Set(session.operator.capabilities);
   const query = locationId ? { locationId } : undefined;
   const fallbackLocationId = locationId ?? session.operator.locationId;
-  const [appConfig, orders, menu, cards, storeConfig, teamResponse] = await Promise.all([
+  const [appConfig, orders, menu, cards, discountCodeResponse, storeConfig, teamResponse] = await Promise.all([
     locationId
       ? requestJson({
           apiBaseUrl: session.apiBaseUrl,
@@ -518,6 +526,17 @@ export async function fetchOperatorSnapshot(
           })
         : Promise.resolve(homeNewsCardsResponseSchema.parse({ locationId: fallbackLocationId, cards: [] }))
       : Promise.resolve(homeNewsCardsResponseSchema.parse({ locationId: fallbackLocationId, cards: [] })),
+    capabilitySet.has("menu:read")
+      ? locationId
+        ? requestJson({
+            apiBaseUrl: session.apiBaseUrl,
+            accessToken: session.accessToken,
+            path: "/admin/discount-codes",
+            query,
+            schema: discountCodeListResponseSchema
+          })
+        : Promise.resolve(discountCodeListResponseSchema.parse({ discountCodes: [] }))
+      : Promise.resolve(discountCodeListResponseSchema.parse({ discountCodes: [] })),
     capabilitySet.has("store:read")
       ? locationId
         ? requestJson({
@@ -549,6 +568,7 @@ export async function fetchOperatorSnapshot(
     cards: cards.cards.map((card) => ({
       ...card
     })),
+    discountCodes: discountCodeResponse.discountCodes,
     storeConfig,
     team: teamResponse.users
   };
@@ -690,6 +710,47 @@ export function replaceOperatorNewsCards(session: OperatorSession, locationId: s
       cards
     }),
     schema: homeNewsCardsResponseSchema
+  });
+}
+
+export function createOperatorDiscountCode(
+  session: OperatorSession,
+  locationId: string | null,
+  input: Omit<z.input<typeof createDiscountCodeRequestSchema>, "locationId">
+) {
+  const selectedLocationId = requireSelectedLocationId(locationId);
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: "/admin/discount-codes",
+    query: { locationId: selectedLocationId },
+    method: "POST",
+    body: createDiscountCodeRequestSchema.parse({
+      locationId: selectedLocationId,
+      ...input
+    }),
+    schema: discountCodeSchema
+  });
+}
+
+export function updateOperatorDiscountCode(
+  session: OperatorSession,
+  locationId: string | null,
+  discountCodeId: string,
+  input: Omit<z.input<typeof updateDiscountCodeRequestSchema>, "locationId">
+) {
+  const selectedLocationId = requireSelectedLocationId(locationId);
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: `/admin/discount-codes/${discountCodeId}`,
+    query: { locationId: selectedLocationId },
+    method: "PATCH",
+    body: updateDiscountCodeRequestSchema.parse({
+      locationId: selectedLocationId,
+      ...input
+    }),
+    schema: discountCodeSchema
   });
 }
 

@@ -22,7 +22,7 @@ import {
   resolveAppConfigFulfillmentMode,
   type AppConfig
 } from "@lattelink/contracts-catalog";
-import { orderSchema, orderStatusSchema } from "@lattelink/contracts-orders";
+import { discountCodeSchema, orderSchema, orderStatusSchema } from "@lattelink/contracts-orders";
 
 const operatorCustomerSchema = z.object({
   name: z.string().min(1).optional(),
@@ -37,7 +37,7 @@ const operatorOrderSchema = orderSchema.extend({
 export type OperatorOrder = z.output<typeof operatorOrderSchema>;
 export type OperatorOrderStatus = z.output<typeof orderStatusSchema>;
 export type OperatorOrderFilter = "all" | "active" | "completed";
-export type DashboardSection = "overview" | "orders" | "menu" | "cards" | "store" | "team";
+export type DashboardSection = "overview" | "orders" | "menu" | "cards" | "discounts" | "store" | "team";
 export type OperatorCapability = z.output<typeof operatorCapabilitySchema>;
 export type OperatorUser = z.output<typeof operatorUserSchema>;
 export const operatorMenuItemSchema = adminMenuItemSchema.extend({
@@ -58,6 +58,7 @@ export type OperatorMenuItem = z.output<typeof operatorMenuItemSchema>;
 export type OperatorMenuCategory = z.output<typeof operatorMenuCategorySchema>;
 export type OperatorMenuResponse = z.output<typeof operatorMenuResponseSchema>;
 export type OperatorNewsCard = z.output<typeof operatorNewsCardSchema>;
+export type OperatorDiscountCode = z.output<typeof discountCodeSchema>;
 
 export type OperatorOrderAction = {
   status: "IN_PREP" | "READY" | "COMPLETED";
@@ -233,6 +234,9 @@ export function getAvailableSections(
   }
   if (canAccessCapability(operator, "menu:read")) {
     sections.push("cards");
+  }
+  if (canAccessCapability(operator, "menu:read")) {
+    sections.push("discounts");
   }
   if (canAccessCapability(operator, "store:read")) {
     sections.push("store");

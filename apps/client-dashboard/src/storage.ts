@@ -114,7 +114,12 @@ export function persistApiBaseUrl(apiBaseUrl: string) {
 export function loadStoredSection(): DashboardSection {
   const storage = getStorage();
   const nextSection = storage?.getItem(DASHBOARD_SECTION_STORAGE_KEY);
-  return nextSection === "orders" || nextSection === "menu" || nextSection === "store" || nextSection === "team"
+  return nextSection === "orders" ||
+    nextSection === "menu" ||
+    nextSection === "cards" ||
+    nextSection === "discounts" ||
+    nextSection === "store" ||
+    nextSection === "team"
     ? nextSection
     : "overview";
 }

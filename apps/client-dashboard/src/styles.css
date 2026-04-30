@@ -2192,6 +2192,24 @@ label.field > span {
   margin-top: 4px;
 }
 
+.dash-grid-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.dash-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.dash-checkbox-row input {
+  width: auto;
+}
+
 /* ============================================================
    STORE FORM
    ============================================================ */

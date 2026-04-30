@@ -17,6 +17,7 @@ import { renderOrdersSection } from "./orders.js";
 import { renderMenuSection } from "./menu.js";
 import { renderMenuCreateWizard } from "./menu-wizard.js";
 import { renderCardsSection } from "./cards.js";
+import { renderDiscountsSection } from "./discounts.js";
 import { renderStoreSection } from "./store.js";
 import { renderTeamSection } from "./team.js";
 
@@ -55,6 +56,8 @@ function renderDashboardContent() {
       return renderMenuSection();
     case "cards":
       return renderCardsSection();
+    case "discounts":
+      return renderDiscountsSection();
     case "store":
       return renderStoreSection();
     case "team":

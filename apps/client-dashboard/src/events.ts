@@ -40,6 +40,7 @@ import {
   handleNewsCardSubmit,
   handleNewsCardVisibilityToggle
 } from "./controllers/cards.js";
+import { handleDiscountCodeCreateSubmit, handleDiscountCodeSubmit } from "./controllers/discounts.js";
 import { handleStoreSubmit } from "./controllers/store.js";
 import { handleTeamCreateSubmit, handleTeamUserSubmit } from "./controllers/team.js";
 import { handleOrderAdvance } from "./controllers/orders.js";
@@ -88,6 +89,12 @@ export function registerEvents() {
         return;
       case "news-card":
         void handleNewsCardSubmit(target);
+        return;
+      case "discount-code-create":
+        void handleDiscountCodeCreateSubmit(target);
+        return;
+      case "discount-code":
+        void handleDiscountCodeSubmit(target);
         return;
       case "store-config":
         void handleStoreSubmit(target);
@@ -180,7 +187,15 @@ export function registerEvents() {
 
     if (action === "set-section") {
       const section = actionElement.dataset.section;
-      if (section === "overview" || section === "orders" || section === "menu" || section === "cards" || section === "store" || section === "team") {
+      if (
+        section === "overview" ||
+        section === "orders" ||
+        section === "menu" ||
+        section === "cards" ||
+        section === "discounts" ||
+        section === "store" ||
+        section === "team"
+      ) {
         if (!getAvailableDashboardSections().includes(section)) {
           setError("That dashboard section is unavailable for this store or your current role.");
           render();

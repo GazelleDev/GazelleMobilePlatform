@@ -33,12 +33,40 @@ export const orderItemSchema = z.object({
   customization: orderItemCustomizationSnapshotSchema.optional()
 });
 
+export const discountCodeTypeSchema = z.enum(["percent", "fixed_cents"]);
+export const discountCodeEligibilitySchema = z.enum(["everyone", "first_order_only", "existing_customers_only"]);
+export const discountRedemptionStatusSchema = z.enum(["RESERVED", "REDEEMED", "RELEASED"]);
+
+export const normalizedDiscountCodeSchema = z
+  .string()
+  .trim()
+  .min(3)
+  .max(32)
+  .regex(/^[A-Za-z0-9_-]+$/)
+  .transform((value) => value.toUpperCase());
+
+export const orderDiscountBreakdownSchema = z.object({
+  type: z.enum(["discount_code", "loyalty"]),
+  code: z.string().optional(),
+  label: z.string().min(1),
+  amount: moneySchema
+});
+
+export const appliedDiscountCodeSchema = z.object({
+  discountCodeId: z.string().uuid(),
+  code: z.string().min(1),
+  name: z.string().min(1),
+  discountCents: z.number().int().nonnegative()
+});
+
 export const orderQuoteSchema = z.object({
   quoteId: z.string().uuid(),
   locationId: z.string(),
   items: z.array(orderItemSchema),
   subtotal: moneySchema,
   discount: moneySchema,
+  discounts: z.array(orderDiscountBreakdownSchema).default([]),
+  appliedDiscountCode: appliedDiscountCodeSchema.optional(),
   tax: moneySchema,
   total: moneySchema,
   pointsToRedeem: z.number().int().nonnegative(),
@@ -81,7 +109,8 @@ export const quoteRequestItemSchema = z.object({
 export const quoteRequestSchema = z.object({
   locationId: z.string(),
   items: z.array(quoteRequestItemSchema),
-  pointsToRedeem: z.number().int().nonnegative().default(0)
+  pointsToRedeem: z.number().int().nonnegative().default(0),
+  discountCode: normalizedDiscountCodeSchema.optional()
 });
 
 export const createOrderRequestSchema = z.object({
@@ -128,14 +157,132 @@ export const orderPaymentContextSchema = z.object({
   total: moneySchema
 });
 
+const optionalMoneyInputCentsSchema = z.number().int().positive().optional();
+const discountCodeRuleFieldsSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  type: discountCodeTypeSchema,
+  value: z.number().int().positive(),
+  maxDiscountCents: optionalMoneyInputCentsSchema,
+  minSubtotalCents: z.number().int().nonnegative().default(0),
+  eligibility: discountCodeEligibilitySchema.default("everyone"),
+  oncePerCustomer: z.boolean().default(false),
+  maxTotalRedemptions: z.number().int().positive().optional(),
+  active: z.boolean().default(true),
+  startsAt: z.string().datetime().optional(),
+  expiresAt: z.string().datetime().optional()
+});
+
+function validateDiscountCodeRuleFields(
+  value: z.infer<typeof discountCodeRuleFieldsSchema>,
+  ctx: z.RefinementCtx
+) {
+  if (value.type === "percent" && value.value > 100) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["value"], message: "percent discount cannot exceed 100" });
+  }
+
+  if (value.type === "fixed_cents" && value.maxDiscountCents !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["maxDiscountCents"],
+      message: "maxDiscountCents only applies to percent discounts"
+    });
+  }
+
+  if (value.startsAt && value.expiresAt && Date.parse(value.expiresAt) <= Date.parse(value.startsAt)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expiresAt"], message: "expiresAt must be after startsAt" });
+  }
+}
+
+export const discountCodeSchema = z.object({
+  discountCodeId: z.string().uuid(),
+  locationId: z.string().min(1),
+  code: normalizedDiscountCodeSchema,
+  name: z.string().trim().min(1).max(80),
+  type: discountCodeTypeSchema,
+  value: z.number().int().positive(),
+  maxDiscountCents: optionalMoneyInputCentsSchema,
+  minSubtotalCents: z.number().int().nonnegative(),
+  eligibility: discountCodeEligibilitySchema,
+  oncePerCustomer: z.boolean(),
+  maxTotalRedemptions: z.number().int().positive().optional(),
+  active: z.boolean(),
+  startsAt: z.string().datetime().optional(),
+  expiresAt: z.string().datetime().optional(),
+  redeemedCount: z.number().int().nonnegative(),
+  reservedCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
+export const createDiscountCodeRequestSchema = z
+  .object({
+    locationId: z.string().min(1),
+    code: normalizedDiscountCodeSchema,
+    ...discountCodeRuleFieldsSchema.shape
+  })
+  .superRefine(validateDiscountCodeRuleFields);
+
+export const updateDiscountCodeRequestSchema = discountCodeRuleFieldsSchema
+  .partial()
+  .extend({
+    locationId: z.string().min(1),
+    maxDiscountCents: optionalMoneyInputCentsSchema.nullable(),
+    maxTotalRedemptions: z.number().int().positive().nullable().optional(),
+    startsAt: z.string().datetime().nullable().optional(),
+    expiresAt: z.string().datetime().nullable().optional()
+  })
+  .superRefine((value, ctx) => {
+    if (value.type === "percent" && value.value !== undefined && value.value > 100) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["value"], message: "percent discount cannot exceed 100" });
+    }
+
+    if (value.type === "fixed_cents" && value.maxDiscountCents != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxDiscountCents"],
+        message: "maxDiscountCents only applies to percent discounts"
+      });
+    }
+
+    if (value.startsAt && value.expiresAt && Date.parse(value.expiresAt) <= Date.parse(value.startsAt)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["expiresAt"], message: "expiresAt must be after startsAt" });
+    }
+  });
+
+export const discountCodeListResponseSchema = z.object({
+  discountCodes: z.array(discountCodeSchema)
+});
+
+export const discountCodeRedemptionSchema = z.object({
+  redemptionId: z.string().uuid(),
+  discountCodeId: z.string().uuid(),
+  locationId: z.string().min(1),
+  code: z.string().min(1),
+  orderId: z.string().uuid(),
+  userId: z.string().uuid(),
+  discountCents: z.number().int().nonnegative(),
+  status: discountRedemptionStatusSchema,
+  reservedAt: z.string().datetime(),
+  redeemedAt: z.string().datetime().optional(),
+  releasedAt: z.string().datetime().optional()
+});
+
+export const discountCodeRedemptionsResponseSchema = z.object({
+  redemptions: z.array(discountCodeRedemptionSchema)
+});
+
 export type OrderStatus = z.output<typeof orderStatusSchema>;
 export type OrderCustomer = z.output<typeof orderCustomerSchema>;
 export type OrderItemCustomizationSelectionSnapshot = z.output<typeof orderItemCustomizationSelectionSnapshotSchema>;
 export type OrderItemCustomizationSnapshot = z.output<typeof orderItemCustomizationSnapshotSchema>;
 export type OrderItem = z.output<typeof orderItemSchema>;
+export type OrderDiscountBreakdown = z.output<typeof orderDiscountBreakdownSchema>;
+export type AppliedDiscountCode = z.output<typeof appliedDiscountCodeSchema>;
 export type OrderQuote = z.output<typeof orderQuoteSchema>;
 export type OrderTimelineEntry = z.output<typeof orderTimelineEntrySchema>;
 export type Order = z.output<typeof orderSchema>;
+export type DiscountCode = z.output<typeof discountCodeSchema>;
+export type DiscountCodeRedemption = z.output<typeof discountCodeRedemptionSchema>;
 export type StripeMobilePaymentSessionRequest = z.output<typeof stripeMobilePaymentSessionRequestSchema>;
 export type StripeMobilePaymentSessionResponse = z.output<typeof stripeMobilePaymentSessionResponseSchema>;
 export type StripeMobilePaymentFinalizeRequest = z.output<typeof stripeMobilePaymentFinalizeRequestSchema>;

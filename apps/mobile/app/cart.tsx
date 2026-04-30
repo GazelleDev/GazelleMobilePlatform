@@ -3,7 +3,7 @@ import { BlurView } from "expo-blur";
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getCheckoutRecoveryActionLabel } from "../src/auth/recovery";
 import { useAuthSession } from "../src/auth/session";
@@ -254,7 +254,7 @@ export default function CartModalScreen() {
   const stickyFooterBottom = getTabBarBottomOffset(insets.bottom > 0);
   const stickyFooterClearance = stickyFooterBottom + TAB_BAR_HEIGHT + 16;
   const { isAuthenticated, authRecoveryState } = useAuthSession();
-  const { items, itemCount, subtotalCents, setQuantity, removeItem, clear } = useCart();
+  const { items, itemCount, subtotalCents, discountCode, setDiscountCode, setQuantity, removeItem, clear } = useCart();
   const { confirmation, failure, retryOrder, clearRetryOrder, clearFailure } = useCheckoutFlow();
   const appConfigQuery = useAppConfigQuery();
   const menuQuery = useMenuQuery();
@@ -471,6 +471,19 @@ export default function CartModalScreen() {
                 <SectionHeading eyebrow="Checkout" title="Summary" />
                 <View style={styles.checkoutContent}>
                   <View style={styles.deckDivider} />
+                  <View style={styles.discountCodeBlock}>
+                    <Text style={styles.discountCodeLabel}>Discount code</Text>
+                    <TextInput
+                      value={discountCode}
+                      onChangeText={setDiscountCode}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      placeholder="LAUNCH10"
+                      placeholderTextColor={uiPalette.textMuted}
+                      style={styles.discountCodeInput}
+                    />
+                    <Text style={styles.summaryNote}>Discounts are validated against live store rules when you pay.</Text>
+                  </View>
 
                   <View style={styles.summaryWrap}>
                     <SummaryRow label={`Items (${itemCount})`} value={formatUsd(pricingSummary.subtotalCents)} />
@@ -872,6 +885,31 @@ const styles = StyleSheet.create({
     height: 1,
     marginVertical: 18,
     backgroundColor: "rgba(23, 21, 19, 0.08)"
+  },
+  discountCodeBlock: {
+    marginBottom: 18,
+    gap: 8
+  },
+  discountCodeLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    textTransform: "uppercase",
+    letterSpacing: 1.15,
+    color: uiPalette.textMuted,
+    fontWeight: "700"
+  },
+  discountCodeInput: {
+    minHeight: 52,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: uiPalette.border,
+    backgroundColor: uiPalette.surfaceStrong,
+    paddingHorizontal: 14,
+    color: uiPalette.text,
+    fontSize: 16,
+    lineHeight: 20,
+    letterSpacing: 1.2,
+    fontWeight: "700"
   },
   summaryWrap: {
     gap: 10

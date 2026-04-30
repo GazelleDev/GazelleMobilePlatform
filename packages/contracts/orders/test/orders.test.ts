@@ -4,7 +4,8 @@ import {
   orderStatusSchema,
   ordersPaymentReconciliationSchema,
   stripeMobilePaymentFinalizeResponseSchema,
-  stripeMobilePaymentSessionResponseSchema
+  stripeMobilePaymentSessionResponseSchema,
+  updateDiscountCodeRequestSchema
 } from "../src";
 
 describe("contracts-orders", () => {
@@ -80,5 +81,22 @@ describe("contracts-orders", () => {
     });
 
     expect(parsed.total.amountCents).toBe(1295);
+  });
+
+  it("accepts null fields when clearing optional discount-code rules", () => {
+    const parsed = updateDiscountCodeRequestSchema.parse({
+      locationId: "flagship-01",
+      maxDiscountCents: null,
+      maxTotalRedemptions: null,
+      startsAt: null,
+      expiresAt: null
+    });
+
+    expect(parsed).toMatchObject({
+      maxDiscountCents: null,
+      maxTotalRedemptions: null,
+      startsAt: null,
+      expiresAt: null
+    });
   });
 });

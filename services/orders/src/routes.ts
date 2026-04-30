@@ -3,12 +3,17 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createEventBusPublisher } from "@lattelink/event-bus";
 import { captureOperationalError } from "@lattelink/observability";
 import {
+  createDiscountCodeRequestSchema,
   createOrderRequestSchema,
+  discountCodeListResponseSchema,
+  discountCodeRedemptionsResponseSchema,
+  discountCodeSchema,
   orderPaymentContextSchema,
   orderCustomerSchema,
   ordersPaymentReconciliationSchema,
   orderSchema,
-  quoteRequestSchema
+  quoteRequestSchema,
+  updateDiscountCodeRequestSchema
 } from "@lattelink/contracts-orders";
 import { getPersistenceReadinessMetadata } from "@lattelink/persistence";
 import { z } from "zod";
@@ -17,11 +22,15 @@ import { createOrdersRepository, type OrdersRepository } from "./repository.js";
 import {
   advanceOrderStatus,
   cancelOrder,
+  createDiscountCode,
   createOrder,
   createQuote,
   getOrderForRead,
+  listDiscountCodeRedemptions,
+  listDiscountCodes,
   listOrdersForRead,
   reconcilePaymentWebhook,
+  updateDiscountCode,
   type CancelOrderSource,
   type PosAdapter,
   type OrderServiceDeps,
@@ -84,6 +93,19 @@ const supportLookupQuerySchema = z.object({
   query: z.string().min(1),
   locationId: z.string().min(1).optional(),
   limit: z.coerce.number().int().positive().max(50).default(25)
+});
+
+const discountCodeIdParamsSchema = z.object({
+  discountCodeId: z.string().uuid()
+});
+
+const locationQuerySchema = z.object({
+  locationId: z.string().min(1)
+});
+
+const discountRedemptionsQuerySchema = z.object({
+  locationId: z.string().min(1),
+  limit: z.coerce.number().int().positive().max(250).default(100)
 });
 
 const supportAuditLogEntrySchema = z.object({
@@ -576,8 +598,10 @@ export async function registerRoutes(app: FastifyInstance) {
       }
 
       const input = quoteRequestSchema.parse(request.body);
+      const requestUserContext = parseRequestUserContext(request);
       const result = await createQuote({
         input,
+        requestUserContext,
         deps: getServiceDeps(request)
       });
 
@@ -589,6 +613,111 @@ export async function registerRoutes(app: FastifyInstance) {
       return result.quote;
     }
   );
+
+  app.get("/v1/orders/admin/discount-codes", async (request, reply) => {
+    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+      return;
+    }
+
+    const { locationId } = locationQuerySchema.parse(request.query);
+    const result = await listDiscountCodes({
+      locationId,
+      deps: getServiceDeps(request)
+    });
+    return discountCodeListResponseSchema.parse(result);
+  });
+
+  app.post(
+    "/v1/orders/admin/discount-codes",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+        return;
+      }
+
+      const input = createDiscountCodeRequestSchema.parse(request.body);
+      const result = await createDiscountCode({
+        input,
+        deps: getServiceDeps(request)
+      });
+      if ("error" in result) {
+        return sendServiceError(reply, request, result.error);
+      }
+
+      await repository.writeAuditLog({
+        locationId: input.locationId,
+        actorId: parseRequestUserContext(request).userId ?? "system",
+        actorType: "operator",
+        action: "discount_code.created",
+        targetId: result.discountCode.discountCodeId,
+        targetType: "discount_code",
+        payload: {
+          code: result.discountCode.code,
+          type: result.discountCode.type,
+          value: result.discountCode.value
+        }
+      });
+
+      return reply.status(201).send(discountCodeSchema.parse(result.discountCode));
+    }
+  );
+
+  app.patch(
+    "/v1/orders/admin/discount-codes/:discountCodeId",
+    {
+      preHandler: app.rateLimit(ordersWriteRateLimit)
+    },
+    async (request, reply) => {
+      if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+        return;
+      }
+
+      const { discountCodeId } = discountCodeIdParamsSchema.parse(request.params);
+      const input = updateDiscountCodeRequestSchema.parse(request.body);
+      const result = await updateDiscountCode({
+        discountCodeId,
+        input,
+        deps: getServiceDeps(request)
+      });
+      if ("error" in result) {
+        return sendServiceError(reply, request, result.error);
+      }
+
+      await repository.writeAuditLog({
+        locationId: input.locationId,
+        actorId: parseRequestUserContext(request).userId ?? "system",
+        actorType: "operator",
+        action: "discount_code.updated",
+        targetId: result.discountCode.discountCodeId,
+        targetType: "discount_code",
+        payload: {
+          code: result.discountCode.code,
+          active: result.discountCode.active
+        }
+      });
+
+      return discountCodeSchema.parse(result.discountCode);
+    }
+  );
+
+  app.get("/v1/orders/admin/discount-codes/:discountCodeId/redemptions", async (request, reply) => {
+    if (!authorizeGatewayRequest(request, reply, gatewayApiToken)) {
+      return;
+    }
+
+    const { discountCodeId } = discountCodeIdParamsSchema.parse(request.params);
+    const query = discountRedemptionsQuerySchema.parse(request.query);
+    const result = await listDiscountCodeRedemptions({
+      discountCodeId,
+      locationId: query.locationId,
+      limit: query.limit,
+      deps: getServiceDeps(request)
+    });
+
+    return discountCodeRedemptionsResponseSchema.parse(result);
+  });
 
   app.post(
     "/v1/orders",
