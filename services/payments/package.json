@@ -23,7 +23,7 @@
     "@lattelink/persistence": "workspace:*",
     "fastify": "^5.8.4",
     "pino-pretty": "^13.0.0",
-    "stripe": "^22.0.2",
+    "stripe": "^22.1.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
