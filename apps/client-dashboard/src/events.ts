@@ -1,60 +1,60 @@
-import { root, render } from "./render.js";
-import { setError, state } from "./state.js";
-import { addToast, dismissToast } from "./toast-runtime.js";
-import { persistSection } from "./storage.js";
+import { root, render } from "./render";
+import { setError, state } from "./state";
+import { addToast, dismissToast } from "./toast-runtime";
+import { persistSection } from "./storage";
 import {
   syncMenuCreateDraft,
   advanceMenuCreateWizard,
   retreatMenuCreateWizard,
   openMenuCreateWizard,
   resetMenuCreateWizard
-} from "./menu-wizard.js";
+} from "./menu-wizard";
 import {
   updateCustomizationDraftFromInput,
   ensureMenuCustomizationDraft,
   createCustomizationGroupDraft,
   createCustomizationOptionDraft
-} from "./customizations.js";
+} from "./customizations";
 import {
   armPendingCancel,
   clearPendingCancel,
   selectOrder,
   startAutoRefresh,
   stopAutoRefresh
-} from "./orders-runtime.js";
-import { canCreateMenuItems } from "./model.js";
-import { enableNewOrderSound } from "./order-alert.js";
-import { loadDashboard, signOut } from "./lifecycle.js";
-import { getAvailableDashboardSections } from "./sections.js";
+} from "./orders-runtime";
+import { canCreateMenuItems } from "./model";
+import { enableNewOrderSound } from "./order-alert";
+import { loadDashboard, signOut } from "./lifecycle";
+import { getAvailableDashboardSections } from "./sections";
 import {
   handleGoogleSignInStart,
   handleMerchantLaunchSubmit,
   handleOwnerInviteAccept,
   handlePasswordSignIn,
   showSignInScreen
-} from "./controllers/auth.js";
+} from "./controllers/auth";
 import {
   handleMenuCreateSubmit,
   handleMenuItemSubmit,
   handleMenuItemDelete,
   handleMenuVisibilityToggle
-} from "./controllers/menu.js";
+} from "./controllers/menu";
 import {
   handleNewsCardCreateSubmit,
   handleNewsCardDelete,
   handleNewsCardSubmit,
   handleNewsCardVisibilityToggle
-} from "./controllers/cards.js";
-import { handleDiscountCodeCreateSubmit, handleDiscountCodeSubmit } from "./controllers/discounts.js";
-import { handleStoreSubmit } from "./controllers/store.js";
+} from "./controllers/cards";
+import { handleDiscountCodeCreateSubmit, handleDiscountCodeSubmit } from "./controllers/discounts";
+import { handleStoreSubmit } from "./controllers/store";
 import {
   handleMobileExperiencePublish,
   handleMobileExperienceRollback,
   handleMobileExperienceSectionMove,
   handleMobileExperienceSubmit
-} from "./controllers/experience.js";
-import { handleTeamCreateSubmit, handleTeamUserDelete, handleTeamUserSubmit } from "./controllers/team.js";
-import { handleOrderAdvance } from "./controllers/orders.js";
+} from "./controllers/experience";
+import { handleTeamCreateSubmit, handleTeamUserDelete, handleTeamUserSubmit } from "./controllers/team";
+import { handleOrderAdvance } from "./controllers/orders";
 import {
   handleOnboardingBusinessProfileSubmit,
   handleOnboardingAppIdentitySubmit,
@@ -65,7 +65,7 @@ import {
   handleStripeDashboardOpen,
   handleStripeOnboardingStart,
   handleStripeStatusRefresh
-} from "./controllers/onboarding.js";
+} from "./controllers/onboarding";
 
 function closeOpenAccountMenus(target?: Node) {
   root.querySelectorAll<HTMLDetailsElement>(".dash-account-menu[open]").forEach((menu) => {

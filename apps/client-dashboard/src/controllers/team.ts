@@ -1,11 +1,11 @@
-import { createOperatorStaffUser, deleteOperatorStaffUser, updateOperatorStaffUser, updateOperatorOnboarding } from "../api.js";
-import { canManageTeamMembers, isOwnerOperator } from "../model.js";
-import { setError, state } from "../state.js";
-import { addToast } from "../toast-runtime.js";
-import { persistSession } from "../storage.js";
-import { handleOperatorActionError, loadDashboard } from "../lifecycle.js";
-import { render } from "../render.js";
-import { rememberPendingTeamUserUpdate, replaceTeamUser } from "../team-state.js";
+import { createOperatorStaffUser, deleteOperatorStaffUser, updateOperatorStaffUser, updateOperatorOnboarding } from "../api";
+import { canManageTeamMembers, isOwnerOperator } from "../model";
+import { setError, state } from "../state";
+import { addToast } from "../toast-runtime";
+import { persistSession } from "../storage";
+import { handleOperatorActionError, loadDashboard } from "../lifecycle";
+import { render } from "../render";
+import { rememberPendingTeamUserUpdate, replaceTeamUser } from "../team-state";
 
 function applyUpdatedTeamUser(updatedUser: ReturnType<typeof replaceTeamUser>[number]) {
   rememberPendingTeamUserUpdate(updatedUser);

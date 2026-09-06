@@ -1,4 +1,4 @@
-import { createToast, markToastDismissing, removeToast } from "./state.js";
+import { createToast, markToastDismissing, removeToast } from "./state";
 
 export const toastVisibleDurationMs = 5_000;
 export const toastFadeDurationMs = 300;

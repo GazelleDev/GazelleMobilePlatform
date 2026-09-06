@@ -1,14 +1,14 @@
-import { setError, state } from "../state.js";
-import { updateOperatorOrderStatus } from "../api.js";
+import { setError, state } from "../state";
+import { updateOperatorOrderStatus } from "../api";
 import {
   canAdvanceOrderStatus,
   canCancelOrder,
   getOrderCancelUnavailableMessage,
   getOrderControlUnavailableMessage
-} from "../model.js";
-import { handleOperatorActionError, loadDashboard } from "../lifecycle.js";
-import { clearPendingCancel } from "../orders-runtime.js";
-import { render } from "../render.js";
+} from "../model";
+import { handleOperatorActionError, loadDashboard } from "../lifecycle";
+import { clearPendingCancel } from "../orders-runtime";
+import { render } from "../render";
 
 export async function handleOrderAdvance(
   orderId: string,

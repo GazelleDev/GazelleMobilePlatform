@@ -1,6 +1,6 @@
-import { state } from "./state.js";
-import type { OperatorOrder } from "./model.js";
-import { formatCompactCount, formatCompactMoney } from "./ui/format.js";
+import { state } from "./state";
+import type { OperatorOrder } from "./model";
+import { formatCompactCount, formatCompactMoney } from "./ui/format";
 
 type MetricTrendTone = "positive" | "neutral" | "negative";
 

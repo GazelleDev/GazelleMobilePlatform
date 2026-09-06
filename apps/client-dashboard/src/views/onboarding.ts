@@ -1,7 +1,7 @@
-import { isOnboardingIncomplete } from "../model.js";
-import { state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
-import { renderSectionHeading } from "./common.js";
+import { isOnboardingIncomplete } from "../model";
+import { state } from "../state";
+import { escapeHtml } from "../ui/format";
+import { renderSectionHeading } from "./common";
 
 const clientSetupSteps = [
   {

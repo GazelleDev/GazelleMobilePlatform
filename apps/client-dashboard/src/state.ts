@@ -13,7 +13,7 @@ import type {
   OperatorOnboardingSummary,
   OperatorSession,
   OperatorUser
-} from "./api.js";
+} from "./api";
 import type {
   DashboardSection,
   OperatorMenuCategory,
@@ -21,9 +21,9 @@ import type {
   OperatorNewsCard,
   OperatorOrder,
   OperatorOrderFilter
-} from "./model.js";
-import { isStoreOperator } from "./model.js";
-import { loadStoredApiBaseUrl, loadStoredSection, loadStoredSession } from "./storage.js";
+} from "./model";
+import { isStoreOperator } from "./model";
+import { loadStoredApiBaseUrl, loadStoredSection, loadStoredSession } from "./storage";
 
 export type AppState = {
   section: DashboardSection;

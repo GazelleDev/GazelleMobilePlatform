@@ -1,7 +1,7 @@
-import { isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
-import { canAccessCapability, type OperatorNewsCard } from "../model.js";
-import { renderLocationSelectionNotice, renderSectionHeading } from "./common.js";
+import { isAllLocationsSelected, state } from "../state";
+import { escapeHtml } from "../ui/format";
+import { canAccessCapability, type OperatorNewsCard } from "../model";
+import { renderLocationSelectionNotice, renderSectionHeading } from "./common";
 
 function renderNewsCard(
   card: OperatorNewsCard,

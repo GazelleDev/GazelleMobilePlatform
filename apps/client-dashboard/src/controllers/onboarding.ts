@@ -6,13 +6,13 @@ import {
   updateOperatorAppIdentity,
   updateOperatorOnboarding,
   updateOperatorStoreConfig
-} from "../api.js";
-import { loadDashboard, handleOperatorActionError } from "../lifecycle.js";
-import { countVisibleMenuItems, isOwnerOperator } from "../model.js";
-import { render } from "../render.js";
-import { setError, state } from "../state.js";
-import { addToast } from "../toast-runtime.js";
-import { persistSection } from "../storage.js";
+} from "../api";
+import { loadDashboard, handleOperatorActionError } from "../lifecycle";
+import { countVisibleMenuItems, isOwnerOperator } from "../model";
+import { render } from "../render";
+import { setError, state } from "../state";
+import { addToast } from "../toast-runtime";
+import { persistSection } from "../storage";
 
 type OnboardingBooleanField =
   | "businessProfileComplete"
@@ -46,7 +46,7 @@ function requireOwnerPaymentsAccess() {
 }
 
 function buildStripeReturnUrls() {
-  const origin = typeof window === "undefined" ? "http://localhost:5173" : window.location.origin;
+  const origin = typeof window === "undefined" ? "http://localhost:3000" : window.location.origin;
   return {
     returnUrl: `${origin}/?stripeReturn=1`,
     refreshUrl: `${origin}/?stripeRefresh=1`

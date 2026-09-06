@@ -1,8 +1,8 @@
 import type { MobileExperienceDocument, MobileExperienceSection } from "@lattelink/contracts-catalog";
-import { canUpdateStoreSettings } from "../model.js";
-import { isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
-import { renderLocationSelectionNotice, renderSectionHeading } from "./common.js";
+import { canUpdateStoreSettings } from "../model";
+import { isAllLocationsSelected, state } from "../state";
+import { escapeHtml } from "../ui/format";
+import { renderLocationSelectionNotice, renderSectionHeading } from "./common";
 
 const templateLabels: Record<MobileExperienceDocument["templateId"], string> = {
   coffee_standard: "Coffee standard",

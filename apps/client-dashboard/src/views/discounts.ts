@@ -1,7 +1,7 @@
-import { canAccessCapability, type OperatorDiscountCode } from "../model.js";
-import { isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml, formatDateTime, formatMoney } from "../ui/format.js";
-import { renderLocationSelectionNotice, renderSectionHeading } from "./common.js";
+import { canAccessCapability, type OperatorDiscountCode } from "../model";
+import { isAllLocationsSelected, state } from "../state";
+import { escapeHtml, formatDateTime, formatMoney } from "../ui/format";
+import { renderLocationSelectionNotice, renderSectionHeading } from "./common";
 
 function formatDiscountValue(code: OperatorDiscountCode) {
   return code.type === "percent" ? `${code.value}%` : formatMoney(code.value);

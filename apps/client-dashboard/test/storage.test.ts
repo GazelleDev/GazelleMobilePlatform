@@ -21,7 +21,7 @@ describe("client dashboard storage", () => {
   });
 
   it("uses the configured API base URL when no stored override exists", async () => {
-    vi.stubEnv("VITE_API_BASE_URL", "https://api-dev.nomly.us/v1");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api-dev.nomly.us/v1");
     mockLocalStorage();
 
     const { loadStoredApiBaseUrl } = await import("../src/storage");
@@ -30,7 +30,7 @@ describe("client dashboard storage", () => {
   });
 
   it("drops a stored API base URL from another deployed environment", async () => {
-    vi.stubEnv("VITE_API_BASE_URL", "https://api-dev.nomly.us/v1");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api-dev.nomly.us/v1");
     mockLocalStorage();
     storage.set("lattelink.operator.api-base-url.v2", "https://api.nomly.us/v1");
 

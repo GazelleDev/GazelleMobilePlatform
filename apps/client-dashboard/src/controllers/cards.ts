@@ -1,9 +1,9 @@
-import { replaceOperatorNewsCards } from "../api.js";
-import { canAccessCapability } from "../model.js";
-import { setError, state } from "../state.js";
-import { addToast } from "../toast-runtime.js";
-import { handleOperatorActionError } from "../lifecycle.js";
-import { render } from "../render.js";
+import { replaceOperatorNewsCards } from "../api";
+import { canAccessCapability } from "../model";
+import { setError, state } from "../state";
+import { addToast } from "../toast-runtime";
+import { handleOperatorActionError } from "../lifecycle";
+import { render } from "../render";
 
 function createNewsCardId(title: string) {
   const slug = title

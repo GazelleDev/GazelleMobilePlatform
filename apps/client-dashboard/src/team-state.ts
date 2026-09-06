@@ -1,4 +1,4 @@
-import type { OperatorUser } from "./api.js";
+import type { OperatorUser } from "./api";
 
 const pendingTeamUserUpdates = new Map<string, OperatorUser>();
 

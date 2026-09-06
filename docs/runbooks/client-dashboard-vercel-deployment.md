@@ -21,21 +21,21 @@ There is currently **no dedicated GitHub Actions Vercel workflow** for the clien
 
 1. Import the GitHub repository into Vercel.
 2. Set the Root Directory to `apps/client-dashboard`.
-3. Keep the framework preset as `Vite`.
+3. Keep the framework preset as `Next.js`.
 4. Set the Vercel production branch to `main`.
 5. Leave pull request deployments enabled so previews are created automatically.
 6. Ensure pushes to `develop` do **not** become production deployments.
 
 ## Build-Time Runtime Wiring
 
-The dashboard is a Vite app, so `VITE_*` values must exist at build time.
+The dashboard is a Next.js App Router app. Browser-visible configuration uses `NEXT_PUBLIC_*` variables and is embedded during the build.
 
 Set them directly in Vercel environment variables:
 
 - `Preview`
-  - `VITE_API_BASE_URL=https://api-dev.nomly.us/v1`
+  - `NEXT_PUBLIC_API_BASE_URL=https://api-dev.nomly.us/v1`
 - `Production`
-  - `VITE_API_BASE_URL=https://api.nomly.us/v1`
+  - `NEXT_PUBLIC_API_BASE_URL=https://api.nomly.us/v1`
 
 Do not point preview builds at the production API.
 
@@ -53,7 +53,7 @@ If Vercel Git integration is enabled, this project should not also have a parall
 - preview deployments resolve against `api-dev.nomly.us`
 - production resolves against `api.nomly.us`
 - sign-in screen loads
-- authenticated requests hit the intended `VITE_API_BASE_URL`
+- authenticated requests hit the intended `NEXT_PUBLIC_API_BASE_URL`
 - preview builds do not ship to the production domain
 
 ## Notes

@@ -1,8 +1,8 @@
-import { state, ordersRefreshIntervalMs, cancelConfirmTimeoutMs } from "./state.js";
-import { subscribeToAdminOrderStream, type AdminOrderStreamEvent } from "./api.js";
-import { canAccessCapability, filterOrdersByView, isActiveOrder, isStoreOperator } from "./model.js";
-import { alertForNewOrders, resetNewOrderAlert } from "./order-alert.js";
-import { render } from "./render.js";
+import { state, ordersRefreshIntervalMs, cancelConfirmTimeoutMs } from "./state";
+import { subscribeToAdminOrderStream, type AdminOrderStreamEvent } from "./api";
+import { canAccessCapability, filterOrdersByView, isActiveOrder, isStoreOperator } from "./model";
+import { alertForNewOrders, resetNewOrderAlert } from "./order-alert";
+import { render } from "./render";
 
 export function getOrderAlertScope() {
   const operatorId = state.session?.operator.operatorUserId ?? "signed-out";

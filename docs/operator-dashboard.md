@@ -379,8 +379,9 @@ Current sections:
 
 Current implementation shape:
 
-- Vite-powered SPA
-- single entry in [`main.ts`](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/apps/client-dashboard/src/main.ts)
+- Next.js App Router application with a client-only operator runtime boundary
+- App Router shell in [`src/app`](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/apps/client-dashboard/src/app)
+- operator bootstrap entry in [`main.ts`](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/apps/client-dashboard/src/main.ts)
 - API access via [`api.ts`](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/apps/client-dashboard/src/api.ts)
 - current styles in [`styles.css`](/Users/yazan/Documents/Gazelle/Dev/GazelleMobilePlatform/apps/client-dashboard/src/styles.css)
 

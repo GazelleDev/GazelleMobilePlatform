@@ -13,7 +13,7 @@ Nomly is a quiet, infrastructural company building the digital surface area that
 | Path | Purpose | Tech stack |
 | --- | --- | --- |
 | `apps/mobile` | Customer-facing mobile ordering app for iOS/Expo builds. | Expo, Expo Router, React Native, TypeScript, TanStack Query, Stripe React Native SDK, Apple Authentication, Zod |
-| `apps/client-dashboard` | Store operator dashboard for orders, menu, cards, staff, and store settings. | Vite, TypeScript, vanilla SPA shell, Zod |
+| `apps/client-dashboard` | Store operator dashboard for orders, menu, cards, staff, and store settings. | Next.js App Router, React client boundary, TypeScript, Zod |
 | `apps/admin-console` | Internal Nomly control plane for onboarding, readiness, owner provisioning, and payments setup. | Next.js App Router, React, TypeScript, server actions |
 | `apps/lattelink-web` | Public marketing site and lead-capture surface. | Next.js App Router, React, TypeScript, Resend/webhook integrations |
 

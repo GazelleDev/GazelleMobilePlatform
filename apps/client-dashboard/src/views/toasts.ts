@@ -1,5 +1,5 @@
-import { state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
+import { state } from "../state";
+import { escapeHtml } from "../ui/format";
 
 export function renderToasts() {
   if (state.toasts.length === 0) return "";

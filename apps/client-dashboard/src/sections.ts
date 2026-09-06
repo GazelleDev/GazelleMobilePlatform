@@ -3,9 +3,9 @@ import {
   canAccessCapability,
   isStoreOperator,
   type DashboardSection
-} from "./model.js";
-import { state } from "./state.js";
-import { persistSection } from "./storage.js";
+} from "./model";
+import { state } from "./state";
+import { persistSection } from "./storage";
 
 export const dashboardSectionLabels: Record<DashboardSection, string> = {
   overview: "Overview",

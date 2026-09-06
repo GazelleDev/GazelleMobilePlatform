@@ -1,6 +1,6 @@
-import { getSelectedLocation, hasMultipleLocations, isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml, formatDashboardDate, getOperatorInitials } from "../ui/format.js";
-import { filterOrdersByView, getOperatorRoleLabel, isStoreOperator } from "../model.js";
+import { getSelectedLocation, hasMultipleLocations, isAllLocationsSelected, state } from "../state";
+import { escapeHtml, formatDashboardDate, getOperatorInitials } from "../ui/format";
+import { filterOrdersByView, getOperatorRoleLabel, isStoreOperator } from "../model";
 import {
   isOrderTrackingEnabled,
   isStaffDashboardEnabled
@@ -9,19 +9,19 @@ import {
   ensureSectionIsAvailable,
   getAvailableDashboardSections,
   getDashboardSectionLabel
-} from "../sections.js";
-import { reconcileMenuCreateDraft } from "../menu-wizard.js";
-import { renderBanner } from "./common.js";
-import { renderOverviewSection } from "./overview.js";
-import { renderOnboardingWizard } from "./onboarding.js";
-import { renderOrdersSection } from "./orders.js";
-import { renderMenuSection } from "./menu.js";
-import { renderMenuCreateWizard } from "./menu-wizard.js";
-import { renderCardsSection } from "./cards.js";
-import { renderDiscountsSection } from "./discounts.js";
-import { renderExperienceSection } from "./experience.js";
-import { renderStoreSection } from "./store.js";
-import { renderTeamSection } from "./team.js";
+} from "../sections";
+import { reconcileMenuCreateDraft } from "../menu-wizard";
+import { renderBanner } from "./common";
+import { renderOverviewSection } from "./overview";
+import { renderOnboardingWizard } from "./onboarding";
+import { renderOrdersSection } from "./orders";
+import { renderMenuSection } from "./menu";
+import { renderMenuCreateWizard } from "./menu-wizard";
+import { renderCardsSection } from "./cards";
+import { renderDiscountsSection } from "./discounts";
+import { renderExperienceSection } from "./experience";
+import { renderStoreSection } from "./store";
+import { renderTeamSection } from "./team";
 
 function renderNavItems() {
   const availableSections = getAvailableDashboardSections();

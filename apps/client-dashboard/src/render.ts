@@ -1,8 +1,8 @@
-import { renderAuthScreen } from "./views/auth.js";
-import { renderDashboard } from "./views/layout.js";
-import { renderToasts } from "./views/toasts.js";
-import { state } from "./state.js";
-import { setToastRenderHandler } from "./toast-runtime.js";
+import { renderAuthScreen } from "./views/auth";
+import { renderDashboard } from "./views/layout";
+import { renderToasts } from "./views/toasts";
+import { state } from "./state";
+import { setToastRenderHandler } from "./toast-runtime";
 
 const appRoot = document.querySelector<HTMLDivElement>("#app");
 if (!appRoot) {

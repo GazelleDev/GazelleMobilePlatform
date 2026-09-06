@@ -7,12 +7,12 @@ import {
   publishOperatorMobileExperience,
   rollbackOperatorMobileExperience,
   saveOperatorMobileExperienceDraft
-} from "../api.js";
-import { canUpdateStoreSettings } from "../model.js";
-import { handleOperatorActionError, loadDashboard } from "../lifecycle.js";
-import { render } from "../render.js";
-import { setError, state } from "../state.js";
-import { addToast } from "../toast-runtime.js";
+} from "../api";
+import { canUpdateStoreSettings } from "../model";
+import { handleOperatorActionError, loadDashboard } from "../lifecycle";
+import { render } from "../render";
+import { setError, state } from "../state";
+import { addToast } from "../toast-runtime";
 
 const supportedSectionTypes = ["hero", "quick_actions", "featured_menu", "news_cards"] as const;
 type MobileExperienceAction = "open_menu" | "open_orders" | "open_account";

@@ -1,7 +1,7 @@
-import { state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
-import type { OperatorOrder } from "../model.js";
-import { formatOrderStatus } from "../model.js";
+import { state } from "../state";
+import { escapeHtml } from "../ui/format";
+import type { OperatorOrder } from "../model";
+import { formatOrderStatus } from "../model";
 
 export function renderBanner() {
   if (!state.errorMessage && !state.notice) {

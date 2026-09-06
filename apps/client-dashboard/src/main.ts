@@ -1,11 +1,9 @@
-import "./styles.css";
-import "./sentry.js";
-import { setNotice, state } from "./state.js";
-import { render } from "./render.js";
-import { registerEvents } from "./events.js";
-import { handleGoogleCallback, handleOwnerInviteFromUrl, loadAuthProviders } from "./controllers/auth.js";
-import { handleStripeOnboardingStart, handleStripeStatusRefresh } from "./controllers/onboarding.js";
-import { loadDashboard } from "./lifecycle.js";
+import { setNotice, state } from "./state";
+import { render } from "./render";
+import { registerEvents } from "./events";
+import { handleGoogleCallback, handleOwnerInviteFromUrl, loadAuthProviders } from "./controllers/auth";
+import { handleStripeOnboardingStart, handleStripeStatusRefresh } from "./controllers/onboarding";
+import { loadDashboard } from "./lifecycle";
 
 function handleStripeReturnParams() {
   if (typeof window === "undefined") {

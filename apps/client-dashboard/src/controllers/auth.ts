@@ -7,16 +7,16 @@ import {
   resolveDefaultApiBaseUrl,
   signInOperatorWithPassword,
   startOperatorGoogleSignIn
-} from "../api.js";
-import { setError, state } from "../state.js";
-import { clearStoredSession, persistApiBaseUrl } from "../storage.js";
-import { applyVerifiedSession } from "../lifecycle.js";
-import { render } from "../render.js";
+} from "../api";
+import { setError, state } from "../state";
+import { clearStoredSession, persistApiBaseUrl } from "../storage";
+import { applyVerifiedSession } from "../lifecycle";
+import { render } from "../render";
 import {
   clearGoogleCallbackParams,
   getGoogleCallbackRedirectUri,
   readGoogleCallbackParams
-} from "../google-callback.js";
+} from "../google-callback";
 
 function isGoogleSignInConfigured() {
   return state.authProviders?.google.configured === true;

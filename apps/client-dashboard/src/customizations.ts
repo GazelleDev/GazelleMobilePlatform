@@ -1,7 +1,7 @@
 import type { MenuItemCustomizationGroup } from "@lattelink/contracts-catalog";
-import { state } from "./state.js";
-import type { OperatorMenuCategory, OperatorMenuItem } from "./model.js";
-import { parseIntegerOrFallback } from "./ui/format.js";
+import { state } from "./state";
+import type { OperatorMenuCategory, OperatorMenuItem } from "./model";
+import { parseIntegerOrFallback } from "./ui/format";
 
 export function cloneCustomizationGroups(groups: readonly MenuItemCustomizationGroup[]) {
   return groups.map((group) => ({

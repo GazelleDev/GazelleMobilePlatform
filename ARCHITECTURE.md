@@ -11,7 +11,7 @@ LatteLink is a TypeScript monorepo built with pnpm + Turborepo. The backend is a
 ```
 apps/
   mobile/              Expo iOS ordering app (customer-facing)
-  client-dashboard/    Merchant operator SPA (Vite)
+  client-dashboard/    Merchant operator dashboard (Next.js App Router)
   admin-console/       Internal Nomly control plane (Next.js)
   lattelink-web/       Public marketing site (Next.js)
 
@@ -60,7 +60,7 @@ gateway :8080
        ├── loyalty   :3004
        └── notifications :3005
 
-Operator dashboard (Vite SPA) → gateway (same path)
+Operator dashboard (Next.js App Router) → gateway (same path)
 Admin console (Next.js on Vercel) → gateway (internal-admin token)
 
 Event bus: Valkey (Redis-compatible pub/sub)

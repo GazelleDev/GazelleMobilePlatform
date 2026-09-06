@@ -1,5 +1,5 @@
-import { state, setError } from "./state.js";
-import { render } from "./render.js";
+import { state, setError } from "./state";
+import { render } from "./render";
 
 export function getDefaultMenuCreateDraft() {
   return {

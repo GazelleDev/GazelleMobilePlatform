@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { operatorSessionSchema } from "@lattelink/contracts-auth";
-import { normalizeApiBaseUrl, resolveDefaultApiBaseUrl, type OperatorSession } from "./api.js";
-import type { DashboardSection } from "./model.js";
+import { normalizeApiBaseUrl, resolveDefaultApiBaseUrl, type OperatorSession } from "./api";
+import type { DashboardSection } from "./model";
 
 const API_BASE_URL_STORAGE_KEY = "lattelink.operator.api-base-url.v2";
 const OPERATOR_SESSION_STORAGE_KEY = "lattelink.operator.session.v2";

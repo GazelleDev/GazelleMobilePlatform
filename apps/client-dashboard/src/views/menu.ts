@@ -1,13 +1,13 @@
-import { isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
+import { isAllLocationsSelected, state } from "../state";
+import { escapeHtml } from "../ui/format";
 import {
   canCreateMenuItems,
   canToggleMenuItemVisibility,
   type OperatorMenuCategory
-} from "../model.js";
+} from "../model";
 import { isPlatformManagedMenu } from "@lattelink/contracts-catalog";
-import { ensureMenuCustomizationDraft } from "../customizations.js";
-import { renderLocationSelectionNotice, renderSectionHeading } from "./common.js";
+import { ensureMenuCustomizationDraft } from "../customizations";
+import { renderLocationSelectionNotice, renderSectionHeading } from "./common";
 
 function renderMenuCategory(
   category: OperatorMenuCategory,

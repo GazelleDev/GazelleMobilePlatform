@@ -1,9 +1,9 @@
-import { state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
-import { renderBanner } from "./common.js";
+import { state } from "../state";
+import { escapeHtml } from "../ui/format";
+import { renderBanner } from "./common";
 
 function isLocalDevAccessEnabled() {
-  if (import.meta.env.DEV) {
+  if (process.env.NODE_ENV === "development") {
     return true;
   }
   if (typeof window === "undefined") {

@@ -1,9 +1,9 @@
-import { updateOperatorStoreConfig } from "../api.js";
-import { canUpdateStoreSettings } from "../model.js";
-import { setError, state } from "../state.js";
-import { addToast } from "../toast-runtime.js";
-import { handleOperatorActionError, loadDashboard } from "../lifecycle.js";
-import { render } from "../render.js";
+import { updateOperatorStoreConfig } from "../api";
+import { canUpdateStoreSettings } from "../model";
+import { setError, state } from "../state";
+import { addToast } from "../toast-runtime";
+import { handleOperatorActionError, loadDashboard } from "../lifecycle";
+import { render } from "../render";
 
 export async function handleStoreSubmit(form: HTMLFormElement) {
   if (!state.session) {

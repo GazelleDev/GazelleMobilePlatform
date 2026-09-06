@@ -1,8 +1,8 @@
-import { escapeHtml } from "../ui/format.js";
-import { getOverviewSnapshot } from "../overview-data.js";
-import { isAllLocationsSelected, state } from "../state.js";
-import { filterOrdersByView } from "../model.js";
-import { getAvailableDashboardSections } from "../sections.js";
+import { escapeHtml } from "../ui/format";
+import { getOverviewSnapshot } from "../overview-data";
+import { isAllLocationsSelected, state } from "../state";
+import { filterOrdersByView } from "../model";
+import { getAvailableDashboardSections } from "../sections";
 
 function renderOverviewActionCards() {
   const availableSections = getAvailableDashboardSections();

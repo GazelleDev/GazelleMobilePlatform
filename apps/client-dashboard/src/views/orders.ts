@@ -1,5 +1,5 @@
-import { getSelectedLocation, isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml, formatDateTime, formatMoney, formatRelativeRefresh } from "../ui/format.js";
+import { getSelectedLocation, isAllLocationsSelected, state } from "../state";
+import { escapeHtml, formatDateTime, formatMoney, formatRelativeRefresh } from "../ui/format";
 import {
   canAdvanceOrderStatus,
   canCancelOrder,
@@ -10,16 +10,16 @@ import {
   getOrderDetailActionUnavailableMessage,
   isStoreOperator,
   type OperatorOrder
-} from "../model.js";
+} from "../model";
 import {
   isOrderTrackingEnabled,
   isStaffDashboardEnabled,
   resolveAppConfigFulfillmentMode,
   type AppConfig
 } from "@lattelink/contracts-catalog";
-import { getSelectedOrder, getVisibleOrders } from "../orders-runtime.js";
-import { isNewOrderSoundEnabled } from "../order-alert.js";
-import { renderLocationSelectionNotice, renderOrderStatusBadge, renderSectionHeading } from "./common.js";
+import { getSelectedOrder, getVisibleOrders } from "../orders-runtime";
+import { isNewOrderSoundEnabled } from "../order-alert";
+import { renderLocationSelectionNotice, renderOrderStatusBadge, renderSectionHeading } from "./common";
 
 type StoreLaneTone = "needs-action" | "in-progress" | "ready" | "closed" | "canceled";
 type StoreTicketFilter = "all" | "needs_action" | "in_progress" | "ready" | "closed";

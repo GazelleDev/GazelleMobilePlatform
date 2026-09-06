@@ -1,8 +1,8 @@
-import { isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml } from "../ui/format.js";
-import { canUpdateStoreSettings, isOwnerOperator } from "../model.js";
-import { renderLocationSelectionNotice, renderSectionHeading } from "./common.js";
-import { renderOnboardingSection } from "./onboarding.js";
+import { isAllLocationsSelected, state } from "../state";
+import { escapeHtml } from "../ui/format";
+import { canUpdateStoreSettings, isOwnerOperator } from "../model";
+import { renderLocationSelectionNotice, renderSectionHeading } from "./common";
+import { renderOnboardingSection } from "./onboarding";
 
 function renderOwnerSetupSettings() {
   if (!isOwnerOperator(state.session?.operator ?? null) || !state.onboardingSummary) {

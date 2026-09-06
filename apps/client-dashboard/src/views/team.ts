@@ -1,7 +1,7 @@
-import { isAllLocationsSelected, state } from "../state.js";
-import { escapeHtml, getOperatorInitials } from "../ui/format.js";
-import { canManageTeamMembers, getOperatorRoleLabel } from "../model.js";
-import { renderLocationSelectionNotice, renderSectionHeading } from "./common.js";
+import { isAllLocationsSelected, state } from "../state";
+import { escapeHtml, getOperatorInitials } from "../ui/format";
+import { canManageTeamMembers, getOperatorRoleLabel } from "../model";
+import { renderLocationSelectionNotice, renderSectionHeading } from "./common";
 
 export function renderTeamSection() {
   if (isAllLocationsSelected()) {

@@ -1,4 +1,4 @@
-import type { OperatorOrder } from "./model.js";
+import type { OperatorOrder } from "./model";
 
 const alertableStatuses = new Set<OperatorOrder["status"]>(["PAID", "IN_PREP", "READY"]);
 

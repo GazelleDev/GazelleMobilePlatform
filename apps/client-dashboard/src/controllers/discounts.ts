@@ -1,9 +1,9 @@
-import { createOperatorDiscountCode, updateOperatorDiscountCode } from "../api.js";
-import { canAccessCapability } from "../model.js";
-import { handleOperatorActionError, loadDashboard } from "../lifecycle.js";
-import { render } from "../render.js";
-import { setError, state } from "../state.js";
-import { addToast } from "../toast-runtime.js";
+import { createOperatorDiscountCode, updateOperatorDiscountCode } from "../api";
+import { canAccessCapability } from "../model";
+import { handleOperatorActionError, loadDashboard } from "../lifecycle";
+import { render } from "../render";
+import { setError, state } from "../state";
+import { addToast } from "../toast-runtime";
 
 type CreateDiscountInput = Parameters<typeof createOperatorDiscountCode>[2];
 type UpdateDiscountInput = Parameters<typeof updateOperatorDiscountCode>[3];

@@ -59,7 +59,7 @@ import {
   type OperatorMenuResponse,
   type OperatorNewsCard,
   type OperatorDiscountCode
-} from "./model.js";
+} from "./model";
 
 const ordersSchema = z.array(orderSchema);
 const unreachableBackendMessage = "Unable to reach backend.";
@@ -174,7 +174,7 @@ export function normalizeApiBaseUrl(input: string) {
 }
 
 export function resolveDefaultApiBaseUrl() {
-  return normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL ?? "");
+  return normalizeApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL ?? "");
 }
 
 export function buildOperatorHeaders(accessToken: string, includeJsonContentType = false): Record<string, string> {

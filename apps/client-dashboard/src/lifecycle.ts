@@ -7,8 +7,8 @@ import {
   logoutOperatorSession,
   refreshOperatorSession,
   type OperatorSession
-} from "./api.js";
-import { isOnboardingIncomplete, isOwnerOperator, isStoreOperator, sessionNeedsRefresh } from "./model.js";
+} from "./api";
+import { isOnboardingIncomplete, isOwnerOperator, isStoreOperator, sessionNeedsRefresh } from "./model";
 import {
   clearStoredSession,
   hasSeenOnboardingWizard,
@@ -16,21 +16,21 @@ import {
   persistApiBaseUrl,
   persistSection,
   persistSession
-} from "./storage.js";
-import { resetDashboardData, setError, setNotice, state } from "./state.js";
-import { snapshotCustomizationDrafts } from "./customizations.js";
-import { reconcileMenuCreateDraft, resetMenuCreateWizard } from "./menu-wizard.js";
+} from "./storage";
+import { resetDashboardData, setError, setNotice, state } from "./state";
+import { snapshotCustomizationDrafts } from "./customizations";
+import { reconcileMenuCreateDraft, resetMenuCreateWizard } from "./menu-wizard";
 import {
   alertForCurrentOrders,
   clearPendingCancel,
   reconcileSelectedOrder,
   startAutoRefresh,
   stopAutoRefresh
-} from "./orders-runtime.js";
-import { resetNewOrderAlert } from "./order-alert.js";
-import { ensureSectionIsAvailable } from "./sections.js";
-import { mergePendingTeamUserUpdates } from "./team-state.js";
-import { render } from "./render.js";
+} from "./orders-runtime";
+import { resetNewOrderAlert } from "./order-alert";
+import { ensureSectionIsAvailable } from "./sections";
+import { mergePendingTeamUserUpdates } from "./team-state";
+import { render } from "./render";
 
 let dashboardLoadInFlight = false;
 
