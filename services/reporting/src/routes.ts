@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { apiErrorSchema } from "@lattelink/contracts-core";
 import { reportingResponseSchema } from "@lattelink/contracts-reporting";
+import { getPersistenceReadinessMetadata } from "@lattelink/persistence";
 import { createReportingRepository, type ReportingRepository } from "./repository.js";
 import { queryReporting, ReportingInputError } from "./service.js";
 
@@ -20,6 +21,27 @@ export async function registerRoutes(app: FastifyInstance, repository?: Reportin
   const reportingRepository = repository ?? await createReportingRepository();
   const gatewayToken = process.env.GATEWAY_INTERNAL_API_TOKEN?.trim();
   app.addHook("onClose", async () => { if (!repository) await reportingRepository.close(); });
+
+  app.get("/health", async () => ({ status: "ok", service: "reporting" }));
+  app.get("/ready", async (_request, reply) => {
+    try {
+      await reportingRepository.pingDb();
+      return {
+        status: "ready",
+        service: "reporting",
+        persistence: "postgres",
+        environment: getPersistenceReadinessMetadata()
+      };
+    } catch {
+      reply.status(503);
+      return {
+        status: "unavailable",
+        service: "reporting",
+        error: "Database unavailable",
+        environment: getPersistenceReadinessMetadata()
+      };
+    }
+  });
 
   app.post("/v1/reporting/query", async (request: FastifyRequest, reply) => {
     if (!gatewayToken) return sendError(reply, 503, "GATEWAY_ACCESS_NOT_CONFIGURED", "GATEWAY_INTERNAL_API_TOKEN must be configured before reporting is available.", request.id);

@@ -110,6 +110,10 @@ export async function createClientAction(formData: FormData) {
   const clientName = readString(formData, "clientName");
   const locationName = readString(formData, "locationName");
   const marketLabel = readString(formData, "marketLabel");
+  // The provisioning flow currently has no timezone chooser. Persist the
+  // deployment's established default rather than leaving a reporting location
+  // without a deterministic IANA timezone.
+  const timezone = "America/Detroit";
   const ownerDisplayName = readString(formData, "ownerDisplayName");
   const ownerEmail = readString(formData, "ownerEmail");
   let locationId = "";
@@ -126,6 +130,7 @@ export async function createClientAction(formData: FormData) {
       clientName,
       locationName,
       marketLabel,
+      timezone,
       ownerEmail,
       ownerName: ownerDisplayName
     });

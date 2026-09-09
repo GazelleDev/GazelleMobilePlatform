@@ -89,6 +89,7 @@ describe("reporting query validation and location/timezone behavior", () => {
   function repository(): ReportingRepository {
     return {
       close: async () => {},
+      pingDb: async () => {},
       getLocations: async (ids) => locations.filter((location) => ids.includes(location.locationId)),
       resolveBounds: async () => bounds,
       aggregate: async () => [],

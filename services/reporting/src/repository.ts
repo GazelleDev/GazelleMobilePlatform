@@ -21,6 +21,7 @@ export type ReportingBucket = { start: string; end: string };
 
 export type ReportingRepository = {
   close: () => Promise<void>;
+  pingDb: () => Promise<void>;
   getLocations: (locationIds: string[]) => Promise<ReportingLocation[]>;
   resolveBounds: (input: { start: string; end: string; timezone: string }) => Promise<ReportingBounds>;
   aggregate: (input: {
@@ -56,6 +57,7 @@ export async function createReportingRepository(connectionString = process.env.D
 export function createPostgresReportingRepository(db: PersistenceDb): ReportingRepository {
   return {
     async close() { await db.destroy(); },
+    async pingDb() { await sql`SELECT 1`.execute(db); },
     async getLocations(locationIds) {
       const rows = await db
         .selectFrom("catalog_client_locations")

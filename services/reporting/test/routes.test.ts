@@ -11,6 +11,7 @@ const bounds = {
 function repository(timezones: string[]): ReportingRepository {
   return {
     close: async () => {},
+    pingDb: async () => {},
     getLocations: async (locationIds) => locationIds.map((locationId, index) => ({ locationId, locationName: locationId, timezone: timezones[index] ?? timezones[0]! })),
     resolveBounds: async () => bounds,
     aggregate: async () => [],
@@ -33,6 +34,19 @@ describe("reporting internal API", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ code: "MIXED_REPORTING_TIMEZONES" });
+    await app.close();
+  });
+
+  it("responds on /health and /ready", async () => {
+    const app = Fastify();
+    await registerRoutes(app, repository(["America/Detroit"]));
+
+    expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/ready" })).json()).toMatchObject({
+      status: "ready",
+      service: "reporting",
+      persistence: "postgres"
+    });
     await app.close();
   });
 });
