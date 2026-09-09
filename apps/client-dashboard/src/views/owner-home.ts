@@ -66,6 +66,10 @@ export function getRightNowCounts(orders: readonly Pick<OperatorOrder, "status">
   return { needsAction, inPrep, ready, active: needsAction + inPrep + ready };
 }
 
+export function getChartBarHeight(value: number, max: number, maxHeight = 104) {
+  return max > 0 ? Math.round((Math.abs(value) / max) * maxHeight) : 0;
+}
+
 function formatMetric(metric: { amountCents: number } | null | undefined) {
   return metric ? formatMoney(metric.amountCents) : "Unavailable";
 }
@@ -119,7 +123,7 @@ function renderChart(report: ReportingResponse | null, loading: boolean) {
     <div class="owner-home-chart__plot" aria-label="${metric === "netSales" ? "Net sales" : "Orders"} by ${report?.query.granularity ?? "time"}">
       ${loading ? `<div class="owner-home-chart__loading">${Array.from({ length: 12 }, () => '<span class="owner-home-skeleton owner-home-skeleton--bar"></span>').join("")}</div>` : series.length === 0 ? `<div class="owner-home-chart__empty">No chart activity for this period</div>` : `<div class="owner-home-bars">${series.map((bucket, index) => {
         const value = values[index] ?? 0;
-        const height = max > 0 ? Math.round((Math.abs(value) / max) * 104) : 0;
+        const height = getChartBarHeight(value, max);
         const label = formatBucket(bucket);
         const display = metric === "orders" ? `${formatCompactCount(bucket.paidOrders)} orders` : formatMetric(bucket.netSales);
         return `<button type="button" class="owner-home-bar" style="--owner-bar-height:${height}px" aria-label="${escapeHtml(`${label}: ${display}`)}" title="${escapeHtml(`${label}: ${display}`)}"><span class="owner-home-bar__fill"></span><span class="owner-home-bar__label">${escapeHtml(label)}</span></button>`;

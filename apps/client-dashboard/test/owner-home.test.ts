@@ -3,6 +3,7 @@ import type { OperatorSession } from "../src/api";
 import { state } from "../src/state";
 import {
   getOwnerReportingLocationIds,
+  getChartBarHeight,
   getReportingDateRange,
   getRightNowCounts,
   renderOwnerHome,
@@ -93,6 +94,12 @@ describe("Owner Home operational and state rendering", () => {
       { status: "PENDING_PAYMENT" },
       { status: "COMPLETED" }
     ])).toEqual({ needsAction: 2, inPrep: 1, ready: 1, active: 4 });
+  });
+
+  it("uses canonical series values and preserves zero buckets", () => {
+    expect(getChartBarHeight(50, 100)).toBe(52);
+    expect(getChartBarHeight(0, 100)).toBe(0);
+    expect(getChartBarHeight(0, 0)).toBe(0);
   });
 
   it("renders nothing for non-owner sessions", () => {
