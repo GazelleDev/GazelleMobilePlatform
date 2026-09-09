@@ -34,6 +34,7 @@ import * as migration0036 from "../src/migrations/0036_backfill_onboarding_clien
 import * as migration0038 from "../src/migrations/0038_mobile_experience_builder.js";
 import * as migration0045 from "../src/migrations/0045_operator_authenticators.js";
 import * as migration0046 from "../src/migrations/0046_reporting_locations_and_indexes.js";
+import * as migration0047 from "../src/migrations/0047_backfill_refund_allocations.js";
 import { resolveMigrationFolderPath } from "../src/migrate.js";
 
 describe("persistence", () => {
@@ -160,7 +161,8 @@ describe("persistence", () => {
       "0036_backfill_onboarding_client_shells": migration0036,
       "0038_mobile_experience_builder": migration0038,
       "0045_operator_authenticators": migration0045,
-      "0046_reporting_locations_and_indexes": migration0046
+      "0046_reporting_locations_and_indexes": migration0046,
+      "0047_backfill_refund_allocations": migration0047
     };
 
     expect(basename(resolveMigrationFolderPath())).toBe("migrations");
@@ -189,7 +191,8 @@ describe("persistence", () => {
       "0036_backfill_onboarding_client_shells",
       "0038_mobile_experience_builder",
       "0045_operator_authenticators",
-      "0046_reporting_locations_and_indexes"
+      "0046_reporting_locations_and_indexes",
+      "0047_backfill_refund_allocations"
     ]);
 
     for (const migration of Object.values(migrations)) {

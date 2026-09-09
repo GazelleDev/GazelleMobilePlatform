@@ -790,6 +790,17 @@ describe("orders service layer", () => {
 
     expect(cancelResult.order.status).toBe("CANCELED");
 
+    expect(await deps.repository.getSuccessfulRefund(order.id)).toMatchObject({
+      status: "REFUNDED",
+      amountCents: order.total.amountCents,
+      allocation: {
+        merchandiseAmountCents: expect.any(Number),
+        items: expect.arrayContaining([
+          expect.objectContaining({ itemId: expect.any(String), amountCents: expect.any(Number) })
+        ])
+      }
+    });
+
     const refundCalls = fetchMock.mock.calls.filter(([input]) =>
       (typeof input === "string" ? input : input.toString()).endsWith("/v1/payments/refunds")
     );
@@ -811,6 +822,43 @@ describe("orders service layer", () => {
         })
       ])
     );
+  });
+
+  it("rejects a partial refund reconciliation until item allocation is supplied", async () => {
+    const { deps } = await createTestDeps(repositories);
+    const { order } = await createQuotedOrder(deps);
+    const paidResult = await reconcilePaymentWebhook({
+      input: {
+        provider: "STRIPE",
+        kind: "CHARGE",
+        orderId: order.id,
+        paymentId: "123e4567-e89b-12d3-a456-426614174101",
+        status: "SUCCEEDED",
+        amountCents: order.total.amountCents,
+        currency: "USD",
+        occurredAt: "2026-03-10T00:00:00.000Z"
+      },
+      requestId: "service-partial-refund-pay",
+      deps
+    });
+    expect("error" in paidResult).toBe(false);
+
+    const refundResult = await reconcilePaymentWebhook({
+      input: {
+        provider: "STRIPE",
+        kind: "REFUND",
+        orderId: order.id,
+        paymentId: "123e4567-e89b-12d3-a456-426614174101",
+        status: "REFUNDED",
+        amountCents: order.total.amountCents - 1,
+        currency: "USD",
+        occurredAt: "2026-03-10T00:01:00.000Z"
+      },
+      requestId: "service-partial-refund",
+      deps
+    });
+    expect(refundResult).toMatchObject({ error: { code: "REFUND_ALLOCATION_REQUIRED", statusCode: 409 } });
+    expect(await deps.repository.getSuccessfulRefund(order.id)).toBeUndefined();
   });
 
   it("getOrderForRead hides orders outside the requested operator location", async () => {

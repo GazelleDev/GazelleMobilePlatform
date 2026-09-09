@@ -349,8 +349,70 @@ function parsePersistedRefundSnapshot(payload: unknown | undefined) {
     return undefined;
   }
 
-  const parsed = paymentsRefundResponseSchema.safeParse(payload);
+  const parsed = persistedRefundSnapshotSchema.safeParse(payload);
   return parsed.success ? parsed.data : undefined;
+}
+
+const refundAllocationSchema = z.object({
+  merchandiseAmountCents: z.number().int().nonnegative(),
+  items: z.array(z.object({
+    lineIndex: z.number().int().nonnegative(),
+    itemId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    amountCents: z.number().int().nonnegative()
+  })).min(1)
+});
+
+const persistedRefundSnapshotSchema = paymentsRefundResponseSchema.extend({
+  allocation: refundAllocationSchema.optional()
+});
+
+type PersistedRefundSnapshot = z.output<typeof persistedRefundSnapshotSchema>;
+
+function buildFullRefundAllocation(quote: OrderQuote) {
+  const merchandiseAmountCents = Math.max(quote.subtotal.amountCents - quote.discount.amountCents, 0);
+  const lineTotals = quote.items.map((item) => item.lineTotalCents ?? item.unitPriceCents * item.quantity);
+  const subtotalCents = lineTotals.reduce((sum, value) => sum + value, 0);
+
+  if (subtotalCents <= 0) {
+    return refundAllocationSchema.parse({
+      merchandiseAmountCents,
+      items: quote.items.map((item, lineIndex) => ({
+        lineIndex,
+        itemId: item.itemId,
+        quantity: item.quantity,
+        amountCents: 0
+      }))
+    });
+  }
+
+  const allocated = lineTotals.map((lineTotal, lineIndex) => {
+    const exact = (merchandiseAmountCents * lineTotal) / subtotalCents;
+    return { lineIndex, base: Math.floor(exact), remainder: exact - Math.floor(exact) };
+  });
+  let remainderCents = merchandiseAmountCents - allocated.reduce((sum, item) => sum + item.base, 0);
+  for (const item of [...allocated].sort((left, right) => right.remainder - left.remainder || left.lineIndex - right.lineIndex)) {
+    if (remainderCents <= 0) break;
+    item.base += 1;
+    remainderCents -= 1;
+  }
+
+  return refundAllocationSchema.parse({
+    merchandiseAmountCents,
+    items: quote.items.map((item, lineIndex) => ({
+      lineIndex,
+      itemId: item.itemId,
+      quantity: item.quantity,
+      amountCents: allocated[lineIndex]?.base ?? 0
+    }))
+  });
+}
+
+function attachRefundAllocation(response: PaymentsRefundResponse, quote: OrderQuote): PersistedRefundSnapshot {
+  return persistedRefundSnapshotSchema.parse({
+    ...response,
+    allocation: buildFullRefundAllocation(quote)
+  });
 }
 
 function resolveRequestUserId(context: RequestUserContext | undefined) {
@@ -1856,10 +1918,15 @@ export async function cancelOrder(params: {
     }
 
   const persistedRefund = await deps.repository.getSuccessfulRefund(orderId);
-    let successfulRefund: PaymentsRefundResponse | undefined;
+    let successfulRefund: PersistedRefundSnapshot | undefined;
     const parsedPersistedRefund = parsePersistedRefundSnapshot(persistedRefund);
     if (parsedPersistedRefund?.status === "REFUNDED") {
-      successfulRefund = parsedPersistedRefund;
+      successfulRefund = parsedPersistedRefund.allocation
+        ? parsedPersistedRefund
+        : attachRefundAllocation(parsedPersistedRefund, orderQuote);
+      if (!parsedPersistedRefund.allocation) {
+        await deps.repository.setSuccessfulRefund(orderId, successfulRefund);
+      }
     }
 
     if (!successfulRefund) {
@@ -1879,8 +1946,8 @@ export async function cancelOrder(params: {
         return { error: requestedRefund.error };
       }
 
-      successfulRefund = requestedRefund.response;
-      await deps.repository.setSuccessfulRefund(orderId, requestedRefund.response);
+      successfulRefund = attachRefundAllocation(requestedRefund.response, orderQuote);
+      await deps.repository.setSuccessfulRefund(orderId, successfulRefund);
     }
 
     const earnedPointsToReverse = calculateEarnedLoyaltyPoints(existingOrder.total.amountCents);
@@ -2121,6 +2188,29 @@ export async function reconcilePaymentWebhook(params: {
     };
   }
 
+  const orderQuote = await deps.repository.getOrderQuote(input.orderId);
+  const refundAmountCents = input.amountCents ?? existingOrder.total.amountCents;
+  if (input.status === "REFUNDED" && !orderQuote) {
+    return {
+      error: buildServiceError({
+        statusCode: 409,
+        code: "ORDER_CONTEXT_MISSING",
+        message: "Refund allocation cannot be recorded because order quote context is missing",
+        details: { orderId: input.orderId }
+      })
+    };
+  }
+  if (input.status === "REFUNDED" && refundAmountCents !== existingOrder.total.amountCents) {
+    return {
+      error: buildServiceError({
+        statusCode: 409,
+        code: "REFUND_ALLOCATION_REQUIRED",
+        message: "Partial refunds must include an item-level allocation before they can enter reporting",
+        details: { orderId: input.orderId, amountCents: refundAmountCents }
+      })
+    };
+  }
+
   const existingPersistedRefund = await deps.repository.getSuccessfulRefund(input.orderId);
   const parsedPersistedRefund =
     existingPersistedRefund === undefined ? undefined : paymentsRefundResponseSchema.safeParse(existingPersistedRefund);
@@ -2131,12 +2221,15 @@ export async function reconcilePaymentWebhook(params: {
     orderId: input.orderId,
     paymentId: input.paymentId,
     status: input.status,
-    amountCents: input.amountCents ?? existingOrder.total.amountCents,
+    amountCents: refundAmountCents,
     currency: input.currency ?? existingOrder.total.currency,
     occurredAt: input.occurredAt,
     message: input.message
   });
-  await deps.repository.setSuccessfulRefund(input.orderId, refundSnapshot);
+  const persistedRefundSnapshot = input.status === "REFUNDED" && orderQuote
+    ? attachRefundAllocation(refundSnapshot, orderQuote)
+    : refundSnapshot;
+  await deps.repository.setSuccessfulRefund(input.orderId, persistedRefundSnapshot);
 
   if (input.status !== "REFUNDED") {
     return {
@@ -2145,6 +2238,17 @@ export async function reconcilePaymentWebhook(params: {
         applied: false,
         orderStatus: existingOrder.status,
         note: `Refund status ${input.status} does not transition order state`
+      })
+    };
+  }
+
+  if (!orderQuote) {
+    return {
+      error: buildServiceError({
+        statusCode: 409,
+        code: "ORDER_CONTEXT_MISSING",
+        message: "Refund allocation cannot be recorded because order quote context is missing",
+        details: { orderId: input.orderId }
       })
     };
   }
@@ -2178,18 +2282,6 @@ export async function reconcilePaymentWebhook(params: {
         applied: false,
         orderStatus: existingOrder.status,
         note: "Completed orders require manual refund review and do not auto-transition"
-      })
-    };
-  }
-
-  const orderQuote = await deps.repository.getOrderQuote(input.orderId);
-  if (!orderQuote) {
-    return {
-      error: buildServiceError({
-        statusCode: 409,
-        code: "ORDER_CONTEXT_MISSING",
-        message: "Order quote context is missing",
-        details: { orderId: input.orderId }
       })
     };
   }
