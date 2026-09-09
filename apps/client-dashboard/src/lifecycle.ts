@@ -2,6 +2,7 @@ import {
   fetchDashboardLocations,
   fetchOperatorOnboardingSummary,
   fetchOperatorOrders,
+  fetchOperatorReporting,
   fetchOperatorSnapshot,
   isApiRequestError,
   logoutOperatorSession,
@@ -12,6 +13,7 @@ import { isOnboardingIncomplete, isOwnerOperator, isStoreOperator, sessionNeedsR
 import {
   clearStoredSession,
   hasSeenOnboardingWizard,
+  loadStoredSection,
   markOnboardingWizardSeen,
   persistApiBaseUrl,
   persistSection,
@@ -31,8 +33,51 @@ import { resetNewOrderAlert } from "./order-alert";
 import { ensureSectionIsAvailable } from "./sections";
 import { mergePendingTeamUserUpdates } from "./team-state";
 import { render } from "./render";
+import { getOwnerReportingLocationIds, getReportingDateRange, reportingErrorCode, resolveOwnerReportingTimezone } from "./views/owner-home";
 
 let dashboardLoadInFlight = false;
+
+export async function loadOwnerHomeReport(options: { renderStart?: boolean } = {}) {
+  const session = state.session;
+  if (!session || !isOwnerOperator(session.operator) || state.section !== "overview") {
+    return;
+  }
+
+  const timezone = resolveOwnerReportingTimezone();
+  if (timezone === "mixed") {
+    state.ownerHome.report = null;
+    state.ownerHome.loading = false;
+    state.ownerHome.error = "MIXED_REPORTING_TIMEZONES";
+    if (options.renderStart !== false) render();
+    return;
+  }
+  const locationIds = getOwnerReportingLocationIds();
+  if (!timezone || locationIds.length === 0) {
+    state.ownerHome.report = null;
+    state.ownerHome.loading = false;
+    state.ownerHome.error = "Reporting location metadata is unavailable.";
+    if (options.renderStart !== false) render();
+    return;
+  }
+
+  state.ownerHome.loading = true;
+  state.ownerHome.error = null;
+  if (options.renderStart !== false) render();
+  try {
+    const range = getReportingDateRange(state.ownerHome.period, timezone);
+    state.ownerHome.report = await fetchOperatorReporting(session, locationIds, range);
+  } catch (error) {
+    if (isSessionAuthFailure(error)) {
+      await signOut("Your client dashboard session expired. Sign in again to continue.");
+      return;
+    }
+    state.ownerHome.report = null;
+    state.ownerHome.error = reportingErrorCode(error) ?? (error instanceof Error ? error.message : "Unable to load reporting data.");
+  } finally {
+    state.ownerHome.loading = false;
+    if (options.renderStart !== false) render();
+  }
+}
 
 export function isSessionAuthFailure(error: unknown) {
   if (isApiRequestError(error)) {
@@ -201,6 +246,12 @@ export async function loadDashboard(options: { silent?: boolean } = {}): Promise
   const silent = options.silent === true;
   dashboardLoadInFlight = true;
 
+  if (isStoreOperator(state.session.operator)) {
+    state.section = "orders";
+  } else {
+    state.section = loadStoredSection();
+  }
+
   if (!silent) {
     state.loading = true;
     setError(null);
@@ -208,6 +259,7 @@ export async function loadDashboard(options: { silent?: boolean } = {}): Promise
   }
 
   try {
+    state.ownerHome.ordersError = null;
     const session = await ensureFreshSession();
     if (!session) {
       return;
@@ -216,37 +268,49 @@ export async function loadDashboard(options: { silent?: boolean } = {}): Promise
     state.availableLocations = await fetchDashboardLocations(session);
     state.selectedLocationId = resolveSelectedLocationId();
 
-    if (state.selectedLocationId === "all") {
-      const orders = new Set(session.operator.capabilities).has("orders:read")
-        ? (
-            await Promise.all(state.availableLocations.map((location) => fetchOperatorOrders(session, location.locationId)))
-          ).flat()
-        : [];
-      state.appConfig = null;
-      state.orders = orders;
-      state.menuCategories = [];
-      state.menuCustomizationDrafts = {};
-      state.newsCards = [];
-      state.discountCodes = [];
-      state.storeConfig = null;
-      state.mobileExperience = null;
-      state.mobileExperienceVersions = { locationId: "", versions: [] };
-      state.mobileReleaseBuildJobs = { jobs: [] };
-      state.teamUsers = [];
-    } else {
-      const snapshot = await fetchOperatorSnapshot(session, state.selectedLocationId);
-      state.appConfig = snapshot.appConfig;
-      state.orders = snapshot.orders;
-      state.menuCategories = snapshot.menu.categories;
-      reconcileMenuCreateDraft();
-      state.menuCustomizationDrafts = snapshotCustomizationDrafts(snapshot.menu.categories);
-      state.newsCards = snapshot.cards;
-      state.discountCodes = snapshot.discountCodes;
-      state.storeConfig = snapshot.storeConfig;
-      state.mobileExperience = snapshot.mobileExperience;
-      state.mobileExperienceVersions = snapshot.mobileExperienceVersions;
-      state.mobileReleaseBuildJobs = snapshot.mobileReleaseBuildJobs;
-      state.teamUsers = mergePendingTeamUserUpdates(snapshot.team);
+    // Reporting is intentionally isolated from the order/snapshot read. A stale or
+    // unavailable orders API must not take down the analytics modules.
+    if (isOwnerOperator(session.operator) && state.section === "overview") {
+      await loadOwnerHomeReport({ renderStart: false });
+    }
+
+    try {
+      if (state.selectedLocationId === "all") {
+        const orders = new Set(session.operator.capabilities).has("orders:read")
+          ? (
+              await Promise.all(state.availableLocations.map((location) => fetchOperatorOrders(session, location.locationId)))
+            ).flat()
+          : [];
+        state.appConfig = null;
+        state.orders = orders;
+        state.menuCategories = [];
+        state.menuCustomizationDrafts = {};
+        state.newsCards = [];
+        state.discountCodes = [];
+        state.storeConfig = null;
+        state.mobileExperience = null;
+        state.mobileExperienceVersions = { locationId: "", versions: [] };
+        state.mobileReleaseBuildJobs = { jobs: [] };
+        state.teamUsers = [];
+      } else {
+        const snapshot = await fetchOperatorSnapshot(session, state.selectedLocationId);
+        state.appConfig = snapshot.appConfig;
+        state.orders = snapshot.orders;
+        state.menuCategories = snapshot.menu.categories;
+        reconcileMenuCreateDraft();
+        state.menuCustomizationDrafts = snapshotCustomizationDrafts(snapshot.menu.categories);
+        state.newsCards = snapshot.cards;
+        state.discountCodes = snapshot.discountCodes;
+        state.storeConfig = snapshot.storeConfig;
+        state.mobileExperience = snapshot.mobileExperience;
+        state.mobileExperienceVersions = snapshot.mobileExperienceVersions;
+        state.mobileReleaseBuildJobs = snapshot.mobileReleaseBuildJobs;
+        state.teamUsers = mergePendingTeamUserUpdates(snapshot.team);
+      }
+    } catch (error) {
+      if (isSessionAuthFailure(error)) throw error;
+      state.orders = [];
+      state.ownerHome.ordersError = error instanceof Error ? error.message : "Unable to load current orders.";
     }
 
     alertForCurrentOrders();
@@ -257,6 +321,12 @@ export async function loadDashboard(options: { silent?: boolean } = {}): Promise
     state.lastRefreshedAt = Date.now();
     ensureSectionIsAvailable();
     reconcileSelectedOrder();
+
+    if (!isOwnerOperator(session.operator) || state.section !== "overview") {
+      state.ownerHome.report = null;
+      state.ownerHome.error = null;
+      state.ownerHome.loading = false;
+    }
 
     if (state.pendingCancelOrderId && !state.orders.some((order) => order.id === state.pendingCancelOrderId)) {
       clearPendingCancel();
@@ -281,8 +351,15 @@ export async function loadDashboard(options: { silent?: boolean } = {}): Promise
 
 export async function applyVerifiedSession(nextSession: OperatorSession, notice: string) {
   const launchEntryIntent = state.launchEntryIntent;
+  const currentSession = state.session;
+  const shouldPreserveSection =
+    currentSession?.operator.operatorUserId === nextSession.operator.operatorUserId;
   state.session = nextSession;
-  state.section = isStoreOperator(nextSession.operator) ? "orders" : "overview";
+  state.section = isStoreOperator(nextSession.operator)
+    ? "orders"
+    : shouldPreserveSection
+      ? state.section
+      : "overview";
   state.selectedLocationId = isStoreOperator(nextSession.operator)
     ? nextSession.operator.locationId
     : (nextSession.operator.locationIds?.length ?? 1) > 1

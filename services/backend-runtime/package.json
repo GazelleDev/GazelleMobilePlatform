@@ -24,6 +24,7 @@
     "@lattelink/orders": "workspace:*",
     "@lattelink/payment-reconciler-worker": "workspace:*",
     "@lattelink/payments": "workspace:*",
+    "@lattelink/reporting": "workspace:*",
     "@lattelink/persistence": "workspace:*",
     "fastify": "5.12.3"
   },

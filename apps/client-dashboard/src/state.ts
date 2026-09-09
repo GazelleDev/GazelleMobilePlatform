@@ -22,6 +22,7 @@ import type {
   OperatorOrder,
   OperatorOrderFilter
 } from "./model";
+import type { OperatorReportingResponse } from "./api";
 import { isStoreOperator } from "./model";
 import { loadStoredApiBaseUrl, loadStoredSection, loadStoredSession } from "./storage";
 
@@ -58,6 +59,14 @@ export type AppState = {
   notice: string | null;
   appConfig: AppConfig | null;
   orders: OperatorOrder[];
+  ownerHome: {
+    period: "today" | "7d" | "30d";
+    chartMetric: "netSales" | "orders";
+    loading: boolean;
+    report: OperatorReportingResponse | null;
+    error: string | null;
+    ordersError: string | null;
+  };
   orderFilter: OperatorOrderFilter;
   storeTicketFilter: "all" | "needs_action" | "in_progress" | "ready" | "closed";
   menuCategories: OperatorMenuCategory[];
@@ -152,6 +161,14 @@ export const state: AppState = {
   notice: null,
   appConfig: null,
   orders: [],
+  ownerHome: {
+    period: "today",
+    chartMetric: "netSales",
+    loading: false,
+    report: null,
+    error: null,
+    ordersError: null
+  },
   orderFilter: "active",
   storeTicketFilter: "all",
   menuCategories: [],
@@ -250,6 +267,14 @@ export function resetDashboardData() {
     : null;
   state.appConfig = null;
   state.orders = [];
+  state.ownerHome = {
+    period: "today",
+    chartMetric: "netSales",
+    loading: false,
+    report: null,
+    error: null,
+    ordersError: null
+  };
   state.storeTicketFilter = "all";
   state.menuCategories = [];
   state.menuCustomizationDrafts = {};

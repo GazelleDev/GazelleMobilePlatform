@@ -435,6 +435,7 @@ export interface CatalogClientLocationTable {
   brand_id: string;
   location_name: string;
   market_label: string;
+  timezone: Generated<string>;
   primary_location: boolean;
   created_at: Generated<string>;
   updated_at: Generated<string>;

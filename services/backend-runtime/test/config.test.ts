@@ -21,6 +21,7 @@ describe("backend runtime configuration", () => {
         payments: 3103,
         loyalty: 3104,
         notifications: 3105,
+        reporting: 3106,
       },
     });
     expect(buildInternalServiceEnvironment(config)).toEqual({
@@ -30,6 +31,7 @@ describe("backend runtime configuration", () => {
       PAYMENTS_SERVICE_BASE_URL: "http://127.0.0.1:3103",
       LOYALTY_SERVICE_BASE_URL: "http://127.0.0.1:3104",
       NOTIFICATIONS_SERVICE_BASE_URL: "http://127.0.0.1:3105",
+      REPORTING_SERVICE_BASE_URL: "http://127.0.0.1:3106",
     });
   });
 

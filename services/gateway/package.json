@@ -28,6 +28,7 @@
     "@lattelink/contracts-loyalty": "workspace:*",
     "@lattelink/contracts-notifications": "workspace:*",
     "@lattelink/contracts-orders": "workspace:*",
+    "@lattelink/contracts-reporting": "workspace:*",
     "@lattelink/event-bus": "workspace:*",
     "@lattelink/observability": "workspace:*",
     "fastify": "5.12.3",

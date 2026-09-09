@@ -24,7 +24,7 @@ import {
 } from "./orders-runtime";
 import { canCreateMenuItems } from "./model";
 import { enableNewOrderSound } from "./order-alert";
-import { loadDashboard, signOut } from "./lifecycle";
+import { loadDashboard, loadOwnerHomeReport, signOut } from "./lifecycle";
 import { getAvailableDashboardSections } from "./sections";
 import {
   handleGoogleSignInStart,
@@ -202,6 +202,24 @@ export function registerEvents() {
     }
 
     switch (action) {
+      case "set-owner-period": {
+        const period = actionElement.dataset.period;
+        if (period === "today" || period === "7d" || period === "30d") {
+          if (state.ownerHome.period !== period) {
+            state.ownerHome.period = period;
+            void loadOwnerHomeReport();
+          }
+        }
+        return;
+      }
+      case "set-owner-chart-metric": {
+        const metric = actionElement.dataset.chartMetric;
+        if (metric === "netSales" || metric === "orders") {
+          state.ownerHome.chartMetric = metric;
+          render();
+        }
+        return;
+      }
       case "enable-order-sound":
         void enableNewOrderSound().then((enabled) => {
           addToast(
@@ -319,6 +337,9 @@ export function registerEvents() {
         state.section = section;
         persistSection(section);
         render();
+        if (section === "overview" && state.session?.operator.role === "owner") {
+          void loadOwnerHomeReport();
+        }
         if (section === "orders") {
           startAutoRefresh(loadDashboard);
         }

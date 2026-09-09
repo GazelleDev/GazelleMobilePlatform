@@ -5,6 +5,7 @@ export const internalServiceNames = [
   "payments",
   "loyalty",
   "notifications",
+  "reporting",
 ] as const;
 
 export type InternalServiceName = (typeof internalServiceNames)[number];
@@ -23,6 +24,7 @@ const defaultInternalPorts: Record<InternalServiceName, number> = {
   payments: 3103,
   loyalty: 3104,
   notifications: 3105,
+  reporting: 3106,
 };
 
 function readPort(name: string, value: string | undefined, fallback: number) {
@@ -76,5 +78,6 @@ export function buildInternalServiceEnvironment(config: BackendRuntimeConfig) {
     PAYMENTS_SERVICE_BASE_URL: baseUrl("payments"),
     LOYALTY_SERVICE_BASE_URL: baseUrl("loyalty"),
     NOTIFICATIONS_SERVICE_BASE_URL: baseUrl("notifications"),
+    REPORTING_SERVICE_BASE_URL: baseUrl("reporting"),
   };
 }

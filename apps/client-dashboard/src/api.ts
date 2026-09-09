@@ -40,6 +40,11 @@ import {
   stripeConnectStatusRefreshResponseSchema
 } from "@lattelink/contracts-catalog";
 import {
+  reportingQueryRequestSchema,
+  reportingResponseSchema,
+  type ReportingResponse
+} from "@lattelink/contracts-reporting";
+import {
   createDiscountCodeRequestSchema,
   discountCodeListResponseSchema,
   discountCodeSchema,
@@ -79,8 +84,10 @@ export type DashboardLocation = {
   locationId: string;
   locationName: string;
   marketLabel: string;
+  timezone?: string;
   appConfig: z.output<typeof appConfigSchema>;
 };
+export type OperatorReportingResponse = ReportingResponse;
 export type OperatorDashboardSnapshot = {
   appConfig: z.output<typeof appConfigSchema> | null;
   orders: OperatorOrder[];
@@ -517,23 +524,54 @@ export async function logoutOperatorSession(session: OperatorSession) {
 
 export async function fetchDashboardLocations(session: OperatorSession): Promise<DashboardLocation[]> {
   const locationIds = normalizeOperatorLocationIds(session.operator.locationId, session.operator.locationIds ?? []);
-  const appConfigs = await Promise.all(
-    locationIds.map((locationId) =>
-      requestJson({
-        apiBaseUrl: session.apiBaseUrl,
-        path: "/app-config",
-        query: { locationId },
-        schema: appConfigSchema
-      })
-    )
+  const canReadStoreConfig = new Set(session.operator.capabilities).has("store:read");
+  const locations = await Promise.all(
+    locationIds.map(async (locationId) => {
+      const [appConfig, storeConfig] = await Promise.all([
+        requestJson({
+          apiBaseUrl: session.apiBaseUrl,
+          path: "/app-config",
+          query: { locationId },
+          schema: appConfigSchema
+        }),
+        canReadStoreConfig ? fetchOperatorLocationStoreConfig(session, locationId) : Promise.resolve(null)
+      ]);
+      return { appConfig, storeConfig };
+    })
   );
 
-  return appConfigs.map((appConfig) => ({
+  return locations.map(({ appConfig, storeConfig }) => ({
     locationId: appConfig.brand.locationId,
     locationName: appConfig.brand.locationName,
     marketLabel: appConfig.brand.marketLabel,
+    timezone: storeConfig?.timezone ?? "America/Detroit",
     appConfig
   }));
+}
+
+export function fetchOperatorReporting(
+  session: OperatorSession,
+  locationIds: string[],
+  input: { start: string; end: string; granularity: "hour" | "day" }
+) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: "/admin/reporting/query",
+    method: "POST",
+    body: reportingQueryRequestSchema.parse({ locationIds, ...input }),
+    schema: reportingResponseSchema
+  });
+}
+
+export function fetchOperatorLocationStoreConfig(session: OperatorSession, locationId: string) {
+  return requestJson({
+    apiBaseUrl: session.apiBaseUrl,
+    accessToken: session.accessToken,
+    path: "/admin/store/config",
+    query: { locationId },
+    schema: adminStoreConfigSchema
+  });
 }
 
 export async function fetchOperatorOrders(session: OperatorSession, locationId: string) {

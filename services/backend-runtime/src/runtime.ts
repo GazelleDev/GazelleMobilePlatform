@@ -17,6 +17,7 @@ import {
   type PaymentReconcilerRuntime,
 } from "@lattelink/payment-reconciler-worker/worker";
 import { buildApp as buildPaymentsApp } from "@lattelink/payments/app";
+import { buildApp as buildReportingApp } from "@lattelink/reporting/app";
 import {
   buildMenuSyncConfig,
   createMenuSyncRuntime,
@@ -58,6 +59,7 @@ const defaultDependencies: RuntimeDependencies = {
     payments: buildPaymentsApp,
     loyalty: buildLoyaltyApp,
     notifications: buildNotificationsApp,
+    reporting: buildReportingApp,
     gateway: buildGatewayApp,
   },
   startWorkers: startRuntimeWorkers,

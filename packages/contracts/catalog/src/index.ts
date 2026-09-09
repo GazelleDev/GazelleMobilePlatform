@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+const ianaTimezoneSchema = z.string().trim().min(1).refine(
+  (timezone) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  "Timezone must be an IANA identifier, for example America/Detroit."
+);
+
 const customizationSelectionTypeInputSchema = z.enum(["single", "multi", "multiple", "boolean"]);
 const customizationDisplayStyleSchema = z.enum(["chips", "list", "toggle"]).optional();
 const customizationOptionDisplayStyleSchema = z.enum(["default", "emphasis"]).optional();
@@ -355,6 +367,8 @@ export const adminStoreConfigSchema = z.object({
   locationId: z.string().min(1),
   storeName: z.string().min(1),
   locationName: z.string().min(1),
+  /** Persisted IANA timezone used for local reporting boundaries. */
+  timezone: ianaTimezoneSchema.optional(),
   hours: z.string().min(1),
   pickupInstructions: z.string().min(1),
   taxRateBasisPoints: z.number().int().min(0).max(10000),
@@ -665,6 +679,7 @@ export const internalLocationBootstrapSchema = z.object({
   locationId: z.string().trim().min(1).optional(),
   locationName: z.string().trim().min(1),
   marketLabel: z.string().trim().min(1),
+  timezone: ianaTimezoneSchema.default("America/Detroit"),
   storeName: z.string().trim().min(1).optional(),
   hours: z.string().trim().min(1).optional(),
   pickupInstructions: z.string().trim().min(1).optional(),
@@ -861,6 +876,7 @@ export const adminClientCreateRequestSchema = z.object({
   clientName: z.string().trim().min(1),
   locationName: z.string().trim().min(1),
   marketLabel: z.string().trim().min(1),
+  timezone: ianaTimezoneSchema.default("America/Detroit"),
   ownerEmail: z.string().trim().email(),
   ownerName: z.string().trim().min(1).optional(),
   storeName: z.string().trim().min(1).optional(),
@@ -902,6 +918,7 @@ export const internalClientLocationSchema = z.object({
   locationId: z.string().trim().min(1),
   locationName: z.string().trim().min(1),
   marketLabel: z.string().trim().min(1),
+  timezone: ianaTimezoneSchema,
   primaryLocation: z.boolean(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional()

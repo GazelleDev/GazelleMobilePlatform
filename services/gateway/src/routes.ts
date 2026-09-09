@@ -124,6 +124,7 @@ import {
   pushTokenUpsertResponseSchema,
   pushTokenUpsertSchema
 } from "@lattelink/contracts-notifications";
+import { reportingQueryRequestSchema, reportingResponseSchema } from "@lattelink/contracts-reporting";
 import { captureOperationalError } from "@lattelink/observability";
 
 declare module "fastify" {
@@ -1716,6 +1717,11 @@ export async function registerRoutes(app: FastifyInstance) {
     serviceLabel: "Notifications",
     fallbackUrl: "http://127.0.0.1:3005"
   });
+  const reportingBaseUrl = resolveServiceBaseUrl({
+    envVar: "REPORTING_SERVICE_BASE_URL",
+    serviceLabel: "Reporting",
+    fallbackUrl: "http://127.0.0.1:3006"
+  });
   const deployEnvironment = process.env.DEPLOY_ENV?.trim() || process.env.APP_ENV?.trim() || "unknown";
   const gatewayInternalApiToken = trimToUndefined(process.env.GATEWAY_INTERNAL_API_TOKEN);
   const jwtSecret = trimToUndefined(process.env.JWT_SECRET);
@@ -1837,6 +1843,7 @@ export async function registerRoutes(app: FastifyInstance) {
     { service: "payments", baseUrl: paymentsBaseUrl },
     { service: "loyalty", baseUrl: loyaltyBaseUrl },
     { service: "notifications", baseUrl: notificationsBaseUrl }
+    ,{ service: "reporting", baseUrl: reportingBaseUrl }
   ] as const;
 
   async function fetchUpstreamReady(target: (typeof upstreamReadyTargets)[number]) {
@@ -3579,6 +3586,39 @@ export async function registerRoutes(app: FastifyInstance) {
       responseSchema: orderSchema
     });
   });
+
+  app.post(
+    "/v1/admin/reporting/query",
+    {
+      preHandler: [app.rateLimit(staffReadRateLimit), requireOperatorCapability("orders:read")]
+    },
+    async (request, reply) => {
+      const input = reportingQueryRequestSchema.parse(request.body);
+      const operator = request.authenticatedOperator;
+      if (!operator) {
+        return reply.status(401).send(unauthorized(request.id));
+      }
+      const requestedLocationIds = input.locationIds ?? operator.locationIds;
+      if (requestedLocationIds.some((locationId) => !operator.locationIds.includes(locationId))) {
+        return reply.status(403).send(forbidden(request.id));
+      }
+      if (requestedLocationIds.length === 0) {
+        return reply.status(400).send(invalidRequest(request.id, "At least one authorized location is required for reporting"));
+      }
+      return proxyUpstream({
+        request,
+        reply,
+        baseUrl: reportingBaseUrl,
+        serviceLabel: "Reporting",
+        method: "POST",
+        path: "/v1/reporting/query",
+        body: { ...input, locationIds: [...new Set(requestedLocationIds)] },
+        additionalHeaders: { "x-gateway-token": gatewayInternalApiToken },
+        forwardUserIdHeader: false,
+        responseSchema: reportingResponseSchema
+      });
+    }
+  );
 
   app.get(
     "/v1/admin/orders",

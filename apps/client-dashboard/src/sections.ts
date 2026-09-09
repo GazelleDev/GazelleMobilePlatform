@@ -8,7 +8,7 @@ import { state } from "./state";
 import { persistSection } from "./storage";
 
 export const dashboardSectionLabels: Record<DashboardSection, string> = {
-  overview: "Overview",
+  overview: "Home",
   orders: "Orders",
   menu: "Menu",
   cards: "News cards",

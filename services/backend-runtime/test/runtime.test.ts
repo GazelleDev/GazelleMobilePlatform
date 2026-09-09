@@ -71,7 +71,7 @@ describe("backend runtime lifecycle", () => {
     await runtime.close();
     await runtime.close();
 
-    expect(events.slice(-9)).toEqual([
+    expect(events.slice(-(internalServiceNames.length + 3))).toEqual([
       "workers:stop",
       "workers:close",
       "close:gateway",

@@ -404,6 +404,7 @@ describe("contracts-catalog", () => {
 
     expect(summary.locationId).toBe("northside-01");
     expect(summary.action).toBe("created");
+    expect(bootstrap.timezone).toBe("America/Detroit");
 
     const list = internalLocationListResponseSchema.parse({
       locations: [summary]
@@ -421,6 +422,13 @@ describe("contracts-catalog", () => {
 
     expect(bootstrap.brandId).toBeUndefined();
     expect(bootstrap.locationId).toBeUndefined();
+    expect(bootstrap.timezone).toBe("America/Detroit");
+    expect(() => internalLocationBootstrapSchema.parse({
+      brandName: "Northside Coffee",
+      locationName: "Northside Flagship",
+      marketLabel: "Detroit, MI",
+      timezone: "not/a-timezone"
+    })).toThrow();
   });
 
   it("validates dedicated internal location capability updates", () => {

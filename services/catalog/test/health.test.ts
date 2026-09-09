@@ -1223,6 +1223,7 @@ describe("catalog service", () => {
         clientName: "Wizard Coffee",
         locationName: "Wizard Flagship",
         marketLabel: "Detroit, MI",
+        timezone: "America/Chicago",
         ownerEmail: "owner@wizard.example",
         storeName: "Wizard Coffee"
       }
@@ -1299,6 +1300,7 @@ describe("catalog service", () => {
       locations: [
         {
           locationId: created.locationId,
+          timezone: "America/Chicago",
           primaryLocation: true
         }
       ],

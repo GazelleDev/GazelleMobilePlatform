@@ -53,6 +53,14 @@ export function formatDashboardDate() {
   }).format(new Date());
 }
 
+export function formatDashboardHeadingDate() {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric"
+  }).format(new Date());
+}
+
 export function getOperatorInitials(name: string | undefined) {
   const tokens = (name ?? "Client")
     .split(/\s+/)

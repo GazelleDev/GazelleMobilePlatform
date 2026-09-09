@@ -51,6 +51,8 @@ function handleLaunchEntryParams() {
 
 async function bootstrap() {
   registerEvents();
+  window.addEventListener("online", render);
+  window.addEventListener("offline", render);
 
   state.initializing = false;
   const stripeReturn = handleStripeReturnParams();

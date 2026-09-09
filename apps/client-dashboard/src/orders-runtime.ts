@@ -43,6 +43,18 @@ export function startAutoRefresh(loadDashboard: (options?: { silent?: boolean })
   const session = state.session;
   const locationId = state.selectedLocationId;
 
+  // The order stream is location-scoped. For All Locations, polling keeps the
+  // aggregate correct instead of allowing one location's SSE snapshot to
+  // overwrite the portfolio state.
+  if (locationId === "all") {
+    state.autoRefreshHandle = setInterval(() => {
+      if (state.session && !state.loading) {
+        void loadDashboard({ silent: true });
+      }
+    }, ordersRefreshIntervalMs);
+    return;
+  }
+
   state.orderStreamUnsubscribe = subscribeToAdminOrderStream({
     session,
     locationId,

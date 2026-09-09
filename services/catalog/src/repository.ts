@@ -679,6 +679,7 @@ function buildAdminStoreConfig(input: {
   locationId: string;
   storeName: string;
   locationName: string;
+  timezone?: string;
   hours: string;
   pickupInstructions: string;
   taxRateBasisPoints: number;
@@ -835,6 +836,7 @@ type ClientLocationRecord = {
   locationId: string;
   locationName: string;
   marketLabel: string;
+  timezone: string;
   primaryLocation: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -1237,6 +1239,7 @@ function createInMemoryRepository(): CatalogRepository {
         locationId,
         locationName: input.locationName,
         marketLabel: input.marketLabel,
+        timezone: input.timezone,
         storeName: input.storeName ?? input.clientName,
         hours: input.hours,
         pickupInstructions: input.pickupInstructions,
@@ -1258,6 +1261,7 @@ function createInMemoryRepository(): CatalogRepository {
         locationId,
         locationName: input.locationName,
         marketLabel: input.marketLabel,
+        timezone: input.timezone,
         primaryLocation: true,
         createdAt: now,
         updatedAt: now
@@ -2402,6 +2406,7 @@ function toClientLocationRecord(row: {
   location_id: string;
   location_name: string;
   market_label: string;
+  timezone: string;
   primary_location: boolean;
   created_at?: CatalogTimestamp;
   updated_at?: CatalogTimestamp;
@@ -2412,6 +2417,7 @@ function toClientLocationRecord(row: {
     locationId: row.location_id,
     locationName: row.location_name,
     marketLabel: row.market_label,
+    timezone: row.timezone,
     primaryLocation: row.primary_location,
     createdAt: serializeCatalogTimestamp(row.created_at),
     updatedAt: serializeCatalogTimestamp(row.updated_at)
@@ -2686,6 +2692,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         locationId,
         locationName: input.locationName,
         marketLabel: input.marketLabel,
+        timezone: input.timezone,
         storeName: input.storeName ?? input.clientName,
         hours: input.hours,
         pickupInstructions: input.pickupInstructions,
@@ -2712,6 +2719,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
             location_id: locationId,
             location_name: input.locationName,
             market_label: input.marketLabel,
+            timezone: input.timezone,
             primary_location: true
           })
           .execute();
@@ -2778,6 +2786,7 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
               locationId,
               locationName: input.locationName,
               marketLabel: input.marketLabel,
+              timezone: input.timezone,
               primaryLocation: true,
               createdAt: now,
               updatedAt: now
@@ -4306,12 +4315,18 @@ async function createPostgresRepository(connectionString: string): Promise<Catal
         .select("app_config_json")
         .where("location_id", "=", locationId)
         .executeTakeFirst();
+      const locationRow = await db
+        .selectFrom("catalog_client_locations")
+        .select("timezone")
+        .where("location_id", "=", locationId)
+        .executeTakeFirst();
       const appConfig = appConfigSchema.parse(appConfigRow?.app_config_json ?? defaultAppConfigPayload);
 
       return buildAdminStoreConfig({
         locationId: row.location_id,
         storeName: row.store_name,
         locationName: appConfig.brand.locationName,
+        timezone: locationRow?.timezone,
         hours: row.hours_text,
         pickupInstructions: row.pickup_instructions,
         taxRateBasisPoints: row.tax_rate_basis_points,

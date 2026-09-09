@@ -1,0 +1,36 @@
+{
+  "name": "@lattelink/reporting",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": "./dist/index.js", "./app": "./dist/app.js", "./service": "./dist/service.js" },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test --max-warnings=0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "^10.3.0",
+    "@lattelink/contracts-core": "workspace:*",
+    "@lattelink/contracts-reporting": "workspace:*",
+    "@lattelink/observability": "workspace:*",
+    "@lattelink/persistence": "workspace:*",
+    "fastify": "5.12.3",
+    "pino-pretty": "^13.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@lattelink/config-eslint": "workspace:*",
+    "@lattelink/config-typescript": "workspace:*",
+    "@types/node": "^22.20.1",
+    "eslint": "^9.39.5",
+    "tsx": "^4.22.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

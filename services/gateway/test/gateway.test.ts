@@ -104,6 +104,36 @@ let previousFreeClientDashboardDomain: string | undefined;
     };
   }
 
+  function buildReportingPayload(locationIds: string[]) {
+    const zero = { currency: "USD" as const, amountCents: 0 };
+    const metrics = {
+      grossSales: zero, discounts: zero, netSales: zero, tax: zero, collected: zero,
+      refunds: zero, netCollected: zero, paidOrders: 0, averageOrderValue: null
+    };
+    const dataQuality = { missingQuotePaidOrders: 0, unallocatableRefunds: 0, merchandiseMetricsComplete: true };
+    const comparison = Object.fromEntries(
+      ["grossSales", "discounts", "netSales", "tax", "collected", "refunds", "netCollected", "averageOrderValue"].map(
+        (key) => [key, { current: metrics[key as keyof typeof metrics], previous: metrics[key as keyof typeof metrics], percentChange: null }]
+      )
+    );
+    return {
+      query: {
+        locationIds,
+        start: "2026-03-08T05:00:00.000Z",
+        end: "2026-03-09T04:00:00.000Z",
+        previousStart: "2026-03-07T05:00:00.000Z",
+        previousEnd: "2026-03-08T05:00:00.000Z",
+        timezone: "America/Detroit",
+        granularity: "day" as const
+      },
+      summary: { ...metrics, dataQuality },
+      previous: { ...metrics, dataQuality },
+      comparison: { ...comparison, paidOrders: { current: 0, previous: 0, percentChange: null } },
+      series: [],
+      locations: locationIds.map((locationId) => ({ locationId, locationName: locationId, ...metrics, dataQuality }))
+    };
+  }
+
   function buildOnboardingPayload(
     overrides: Partial<{
       tenantId: string;
@@ -263,6 +293,14 @@ let previousFreeClientDashboardDomain: string | undefined;
       const url = typeof input === "string" ? input : input.url;
       const method = init?.method ?? "GET";
       const authHeader = init?.headers ? new Headers(init.headers as HeadersInit).get("authorization") : null;
+
+      if (url.endsWith("/v1/reporting/query") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { locationIds?: string[] };
+        return new Response(JSON.stringify(buildReportingPayload(body.locationIds ?? [])), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
 
       if (url.endsWith("/v1/auth/apple/exchange") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { nonce?: string };
@@ -1802,6 +1840,7 @@ let previousFreeClientDashboardDomain: string | undefined;
                 locationId: "northside-01",
                 locationName: "Northside Flagship",
                 marketLabel: "Detroit, MI",
+                timezone: "America/Detroit",
                 primaryLocation: true,
                 createdAt: "2026-05-06T12:00:00.000Z",
                 updatedAt: "2026-05-06T12:00:00.000Z"
@@ -3595,6 +3634,70 @@ let previousFreeClientDashboardDomain: string | undefined;
     expect(response.json()).toMatchObject({ code: "UNAUTHORIZED" });
     const requestedUrls = fetchMock.mock.calls.map(([input]) => (typeof input === "string" ? input : input.url));
     expect(requestedUrls).toEqual(["http://identity.internal/v1/operator/auth/me"]);
+    await app.close();
+  });
+
+  it("rejects the retired client reporting timezone field before proxying", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/admin/reporting/query",
+      headers: { ...ownerOperatorHeaders, "content-type": "application/json" },
+      payload: {
+        start: "2026-03-08",
+        end: "2026-03-09",
+        timezone: "America/Detroit"
+      }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+    await app.close();
+  });
+
+  it("expands omitted reporting locations from the authorized operator scope without adding a timezone", async () => {
+    const app = await buildApp();
+
+    const singleLocationResponse = await app.inject({
+      method: "POST",
+      url: "/v1/admin/reporting/query",
+      headers: { ...ownerOperatorHeaders, "content-type": "application/json" },
+      payload: { start: "2026-03-08", end: "2026-03-09" }
+    });
+    expect(singleLocationResponse.statusCode, singleLocationResponse.body).toBe(200);
+
+    const multiLocationResponse = await app.inject({
+      method: "POST",
+      url: "/v1/admin/reporting/query",
+      headers: { ...multiLocationOperatorHeaders, "content-type": "application/json" },
+      payload: { start: "2026-03-08", end: "2026-03-09" }
+    });
+    expect(multiLocationResponse.statusCode, multiLocationResponse.body).toBe(200);
+
+    const reportingCalls = fetchMock.mock.calls.filter(([input]) =>
+      (typeof input === "string" ? input : input.url).endsWith("/v1/reporting/query")
+    );
+    expect(reportingCalls).toHaveLength(2);
+    expect(JSON.parse(String(reportingCalls[0]![1]?.body))).toEqual({
+      locationIds: ["flagship-01"], start: "2026-03-08", end: "2026-03-09", granularity: "day"
+    });
+    expect(JSON.parse(String(reportingCalls[1]![1]?.body))).toEqual({
+      locationIds: ["flagship-01", "northside-01"], start: "2026-03-08", end: "2026-03-09", granularity: "day"
+    });
+    await app.close();
+  });
+
+  it("keeps unauthorized reporting location requests out of the reporting service", async () => {
+    const app = await buildApp();
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/admin/reporting/query",
+      headers: { ...ownerOperatorHeaders, "content-type": "application/json" },
+      payload: { locationIds: ["northside-01"], start: "2026-03-08", end: "2026-03-09" }
+    });
+    expect(response.statusCode).toBe(403);
+    expect(fetchMock.mock.calls.some(([input]) =>
+      (typeof input === "string" ? input : input.url).endsWith("/v1/reporting/query")
+    )).toBe(false);
     await app.close();
   });
 
