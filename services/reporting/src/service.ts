@@ -94,8 +94,13 @@ function assertBoundaryAlignment(query: ReportingQuery) {
   if (query.granularity === "day" && (!/^\d{4}-\d{2}-\d{2}$/.test(query.start) || !/^\d{4}-\d{2}-\d{2}$/.test(query.end))) {
     throw new ReportingInputError("Day reporting requires whole local-date boundaries (YYYY-MM-DD).");
   }
-  if (query.granularity === "hour" && (!/:00(?::00)?$/.test(query.start) || !/:00(?::00)?$/.test(query.end))) {
-    throw new ReportingInputError("Hour reporting requires local boundaries aligned to the hour.");
+  // The Owner Home requests Today as a local calendar date while asking the
+  // service for hourly buckets. Dates resolve to local midnight in the
+  // persisted location timezone; explicit datetimes are also accepted when
+  // they are aligned to the top of an hour.
+  const hourBoundary = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:00(?::00)?)?$/;
+  if (query.granularity === "hour" && (!hourBoundary.test(query.start) || !hourBoundary.test(query.end))) {
+    throw new ReportingInputError("Hour reporting requires local date or hour-aligned boundaries.");
   }
 }
 

@@ -97,6 +97,12 @@ describe("reporting query validation and location/timezone behavior", () => {
     };
   }
 
+  it("accepts local-date boundaries for hourly Owner Home reporting", async () => {
+    const value = await queryReporting({ locationIds: ["loc-a"], start: "2026-03-08", end: "2026-03-09", granularity: "hour" }, repository());
+    expect(value.query.granularity).toBe("hour");
+    expect(value.query.timezone).toBe("America/Detroit");
+  });
+
   it("derives the single location timezone and uses it for today, 7-day, 30-day and custom local-date ranges", async () => {
     const resolvedTimezones: string[] = [];
     const storedTimezoneRepository = repository();
