@@ -627,6 +627,15 @@
         }
       }
     },
+    "/admin/reporting/query": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/admin/orders": {
       "get": {
         "responses": {
